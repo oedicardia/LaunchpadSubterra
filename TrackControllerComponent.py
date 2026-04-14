@@ -158,13 +158,13 @@ class TrackControllerComponent(MixerComponent):
 		if self.is_enabled():
 			if self._prev_track_button != None:
 				self._prev_track_button.set_on_off_values("Mode."+self._skin_name)
-				if self.selected_track_idx is not None and self.selected_track_idx > 0:
+				if self.selected_track_idx != None and self.selected_track_idx > 0:
 					self._prev_track_button.turn_on()
 				else:
 					self._prev_track_button.turn_off()
 			if self._next_track_button != None :
 				self._next_track_button.set_on_off_values("Mode."+self._skin_name)
-				if self.selected_track_idx is not None and self.selected_track_idx < len(self.song().tracks) - 1:
+				if self.selected_track_idx != None and self.selected_track_idx < len(self.song().tracks) - 1:
 					self._next_track_button.turn_on()
 				else:
 					self._next_track_button.turn_off()
@@ -182,7 +182,7 @@ class TrackControllerComponent(MixerComponent):
 		assert (self._next_track_button != None)
 		assert (value in range(128))
 		if self.is_enabled():
-			if not sender.is_momentary() or value is not 0:
+			if not sender.is_momentary() or value != 0:
 				if self.selected_track_idx < len(self.song().tracks) - 1:
 					self.song().view.selected_track = self.song().tracks[self.selected_track_idx + 1]
 					if  not self._locked_to_track:
@@ -202,7 +202,7 @@ class TrackControllerComponent(MixerComponent):
 		assert (self._prev_track_button != None)
 		assert (value in range(128))
 		if self.is_enabled():
-			if not sender.is_momentary() or value is not 0:
+			if not sender.is_momentary() or value != 0:
 				if self.selected_track_idx > 0:
 					self.song().view.selected_track = self.song().tracks[self.selected_track_idx - 1]
 					if  not self._locked_to_track:
@@ -230,7 +230,7 @@ class TrackControllerComponent(MixerComponent):
 		assert (self._prev_scene_button != None)
 		assert (value in range(128))
 		if self.is_enabled():
-			if not sender.is_momentary() or value is not 0:
+			if not sender.is_momentary() or value != 0:
 				if self.selected_scene_idx > 0:
 					self.song().view.selected_scene = self.song().scenes[self.selected_scene_idx - 1]
 				
@@ -238,7 +238,7 @@ class TrackControllerComponent(MixerComponent):
 		assert (self._next_scene_button != None)
 		assert (value in range(128))
 		if self.is_enabled():
-			if not sender.is_momentary() or value is not 0:
+			if not sender.is_momentary() or value != 0:
 				if self.selected_scene_idx < len(self.song().scenes) - 1:
 					self.song().view.selected_scene = self.song().scenes[self.selected_scene_idx + 1]			
 
@@ -286,7 +286,7 @@ class TrackControllerComponent(MixerComponent):
 		assert (self._lock_button != None)
 		assert (value in range(128))
 		if self.is_enabled():
-			if value is not 0:
+			if value != 0:
 				self._locked_to_track = not self._locked_to_track
 				if self._locked_to_track:
 					self._lock_button.turn_on()
@@ -324,7 +324,7 @@ class TrackControllerComponent(MixerComponent):
 							slot = self.selected_scene.clip_slots[self.selected_track_idx]
 						except TypeError:
 							pass
-						if slot is not None and slot and slot.has_clip:
+						if slot != None and slot and slot.has_clip:
 							slot.delete_clip()
 							self._start_stop_button.turn_off()
 							self._control_surface.show_message("delete clip")
@@ -335,7 +335,7 @@ class TrackControllerComponent(MixerComponent):
 							slot = self.selected_scene.clip_slots[self.selected_track_idx]
 						except TypeError:
 							pass
-						if slot is not None and slot and slot.has_clip:
+						if slot != None and slot and slot.has_clip:
 							if slot.is_triggered or slot.is_playing:
 								slot.stop()
 								self._start_stop_button.turn_off()

@@ -110,7 +110,7 @@ class NoteSelectorComponent(ControlSurfaceComponent):
         assert (self._down_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
-            if value is not 0 or not sender.is_momentary():
+            if value != 0 or not sender.is_momentary():
                 if self.should_scroll():
                     self.scroll_down()
                 else:
@@ -154,7 +154,7 @@ class NoteSelectorComponent(ControlSurfaceComponent):
         assert (self._up_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
-            if value is not 0 or not sender.is_momentary(): #If NOTEON or is Toggle
+            if value != 0 or not sender.is_momentary(): #If NOTEON or is Toggle
                 #IF [mute_shift and NormalMode-> move(1)] [not mute_shift and MultinoteMode-> move(1)] ELSE move(12|16)_dependingIfdrumRack
                 if self.should_scroll():
                     self.scroll_up()

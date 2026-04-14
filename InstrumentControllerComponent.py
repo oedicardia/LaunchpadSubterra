@@ -201,7 +201,7 @@ class InstrumentControllerComponent(CompoundComponent):
 	#Enables scale selection mode
 	def _scales_toggle(self, value, sender):
 		if self.is_enabled():
-			if (value is not 0):
+			if (value != 0):
 				self._get_drumrack_device()
 				if(self._scales.is_drumrack and self._drum_group_device != None):
 					self._toggle_note_repeat_selector()
@@ -225,7 +225,7 @@ class InstrumentControllerComponent(CompoundComponent):
 	# Transposes key one octave up 
 	def _scroll_octave_up(self, value, sender):
 		if self.is_enabled():
-			if ((not sender.is_momentary()) or (value is not 0)):
+			if ((not sender.is_momentary()) or (value != 0)):
 				if self._can_scroll_octave_up():
 					self._scales._octave += 1
 					self.update()
@@ -242,7 +242,7 @@ class InstrumentControllerComponent(CompoundComponent):
 	# Transposes key one octave down 
 	def _scroll_octave_down(self, value, sender):
 		if self.is_enabled():
-			if ((not sender.is_momentary()) or (value is not 0)):
+			if ((not sender.is_momentary()) or (value != 0)):
 				if self._can_scroll_octave_down():
 					self._scales._octave -= 1
 					self.update()

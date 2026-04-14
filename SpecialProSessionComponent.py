@@ -97,7 +97,7 @@ class SpecialClipSlotComponent(ClipSlotComponent):
 	
 	def _do_select_clip(self, clip_slot):
 		super(SpecialClipSlotComponent, self)._do_select_clip(clip_slot)
-		if self._clip_slot is not None:
+		if self._clip_slot != None:
 			clip = clip_slot.clip
 			
 			if not self.application().view.is_view_visible('Detail'):
@@ -142,8 +142,8 @@ class SpecialClipSlotComponent(ClipSlotComponent):
 			should_launch = True
 			song = self._get_song()
 			try:
-				clip = slot.clip if slot is not None else None
-				if clip is not None:
+				clip = slot.clip if slot != None else None
+				if clip != None:
 					track = slot.canonical_parent
 					view = song.view
 					try:
@@ -660,7 +660,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 		assert (value in range(128))		
 		if self.is_enabled() and self._is_pro_mode_on() and self._undo_button != None:
 			now = time.time()
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._last_undo_time = now
 			else:
 				if now - self._last_undo_time < LONG_PRESS:
@@ -702,7 +702,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _shift_button_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._shift_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._print("Select clip - [ Set launch quantization -> now: "+ self._get_launch_quant_msg() +" ]")
 				self._shift_pressed = True
 			else:
@@ -746,7 +746,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _click_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._click_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._click_pressed = True
 				if self._shift_pressed:
 					self._print("Launch scene - [ Tempo ]")
@@ -813,7 +813,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _quantize_button_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._quantize_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._quantize_pressed = True
 				if self._shift_pressed:
 					self._print("Create Scene - [ Record quantization -> now: "+ self._get_record_quant_msg() +" ]")
@@ -901,7 +901,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _double_button_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._double_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._double_pressed = True
 				if self._shift_pressed:
 					self._print("Capture scene - [ Clip fixed length recording -> now: "+ self._get_fixed_length_msg() +" ]")
@@ -958,7 +958,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _delete_button_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._delete_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._delete_pressed = True
 				if self._shift_pressed:
 					self._print("Delete scene")
@@ -996,7 +996,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 	def _duplicate_button_value(self, value, sender):
 		assert (value in range(128))
 		if self.is_enabled() and self._is_pro_mode_on() and self._duplicate_button != None:
-			if ((value is not 0) or (not sender.is_momentary())):
+			if ((value != 0) or (not sender.is_momentary())):
 				self._duplicate_pressed = True
 				if self._shift_pressed:
 					self._print("Duplicate scene")
@@ -1043,7 +1043,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 					else:
 						self._print("Autorecord: Off")
 			else:
-				if ((value is not 0) or (not sender.is_momentary())):
+				if ((value != 0) or (not sender.is_momentary())):
 					self._record_pressed = True
 					self._last_record_time = time.time()
 					self._print("Record clip -  [ Arm track ]")
@@ -1278,25 +1278,25 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 			
 	def _set_tempo_value(self, value, button):		
 		index = list(self._stop_track_clip_buttons).index(button)
-		if(index==0 and (value is not 0 or not button.is_momentary())):
+		if(index==0 and (value != 0 or not button.is_momentary())):
 			self.song().metronome = not self.song().metronome
 		elif(index==1):
 			self._nudge_down(value)
 		elif(index==2):
 			self._nudge_up(value)
-		elif(index==3 and (value is not 0 or not button.is_momentary())):
+		elif(index==3 and (value != 0 or not button.is_momentary())):
 			self._change_tempo(-5)
-		elif(index==4 and (value is not 0 or not button.is_momentary())):
+		elif(index==4 and (value != 0 or not button.is_momentary())):
 			self._change_tempo(-1)
-		elif(index==5 and (value is not 0 or not button.is_momentary())):
+		elif(index==5 and (value != 0 or not button.is_momentary())):
 			self._change_tempo(1)		
-		elif(index==6 and (value is not 0 or not button.is_momentary())):
+		elif(index==6 and (value != 0 or not button.is_momentary())):
 			self._change_tempo(5)														 
-		elif(index==7 and (value is not 0 or not button.is_momentary())):
+		elif(index==7 and (value != 0 or not button.is_momentary())):
 			self._tap_tempo_value(value)
 						
 	def _set_fixed_length_value(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			index = list(self._stop_track_clip_buttons).index(button)
 			if(index==0):
 				self._fixed_length_on = not self._fixed_length_on
@@ -1313,7 +1313,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 			self._display_fixed_length_info()					   
 				
 	def _set_rec_qntz_value(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			index = list(self._stop_track_clip_buttons).index(button)
 			if(index==0):
 				self._record_quantization_on = not self._record_quantization_on
@@ -1330,7 +1330,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 					self.song().midi_recording_quantization = self._record_quantization if self._record_quantization_on else Rec_Q.rec_q_no_q
 				
 	def _set_launch_qntz_value(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			index = list(self._stop_track_clip_buttons).index(button)
 			if(index==0):
 				self._launch_quantization_on = not self._launch_quantization_on
@@ -1347,7 +1347,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 					self.song().clip_trigger_quantization = self._launch_quantization if self._launch_quantization_on else _Q.q_no_q
 
 	def _do_arm_track(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			tracks = self.tracks_to_use()
 			track_index = list(self._stop_track_clip_buttons).index(button) + self.track_offset()
 			if in_range(track_index, 0, len(tracks)) and tracks[track_index] in self.song().tracks:
@@ -1373,7 +1373,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 						track.fold_state = 0
 								
 	def _do_mute_track(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			tracks = self.tracks_to_use()
 			track_index = list(self._stop_track_clip_buttons).index(button) + self.track_offset()
 			
@@ -1382,7 +1382,7 @@ class SpecialProSessionComponent(SpecialSessionComponent):
 				track.mute = not track.mute  
 				
 	def _do_solo_track(self, value, button):		
-		if value is not 0 or not button.is_momentary():
+		if value != 0 or not button.is_momentary():
 			tracks = self.tracks_to_use()
 			track_index = list(self._stop_track_clip_buttons).index(button) + self.track_offset()
 			if in_range(track_index, 0, len(tracks)) and tracks[track_index] in self.song().tracks:

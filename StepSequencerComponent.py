@@ -715,7 +715,7 @@ class StepSequencerComponent(CompoundComponent):
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
             now = time.time()
-            if ((value is not 0) or (not sender.is_momentary())):
+            if ((value != 0) or (not sender.is_momentary())):
                 self._is_mute_shifted = not self._is_mute_shifted
             else:
                 if now - self._last_mute_shift_button_press> 0.25:
@@ -754,7 +754,7 @@ class StepSequencerComponent(CompoundComponent):
         assert (self._mode_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
-            if ((value is not 0) or (not sender.is_momentary())):
+            if ((value != 0) or (not sender.is_momentary())):
                 self._last_mode_button_press = time.time()
             else:
                 if self._mode == STEPSEQ_MODE_MULTINOTE and time.time() - self._last_mode_button_press > 0.25:
@@ -795,7 +795,7 @@ class StepSequencerComponent(CompoundComponent):
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
             now = time.time()
-            if ((value is not 0) or (not sender.is_momentary())):
+            if ((value != 0) or (not sender.is_momentary())):
                 self._last_quantize_button_press = now
             else:
                 if now - self._last_quantize_button_press > 0.5:
@@ -905,7 +905,7 @@ class StepSequencerComponent(CompoundComponent):
         assert (self._right_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
-            if ((value is not 0) or (not sender.is_momentary())):
+            if ((value != 0) or (not sender.is_momentary())):
                 self._loop_selector.scroll(1)
                 self._note_editor.request_display_page()
                 self.update()
@@ -936,7 +936,7 @@ class StepSequencerComponent(CompoundComponent):
         assert (self._right_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
-            if ((value is not 0) or (not sender.is_momentary())):
+            if ((value != 0) or (not sender.is_momentary())):
                 self._loop_selector.scroll(-1)
                 self._note_editor.request_display_page()
                 self.update()

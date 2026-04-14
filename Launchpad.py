@@ -121,23 +121,31 @@ class Launchpad(ControlSurface):
 			for row in range(8):
 				button_row = []
 				for column in range(8):
+					rot_row = column
+					rot_col = 7 - row
 					if self._mk2_rgb or self._mk3_rgb or self._lpx:
 						# for mk2 buttons are assigned "top to bottom"
-						midi_note = (81 - (10 * row)) + column
+						midi_note = (81 - (10 * rot_row)) + rot_col
 					else:
-						midi_note = row * 16 + column
+						midi_note = rot_row * 16 + rot_col
 					button = ConfigurableButtonElement(is_momentary, MIDI_NOTE_TYPE, 0, midi_note, skin = self._skin, control_surface = self)
 					button.name = str(column) + '_Clip_' + str(row) + '_Button'
 					button_row.append(button)
 				matrix.add_row(tuple(button_row))
 
-			if self._mk3_rgb or self._lpx :
-				top_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 91 + index, skin = self._skin) for index in range(8)]
-				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, self._side_notes[index], skin = self._skin) for index in range(8)]
+			if self._mk3_rgb or self._lpx:
+				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 98 - index, skin=self._skin)
+				                for index in range(8)]
+				top_buttons = [
+					ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, self._side_notes[index], skin=self._skin)
+					for index in range(8)]
 			else:
-				top_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 104 + index, skin = self._skin) for index in range(8)]
-				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_NOTE_TYPE, 0, self._side_notes[index], skin = self._skin) for index in range(8)]
-				
+				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 104 + index, skin=self._skin)
+				                for index in range(8)]
+				top_buttons = [
+					ConfigurableButtonElement(is_momentary, MIDI_NOTE_TYPE, 0, self._side_notes[index], skin=self._skin)
+					for index in range(8)]
+
 			top_buttons[0].name = 'Bank_Select_Up_Button'
 			top_buttons[1].name = 'Bank_Select_Down_Button'
 			top_buttons[2].name = 'Bank_Select_Left_Button'
@@ -146,14 +154,14 @@ class Launchpad(ControlSurface):
 			top_buttons[5].name = 'User1_Button'
 			top_buttons[6].name = 'User2_Button'
 			top_buttons[7].name = 'Mixer_Button'
-			side_buttons[0].name = 'Vol_Button'
-			side_buttons[1].name = 'Pan_Button'
-			side_buttons[2].name = 'SndA_Button'
-			side_buttons[3].name = 'SndB_Button'
-			side_buttons[4].name = 'Stop_Button'
-			side_buttons[5].name = 'Trk_On_Button'
-			side_buttons[6].name = 'Solo_Button'
-			side_buttons[7].name = 'Arm_Button'
+			side_buttons[7].name = 'Vol_Button'
+			side_buttons[6].name = 'Pan_Button'
+			side_buttons[5].name = 'SndA_Button'
+			side_buttons[4].name = 'SndB_Button'
+			side_buttons[3].name = 'Stop_Button'
+			side_buttons[2].name = 'Trk_On_Button'
+			side_buttons[1].name = 'Solo_Button'
+			side_buttons[0].name = 'Arm_Button'
 			self._osd = M4LInterface()
 			self._osd.name = "OSD"
 			self._init_note_repeat()
