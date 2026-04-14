@@ -40,7 +40,13 @@ class MainSelectorComponent(ModeSelectorComponent):
 		#inject ControlSurface and OSD components (M4L)
 		self._matrix = matrix
 		self._nav_buttons = top_buttons[:4]#arrow buttons
-		self._mode_buttons = top_buttons[4:]#session,user1,user2,mixer buttons
+		#self._mode_buttons = top_buttons[4:]#session,h-arpeggiator,custom drum mode,Melodic sequencer
+		self._mode_buttons = (
+			top_buttons[4],  # Session (unchanged)
+			top_buttons[5],  # h-arpeggiator
+			top_buttons[7],  # custom drum mode
+			top_buttons[6],  # Melodic sequencer
+		)
 		self._side_buttons = side_buttons#launch buttons
 		self._config_button = config_button#used to reset launchpad
 		self._osd = osd
@@ -167,6 +173,18 @@ class MainSelectorComponent(ModeSelectorComponent):
 		assert sender in self._modes_buttons
 		session_mode_changed = False
 		new_mode = self._modes_buttons.index(sender)
+
+		if value > 0 and new_mode == 2:
+			# Inject into framework instead of bypassing it
+			self._clean_heap()
+			self._modes_heap = [(2, sender, None)]
+
+			self._main_mode_index = 2
+			self._sub_mode_list[2] = 1  # melodic
+
+			self.update()
+			return
+
 		now = int(round(time.time() * 1000))
 		if new_mode == 0 and self._last_mode_index == 0:
 			if value > 0:
