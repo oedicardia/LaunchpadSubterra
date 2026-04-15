@@ -168,6 +168,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 		# 	self.update()
 
 	def _mode_value(self, value, sender):
+		self.log_message("DEBUG sender:"+str(sender))
+		if sender is None:
+			self.log_message("⚠️ sender is None!")
+			return
+
 		assert len(self._modes_buttons) > 0
 		assert isinstance(value, int)
 		assert sender in self._modes_buttons
@@ -175,13 +180,14 @@ class MainSelectorComponent(ModeSelectorComponent):
 		new_mode = self._modes_buttons.index(sender)
 
 		if value > 0 and new_mode == 2:
-			# Inject into framework instead of bypassing it
 			self._clean_heap()
-			self._modes_heap = [(2, sender, None)]
 
 			self._main_mode_index = 2
 			self._sub_mode_list[2] = 1  # melodic
 
+			self._modes_heap = [(2, sender, None)]
+
+			self._update_mode()
 			self.update()
 			return
 
@@ -483,7 +489,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 		
 		
 	def _setup_instrument_controller(self, as_active):
-		if self._instrument_controller != None:
+		if getattr(self, "_instrument_controller", None) is not None:
 			if as_active:
 				self._activate_matrix(False) #Disable matrix buttons (clip slots)
 				self._activate_scene_buttons(True)#Enable side buttons
@@ -500,7 +506,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._instrument_controller.set_enabled(as_active)#Enable/disable instrument controller
 
 	def _setup_device_controller(self, as_active):
-		if self._device_controller != None:
+		if getattr(self, "_device_controller", None) is not None:
 			if as_active:
 				self._activate_scene_buttons(True)
 				self._activate_matrix(True)

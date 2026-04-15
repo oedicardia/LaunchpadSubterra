@@ -36,6 +36,7 @@ class StepSequencerComponent(CompoundComponent):
     def __init__(self, matrix, side_buttons, top_buttons, control_surface):
         self._osd = None
         super(StepSequencerComponent, self).__init__()
+        self._lock_button = None
         self._control_surface = control_surface
         self._number_of_lines_per_note = 1
         self.QUANTIZATION_COLOR_MAP = ["StepSequencer.Quantization.One", "StepSequencer.Quantization.Two", "StepSequencer.Quantization.Three", "StepSequencer.Quantization.Four"]
@@ -72,7 +73,8 @@ class StepSequencerComponent(CompoundComponent):
         self._set_scale_selector()
         self._set_quantization_function()
         self._set_mute_shift_function()
-        self._set_lock_function()
+        self._set_cycle_function()
+        #self._set_lock_function()
         self._set_mode_function()
         self._scale_updated()
         # TODO: maybe clean this... this should be done on enable.
@@ -80,7 +82,7 @@ class StepSequencerComponent(CompoundComponent):
 
     def disconnect(self):
         self._clip = None
-
+        self._cycle_button = None
         self._lock_button = None
         self._shift_button = None
         self._quantization_button = None
@@ -100,6 +102,16 @@ class StepSequencerComponent(CompoundComponent):
         self.set_mode_button(self._side_buttons[3]) #SndB
         self._last_mode_button_press = time.time()
         self._number_of_lines_per_note = 1
+
+    def _set_cycle_function(self):
+        self._is_locked = False
+        self._lock_to_track = False
+        self._cycle_button = None
+        self._instrument_controller = None
+        self._device_controller = None
+        self._loop_page_offset = 0
+        self._set_cycle_button(self._side_buttons[1])#Pan
+
 
     def _set_lock_function(self):
         self._is_locked = False
@@ -429,6 +441,7 @@ class StepSequencerComponent(CompoundComponent):
     def _update_buttons(self):
         self._update_quantization_button()
         self._update_lock_button()
+        self._update_cycle_button()
         self._update_mode_button()
         self._update_mute_shift_button()
         self._update_scale_selector_button()
@@ -831,6 +844,79 @@ class StepSequencerComponent(CompoundComponent):
         if self._note_editor != None:
             self._update_note_editor()
         self._update_OSD()
+
+# CYCLE Button (formerly lock)
+    def _on_cycle_pressed(self, value, sender):
+        if not self.is_enabled() or value == 0:
+            return
+
+        if self._clip is None:
+            return
+
+        # --- compute max pages ---
+        steps_per_page = 8
+        step_length = self._quantization
+
+        clip_length = self._clip.loop_end - self._clip.loop_start
+        total_steps = int(clip_length / step_length)
+        max_pages = max(0, int(total_steps / steps_per_page) - 1)
+
+        # --- increment ONCE ---
+        self._loop_page_offset = (self._loop_page_offset + 1) % (max_pages + 1)
+
+        self._control_surface.show_message(
+            "Page offset: %d" % self._loop_page_offset
+        )
+
+        # --- update UI ---
+        self._update_cycle_button()
+
+        if self._loop_selector:
+            self._loop_selector.update()
+
+        if self._note_editor:
+            self._note_editor.set_page(self._loop_selector._block)
+            self._note_editor.update()
+
+    def _set_cycle_button(self, button):
+        assert isinstance(button, (ButtonElement, type(None)))
+
+        if button != self._cycle_button:
+            if self._cycle_button is not None:
+                self._cycle_button.remove_value_listener(
+                    self._on_cycle_pressed
+                )
+
+            self._cycle_button = button
+
+            if self._cycle_button is not None:
+                self._cycle_button.add_value_listener(
+                    self._on_cycle_pressed,
+                    identify_sender=True
+                )
+
+            self._update_cycle_button()
+
+    def _update_cycle_button(self):
+        if self._cycle_button is None:
+            return
+
+        offset = self._loop_page_offset
+
+        if offset == 0:
+            color = "StepSequencer2.Cycle.Page0"
+        elif offset == 1:
+            color = "StepSequencer2.Cycle.Page1"
+        elif offset == 2:
+            color = "StepSequencer2.Cycle.Page2"
+        elif offset == 3:
+            color = "StepSequencer2.Cycle.Page3"
+        else:
+            color = "StepSequencer2.Cycle.Page4Plus"
+
+        self._cycle_button.set_on_off_values(color, color)
+        self._cycle_button.turn_on()
+
 
 # LOCK Button
     def _update_lock_button(self):

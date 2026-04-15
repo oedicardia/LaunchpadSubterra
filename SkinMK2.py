@@ -438,6 +438,14 @@ class Colors:
             PlayInPage = Rgb.PINK
             PlayInOtherPage = Rgb.RED_THIRD
 
+        class Cycle:
+            Page0 = Rgb.BLUE
+            Page1 = Rgb.GREEN
+            Page2 = Rgb.YELLOW
+            Page3 = Rgb.AMBER
+            Page4Plus = Rgb.RED
+
+
     class Recording:
         On = Rgb.RED
         Off = Rgb.RED_THIRD

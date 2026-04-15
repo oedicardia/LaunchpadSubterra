@@ -29,6 +29,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		ControlSurfaceComponent.__init__(self)
 		self._control_surface = control_surface
 		self.set_enabled(False)
+		#self._loop_page_offset = 0
 
 		self._step_sequencer = step_sequencer
 
@@ -39,7 +40,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._side_buttons = side_buttons
 
 		# buttons
-		self._matrix = None
+		#self._matrix = None
 
 		# matrix
 		self.set_matrix(matrix)
@@ -346,6 +347,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _update_matrix(self):  # step grid LEDs are updated here
 		if self.is_enabled() and self._matrix != None:
+
 			# clear back buffer
 			for x in range(8):
 				for y in range(8):
@@ -353,114 +355,112 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# update back buffer
 			if self._clip != None:
-				
+
+				effective_page = self._get_effective_page()
+
 				for x in range(8):
 					has_note = False
+					idx = self._get_step_index(x)
+					# detect if column has any note
 					for y in range(7):
-						if self._notes_pitches[(x + 8 * self._page) * 7 + 6 - y] == 1:
+						if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
 							has_note = True
 
 					for y in range(7):
+
 						if self._mode == STEPSEQ_MODE_NOTES:
-							if self._notes_pitches[(x + 8 * self._page) * 7 + 6 - y] == 1:
+							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
 								self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.On"
 							else:
 								self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
 
 						elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-							if(has_note):
-								if self._notes_octaves[x + 8 * self._page] == 6 - y:
+							if has_note:
+								if self._notes_octaves[idx] == 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Octave.On"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
 							else:
-								if self._notes_octaves[x + 8 * self._page] == 6 - y:
+								if self._notes_octaves[idx] == 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Dim"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
 
 						elif self._mode == STEPSEQ_MODE_NOTES_VELOCITIES:
-							if(has_note):
-								if self._notes_velocities[x + 8 * self._page] >= 6 - y:
+							if has_note:
+								if self._notes_velocities[idx] >= 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.On"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.Off"
 							else:
-								if self._notes_velocities[x + 8 * self._page] >= 6 - y:
+								if self._notes_velocities[idx] >= 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.Dim"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.Off"
 
 						elif self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
 							if has_note:
-								if self._notes_lengths[x + 8 * self._page] >= 6 - y:
+								if self._notes_lengths[idx] >= 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Length.On"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Length.Off"
 							else:
-								if self._notes_lengths[x + 8 * self._page] >= 6 - y:
+								if self._notes_lengths[idx] >= 6 - y:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Length.Dim"
 								else:
 									self._grid_back_buffer[x][y] = "StepSequencer2.Length.Off"
-				# metronome
+
+				# --- METRONOME ---
 				if self._playhead != None:
 					play_position = int(self._playhead / self.quantization)
 					play_x_position = play_position % 8
 					page = int(play_position / 8)
 
-					if self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
-						if page == self._page:
-							metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
-						else:
-							metronome_color = "StepSequencer2.Pitch.Off"
-					else:
-						if page == self._page:
-							metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
-						else:
-							metronome_color = "StepSequencer2.Pitch.Off"
+					if page == effective_page:
 
-					# FULL COLUMN METRONOME (SAFE)
-					if page == self._page:
+						metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
+
+						# full column metronome
 						for y in range(7):
 							self._grid_back_buffer[play_x_position][y] = metronome_color
 
-					# playing notes
-					if self._mode == STEPSEQ_MODE_NOTES:
-						for y in range(7):
-							if self._notes_pitches[play_position * 7 + 6 - y] == 1:
-								if page == self._page:
+						# playing notes (ONLY current visible page)
+						if self._mode == STEPSEQ_MODE_NOTES:
+							for y in range(7):
+								if self._notes_pitches[play_position * 7 + 6 - y] == 1:
 									self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInPage"
-								else:
-									#self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInOtherPage"
-									pass
+
 			else:
 				for x in range(8):
 					for y in range(7):
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
-			# caching : compare back buffer to buffer and update grid. this should minimize midi traffic quite a bit.
+			# --- PUSH TO HARDWARE (cache optimization) ---
 			for x in range(8):
 				for y in range(7):
 					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
 						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
-						self._matrix.get_button(x,y).set_light(self._grid_buffer[x][y])
-						
+						self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
+
 			self._force_update = False
 
 	def _matrix_value(self, value, x, y, is_momentary):  # matrix buttons listener
+		effective_page = self._get_effective_page()
 		if self.is_enabled() and self._matrix!=None:
 			if self._clip == None:
 				self._step_sequencer.create_clip()
 			else:
 				start = int(self._clip.loop_start / self._quantization)
 				end = int(self._clip.loop_end / self._quantization)
-				if (self._page + 1) * 8 > end or self._page * 8 < start:
+
+				if (effective_page + 1) * 8 > end or effective_page * 8 < start:
 					# current page is outside of running loop.
 					# only update this page.
-					start = self._page * 8
-					end = (self._page + 1) * 8
+					start = effective_page * 8
+					end = (effective_page + 1) * 8
 
 				if ((value != 0) or (not is_momentary)) and y < 7:
+					idx = self._get_step_index(x)
 					if self._mode == STEPSEQ_MODE_NOTES:
 						if self._is_notes_pitches_shifted:
 							for x in range(start, end):
@@ -469,56 +469,64 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								self._notes_pitches[(x) * 7 + 6 - y] = 1
 						else:
 							# clear note
-							if self._notes_pitches[(x + 8 * self._page) * 7 + 6 - y] == 1:
-								self._notes_pitches[(x + 8 * self._page) * 7 + 6 - y] = 0
+							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
+								self._notes_pitches[(idx) * 7 + 6 - y] = 0
 							else:
 								# clear step
 								if self._is_monophonic:
 									for yy in range(7):
-										self._notes_pitches[(x + 8 * self._page) * 7 + 6 - yy] = 0
-								self._notes_pitches[(x + 8 * self._page) * 7 + 6 - y] = 1
+										self._notes_pitches[(idx) * 7 + 6 - yy] = 0
+								self._notes_pitches[(idx) * 7 + 6 - y] = 1
 					elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
 						if self._is_notes_octaves_shifted:
 							if(x < 4):
-								for x in range(start, end):
-									self._notes_octaves[x] = 6 - y
+								for x1 in range(start, end):
+									self._notes_octaves[x1] = 6 - y
 							else:
-								for x in range(start, end):
-									if y < 3 and self._notes_octaves[x] < 6:
-										self._notes_octaves[x] = self._notes_octaves[x] + 1
-									if y > 3 and self._notes_octaves[x] > 0:
-										self._notes_octaves[x] = self._notes_octaves[x] - 1
+								for x1 in range(start, end):
+									if y < 3 and self._notes_octaves[x1] < 6:
+										self._notes_octaves[x1] = self._notes_octaves[x1] + 1
+									if y > 3 and self._notes_octaves[x1] > 0:
+										self._notes_octaves[x1] = self._notes_octaves[x1] - 1
 						else:
-							self._notes_octaves[x + 8 * self._page] = 6 - y
+							self._notes_octaves[idx] = 6 - y
 					elif self._mode == STEPSEQ_MODE_NOTES_VELOCITIES:
 						if self._is_notes_velocities_shifted:
 							if(x < 4):
-								for x in range(start, end):
-									self._notes_velocities[x] = 6 - y
+								for x1 in range(start, end):
+									self._notes_velocities[x1] = 6 - y
 							else:
-								for x in range(start, end):
-									if y < 3 and self._notes_velocities[x] < 6:
-										self._notes_velocities[x] = self._notes_velocities[x] + 1
+								for x1 in range(start, end):
+									if y < 3 and self._notes_velocities[x1] < 6:
+										self._notes_velocities[x1] = self._notes_velocities[x1] + 1
 									if y > 3 and self._notes_velocities[x] > 0:
-										self._notes_velocities[x] = self._notes_velocities[x] - 1
+										self._notes_velocities[x1] = self._notes_velocities[x1] - 1
 
 						else:
-							self._notes_velocities[x + 8 * self._page] = 6 - y
+							self._notes_velocities[idx] = 6 - y
 					elif self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
 						if self._is_notes_lengths_shifted:
 							if(x < 4):
-								for x in range(start, end):
-									self._notes_lengths[x] = 6 - y
+								for x1 in range(start, end):
+									self._notes_lengths[x1] = 6 - y
 							else:
-								for x in range(start, end):
-									if y < 3 and self._notes_lengths[x] < 6:
-										self._notes_lengths[x] = self._notes_lengths[x] + 1
-									if y > 3 and self._notes_lengths[x] > 0:
-										self._notes_lengths[x] = self._notes_lengths[x] - 1
+								for x1 in range(start, end):
+									if y < 3 and self._notes_lengths[x1] < 6:
+										self._notes_lengths[x1] = self._notes_lengths[x1] + 1
+									if y > 3 and self._notes_lengths[x1] > 0:
+										self._notes_lengths[x1] = self._notes_lengths[x1] - 1
 						else:
-							self._notes_lengths[x + 8 * self._page] = 6 - y
+							self._notes_lengths[idx] = 6 - y
 					self._update_matrix()
 					self._update_clip_notes()
+
+	def _get_step_index(self, x):
+		return x + 8 * self._get_effective_page()
+
+
+# LOOP SELECTOR
+	def _get_effective_page(self):
+		return self._page + self._step_sequencer._loop_page_offset
 
 
 # RANDOM
@@ -556,11 +564,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _randomise(self):
 		start = int(self._clip.loop_start / self._quantization)
 		end = int(self._clip.loop_end / self._quantization)
-		if (self._page + 1) * 8 > end or self._page * 8 < start:
+		effective_page = self._get_effective_page()
+		if (effective_page + 1) * 8 > end or effective_page * 8 < start:
 			# current page is outside of running loop.
 			# only update this page.
-			start = self._page * 8
-			end = (self._page + 1) * 8
+			start = effective_page * 8
+			end = (effective_page + 1) * 8
 
 		for x in range(start, end):
 			if self._mode == STEPSEQ_MODE_NOTES:
@@ -612,7 +621,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_notes_pitches_shifted = False
 				self._is_mute_shifted = False
 				self._is_velocity_shifted = False
-				self._is_notes_pitches_shifted = False
 				if time.time() - self._last_notes_pitches_button_press < 0.500:
 					self._is_monophonic = not self._is_monophonic
 					self._update_clip_notes()
@@ -781,7 +789,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def _update_buttons(self):
 		self._update_quantization_button()
-		self._update_lock_button()
+		#self._update_lock_button()
+		self._update_cycle_button()
 		self._update_scale_selector_button()
 		self._update_left_button()
 		self._update_right_button()
