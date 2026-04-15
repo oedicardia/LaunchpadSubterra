@@ -433,9 +433,9 @@ class Colors:
             Off = Rgb.RED
 
         class NoteEditor:
-            MetronomeInPage = Rgb.BLUE
-            MetronomeInOtherPage = Rgb.BLUE_THIRD
-            PlayInPage = Rgb.RED
+            MetronomeInPage = Rgb.PINK_HALF
+            MetronomeInOtherPage = Rgb.PURPLE_THIRD
+            PlayInPage = Rgb.PINK
             PlayInOtherPage = Rgb.RED_THIRD
 
     class Recording:

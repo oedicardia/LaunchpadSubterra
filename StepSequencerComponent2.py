@@ -405,19 +405,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# metronome
 				if self._playhead != None:
 					play_position = int(self._playhead / self.quantization)
-					play_x_position = int(self._playhead / self.quantization) % 8
-					page = int(self._playhead / self.quantization / 8)
+					play_x_position = play_position % 8
+					page = int(play_position / 8)
+
 					if self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
 						if page == self._page:
 							metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
 						else:
-							metronome_color = "StepSequencer2.NoteEditor.MetronomeInOtherPage"
+							metronome_color = "StepSequencer2.Pitch.Off"
 					else:
 						if page == self._page:
 							metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
 						else:
-							metronome_color = "StepSequencer2.NoteEditor.MetronomeInOtherPage"
-					self._grid_back_buffer[play_x_position][6] = metronome_color
+							metronome_color = "StepSequencer2.Pitch.Off"
+
+					# FULL COLUMN METRONOME (SAFE)
+					if page == self._page:
+						for y in range(7):
+							self._grid_back_buffer[play_x_position][y] = metronome_color
 
 					# playing notes
 					if self._mode == STEPSEQ_MODE_NOTES:
@@ -426,8 +431,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								if page == self._page:
 									self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInPage"
 								else:
-									self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInOtherPage"
-
+									#self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInOtherPage"
+									pass
 			else:
 				for x in range(8):
 					for y in range(7):
