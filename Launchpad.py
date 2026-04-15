@@ -12,6 +12,7 @@ from .MainSelectorComponent import MainSelectorComponent
 from .NoteRepeatComponent import NoteRepeatComponent
 from .M4LInterface import M4LInterface
 from .Log import log
+from .ModeConstants import MainMode
 try:
     from .Settings import Settings
 except ImportError:
@@ -307,22 +308,51 @@ class Launchpad(ControlSurface):
 				self.set_enabled(True)
 		else:
 			ControlSurface.handle_sysex(self,midi_bytes)
-		
 
 	def build_midi_map(self, midi_map_handle):
 		ControlSurface.build_midi_map(self, midi_map_handle)
-		if self._selector!=None:
-			if self._selector._main_mode_index==1:
-				mode = Settings.USER_MODES_1[self._selector._sub_mode_list[self._selector._main_mode_index] ]
-				if mode != "instrument":
-					new_channel = self._selector.channel_for_current_mode()
-					for note in self._drum_notes:
-						self._translate_message(MIDI_NOTE_TYPE, note, 0, note, new_channel)
-			elif self._selector._main_mode_index==2:
-				mode = Settings.USER_MODES_2[self._selector._sub_mode_list[self._selector._main_mode_index] ] 
-				#self._selector.mode_index == 1:
-				#if self._selector._sub_mode_list[self._selector._mode_index] > 0:  # disable midi map rebuild for instrument mode to prevent light feedback errors
 
+		if self._selector is None:
+			return
+
+		mode = self._selector._main_mode_index
+		new_channel = self._selector.channel_for_current_mode()
+
+		# safety fallback (VERY important)
+		if new_channel is None:
+			new_channel = 0
+
+		# SESSION
+		if mode == MainMode.SESSION:
+			return  # no special mapping needed
+
+		# INSTRUMENT
+		elif mode == MainMode.INSTRUMENT:
+			# instrument doesn't use drum note translation
+			return
+
+		# DRUM STEP SEQ
+		elif mode == MainMode.DRUM_SEQ:
+			for note in self._drum_notes:
+				self._translate_message(
+					MIDI_NOTE_TYPE,
+					note,
+					0,
+					note,
+					new_channel
+				)
+
+		# MELODIC STEP SEQ
+		elif mode == MainMode.MELODIC_SEQ:
+			# usually melodic sequencer maps differently or not at all
+			for note in self._drum_notes:
+				self._translate_message(
+					MIDI_NOTE_TYPE,
+					note,
+					0,
+					note,
+					new_channel
+				)
 
 	def _send_midi(self, midi_bytes, optimized=None):
 		sent_successfully = False

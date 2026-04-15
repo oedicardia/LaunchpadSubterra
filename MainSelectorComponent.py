@@ -20,6 +20,9 @@ try:
 except ImportError:
     from .Settings import *
 
+from .ModeConstants import MainMode
+
+
 class MainSelectorComponent(ModeSelectorComponent):
 
 	""" Class that reassigns the button on the launchpad to different functions """
@@ -44,8 +47,8 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._mode_buttons = (
 			top_buttons[4],  # Session (unchanged)
 			top_buttons[5],  # h-arpeggiator
-			top_buttons[7],  # custom drum mode
-			top_buttons[6],  # Melodic sequencer
+			top_buttons[6],  # custom drum mode
+			top_buttons[7],  # Melodic sequencer
 		)
 		self._side_buttons = side_buttons#launch buttons
 		self._config_button = config_button#used to reset launchpad
@@ -62,12 +65,21 @@ class MainSelectorComponent(ModeSelectorComponent):
 		for button in self._side_buttons + self._nav_buttons:
 			self._all_buttons.append(button)
 
+		# initialize modes
+		self._stepseq = None
+		self._stepseq2 = None
+		self._instrument_controller = None
+		self._device_controller = None
+		self._session = None
+
 		#initialize index variables
-		self._mode_index = 0 #Inherited from parent
-		self._main_mode_index = 0 #LP original modes
-		self._sub_mode_list = [0, 0, 0, 0]
-		for index in range(4):
-			self._sub_mode_list[index] = 0
+		self._main_mode_index = MainMode.SESSION
+		#self._mode_index = 0 #Inherited from parent
+		#sself._main_mode_index = 0 #LP original modes
+
+		#self._sub_mode_list = [0, 0, 0, 0]
+		#for index in range(4):
+		#	self._sub_mode_list[index] = 0
 		self.set_mode_buttons(self._mode_buttons)
 		self._last_mode_index = 0 
 			
@@ -76,12 +88,13 @@ class MainSelectorComponent(ModeSelectorComponent):
 		for column in range(8):
 			self._clip_stop_buttons.append(matrix.get_button(column,matrix.height()-1))
 		self._session = SpecialProSessionComponent(matrix.width(), matrix.height(), None, self._side_buttons, self._control_surface, self, self._c_instance.song())
-						
-			
+
 		#initialize _session variables	
 		self._session.set_osd(self._osd)
 		self._session.name = 'Session_Control'
-		
+
+
+
 		###ZOOMING COMPONENT
 		self._zooming = DeprecatedSessionZoomingComponent(self._session, enable_skinning = True)
 		self._zooming.name = 'Session_Overview'
@@ -118,6 +131,8 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._init_session()
 		self._all_buttons = tuple(self._all_buttons)
 
+		self._apply_main_mode()
+
 	def disconnect(self):
 		for button in self._modes_buttons:
 			button.remove_value_listener(self._mode_value)
@@ -134,10 +149,39 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._config_button = None
 		ModeSelectorComponent.disconnect(self)
 
+	def _apply_main_mode(self):
+		# Stop all components first
+		self._setup_session(False, False)
+		self._setup_instrument_controller(False)
+		self._setup_device_controller(False)
+		self._setup_mixer(False)
+
+		if getattr(self, "_stepseq", None) is not None:
+			self._stepseq.set_enabled(False)
+		if getattr(self, "_stepseq2", None) is not None:
+			self._stepseq2.set_enabled(False)
+
+		# Apply selected mode
+		if self._main_mode_index == 0:
+			self._control_surface.show_message("SESSION MODE")
+			self._setup_session(True, True)
+
+		elif self._main_mode_index == 1:
+			self._control_surface.show_message("INSTRUMENT MODE")
+			self._setup_instrument_controller(True)
+
+		elif self._main_mode_index == 2:
+			self._control_surface.show_message("DRUM STEPSEQ MODE")
+			self._setup_step_sequencer(True)
+
+		elif self._main_mode_index == 3:
+			self._control_surface.show_message("MELODIC STEPSEQ MODE")
+			self._setup_step_sequencer2(True)
+
 	def session_component(self):
 		return self._session
 
-	def _update_mode(self):
+	"""def _update_mode(self):
 		mode = self._modes_heap[-1][0] #get first value of last _modes_heap tuple. _modes_heap tuple structure is (mode, sender, observer) 
 
 		assert mode in range(self.number_of_modes()) # 8 for this script
@@ -158,71 +202,66 @@ class MainSelectorComponent(ModeSelectorComponent):
 		else:
 			self._main_mode_index = mode
 			self.update()
-
+	"""
 	def set_mode(self, mode):
-		self._clean_heap()
-		self._modes_heap = [(mode, None, None)]
-		# if ((self.__main_mode_index != mode) or (mode == 3) or True):
-		# 	self._main_mode_index = mode
-		# 	self._update_mode()
-		# 	self.update()
+		self._main_mode_index = mode
+		self._apply_main_mode()
 
 	def _mode_value(self, value, sender):
-		self.log_message("DEBUG sender:"+str(sender))
 		if sender is None:
-			self.log_message("⚠️ sender is None!")
 			return
 
-		assert len(self._modes_buttons) > 0
-		assert isinstance(value, int)
-		assert sender in self._modes_buttons
-		session_mode_changed = False
+		if sender not in self._modes_buttons:
+			return
+
 		new_mode = self._modes_buttons.index(sender)
 
-		if value > 0 and new_mode == 2:
-			self._clean_heap()
+		# -----------------------
+		# BUTTON PRESS
+		# -----------------------
+		if value > 0:
 
-			self._main_mode_index = 2
-			self._sub_mode_list[2] = 1  # melodic
+			self._main_mode_index = new_mode
 
-			self._modes_heap = [(2, sender, None)]
+			# long press logic (Session button only)
+			if new_mode == 0:
+				now = int(round(time.time() * 1000))
 
-			self._update_mode()
+				if self._last_mode_index == 0:
+					self._last_session_mode_button_press = now
+				else:
+					if now - self._last_session_mode_button_press < self._long_press:
+						self._pro_session_on = not self._pro_session_on
+
+			self._last_mode_index = new_mode
+			self._apply_main_mode()
+
+		# -----------------------
+		# BUTTON RELEASE
+		# -----------------------
+		else:
+			# ONLY bookkeeping — no framework call
+			self._last_mode_index = new_mode
 			self.update()
-			return
 
-		now = int(round(time.time() * 1000))
-		if new_mode == 0 and self._last_mode_index == 0:
-			if value > 0:
-				self._last_session_mode_button_press = now
-			else: 
-				if now - self._last_session_mode_button_press < self._long_press:
-					self._pro_session_on = not self._pro_session_on
-					session_mode_changed = True
-		self._last_mode_index = new_mode			 
-		super(MainSelectorComponent, self)._mode_value(value, sender)
-		if session_mode_changed == True:
-			self._update_mode() 
 
 	def number_of_modes(self):
-		return 1 + 3 + 3 + 1
+		return 4 #1 + 3 + 3 + 1
 
 	def on_enabled_changed(self):
 		self.update()
 
 	def _update_mode_buttons(self):
-		self._modes_buttons[0].set_on_off_values("Mode.Session.On","Mode.Session.Off")
-		self._modes_buttons[3].set_on_off_values("Mode.Mixer.On","Mode.Mixer.Off")
-		mode1 = self.getSkinName(Settings.USER_MODES_1[self._sub_mode_list[1]])
-		mode2 = self.getSkinName(Settings.USER_MODES_2[self._sub_mode_list[2]])
-		self._modes_buttons[1].set_on_off_values("Mode."+mode1+".On","Mode."+mode1+".Off")
-		self._modes_buttons[2].set_on_off_values("Mode."+mode2+".On","Mode."+mode2+".Off")
-		
-		for index in range(4):
-			if (index == self._main_mode_index):
-				self._modes_buttons[index].turn_on()
+		self._modes_buttons[0].set_on_off_values("Mode.Session.On", "Mode.Session.Off")
+		self._modes_buttons[1].set_on_off_values("Mode.Note.On", "Mode.Note.Off")  # instrument
+		self._modes_buttons[2].set_on_off_values("Mode.StepSequencer.On", "Mode.StepSequencer.Off")  # drum
+		self._modes_buttons[3].set_on_off_values("Mode.StepSequencer2.On", "Mode.StepSequencer2.Off")  # melodic
+
+		for i in range(4):
+			if i == self._main_mode_index:
+				self._modes_buttons[i].turn_on()
 			else:
-				self._modes_buttons[index].turn_off()
+				self._modes_buttons[i].turn_off()
 		
 	def getSkinName(self, user2Mode):
 		if user2Mode=="instrument":
@@ -243,36 +282,37 @@ class MainSelectorComponent(ModeSelectorComponent):
 		# in this code, midi channels start at 0.
 		# so channels range from 0 - 15.
 		# mapping to 1-16 in the real world
-
 		if self._main_mode_index == 0:
-			new_channel = 0  # session
-
+			return 0
 		elif self._main_mode_index == 1:
-			if self._sub_mode_list[self._main_mode_index] == 0:
-				new_channel = 11  # instrument controller
-				# instrument controller uses base channel plus the 4 next ones. 11,12,13,14,15
-				if self._instrument_controller != None:
-					self._instrument_controller.base_channel = new_channel
-			elif self._sub_mode_list[self._main_mode_index] == 1:
-				new_channel = 3  # device controller
-			elif self._sub_mode_list[self._main_mode_index] == 2:
-				new_channel = 4  # plain user mode 1
-
+			return 11
 		elif self._main_mode_index == 2:
-			if self._sub_mode_list[self._main_mode_index] == 0:
-				new_channel = 1  # step seq
-			elif self._sub_mode_list[self._main_mode_index] == 1:
-				new_channel = 2  # melodic step seq
-			elif self._sub_mode_list[self._main_mode_index] == 2:
-				new_channel = 5  # plain user mode 2
+			return 1
+		elif self._main_mode_index == 3:
+			return 2
 
-		elif self._main_mode_index == 3:  # mixer modes
-			# mixer uses base channel 7 and the 4 next ones.
-			new_channel = 6 + self._sub_modes.mode()  # 6,7,8,9,10
 
-		return new_channel
-	
 	def update(self):
+		assert (self._modes_buttons != None)
+
+		if not self.is_enabled():
+			return
+
+		self._update_mode_buttons()
+
+		self._session.set_allow_update(False)
+		self._zooming.set_allow_update(False)
+
+		self._config_button.send_value(40)
+		self._config_button.send_value(1)
+
+		# ONLY ONE SOURCE OF TRUTH NOW
+		self._apply_main_mode()
+
+		self._session.set_allow_update(True)
+		self._zooming.set_allow_update(True)
+
+	"""def update(self):
 		assert (self._modes_buttons != None)
 		if self.is_enabled():
 
@@ -321,8 +361,9 @@ class MainSelectorComponent(ModeSelectorComponent):
 
 			self._session.set_allow_update(True)
 			self._zooming.set_allow_update(True)
-		
-	def _setup_sub_mode(self, mode):
+	"""
+
+	"""def _setup_sub_mode(self, mode):
 		as_active = True
 		as_enabled = True
 		if mode == "instrument":
@@ -393,8 +434,10 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._osd.clear()
 			self._osd.mode = "User 2"
 			self._osd.update()
-		
+	"""
 	def _setup_session(self, as_active, as_navigation_enabled):
+		if getattr(self, "_session", None) is None:
+			return
 		assert isinstance(as_active, type(False))#assert is boolean
 		for button in self._nav_buttons:
 			if as_navigation_enabled:
@@ -557,7 +600,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 
 	def _setup_step_sequencer2(self, as_active):
 		if(self._stepseq2 != None):
-			#if(self._stepseq2.is_enabled() != as_active):
+			#sif(self._stepseq2.is_enabled() != as_active):
 			if as_active:
 				self._activate_scene_buttons(True)
 				self._activate_matrix(True)
@@ -578,7 +621,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			else:
 				self._sub_modes.release_controls()
 
-		self._sub_modes.set_enabled(as_active)
+		#self._sub_modes.set_enabled(as_active)
 
 	def _init_session(self):
 		#self._session.set_stop_clip_value("Session.StopClip")
