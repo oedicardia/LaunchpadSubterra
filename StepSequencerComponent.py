@@ -63,8 +63,9 @@ class StepSequencerComponent(CompoundComponent):
         self._root_note = 36
         self._chromatic_scale = []
         self._diatonic_scale = []
-        
         self._beat = 0
+        # Initialize _loop_page_offset
+        self._loop_page_offset = 0
         # setup
         self._set_loop_selector()
         self._set_note_editor()
@@ -109,7 +110,7 @@ class StepSequencerComponent(CompoundComponent):
         self._cycle_button = None
         self._instrument_controller = None
         self._device_controller = None
-        self._loop_page_offset = 0
+        #self._loop_page_offset = 0 we don't want to reiniialize
         self._set_cycle_button(self._side_buttons[1])#Pan
 
 
@@ -849,34 +850,26 @@ class StepSequencerComponent(CompoundComponent):
     def _on_cycle_pressed(self, value, sender):
         if not self.is_enabled() or value == 0:
             return
-
         if self._clip is None:
             return
 
-        # --- compute max pages ---
-        steps_per_page = 8
+        # Calculate total blocks (each block = 8 steps)
+        steps_per_block = 8
         step_length = self._quantization
-
         clip_length = self._clip.loop_end - self._clip.loop_start
         total_steps = int(clip_length / step_length)
-        max_pages = max(0, int(total_steps / steps_per_page) - 1)
+        total_blocks = (total_steps + steps_per_block - 1) // steps_per_block  # Round up
+        max_pages = max(1, (total_blocks + 7) // 8)  # Number of pages (each page = 8 blocks)
 
-        # --- increment ONCE ---
-        self._loop_page_offset = (self._loop_page_offset + 1) % (max_pages + 1)
-
-        self._control_surface.show_message(
-            "Page offset: %d" % self._loop_page_offset
-        )
-
-        # --- update UI ---
-        self._update_cycle_button()
+        # Increment page offset (do NOT modify _block)
+        self._loop_page_offset = (self._loop_page_offset + 1) % max_pages
 
         if self._loop_selector:
-            self._loop_selector.update()
+            self._loop_selector.set_loop_page_offset(self._loop_page_offset)
+            self._loop_selector.update()  # This will redraw the buttons but NOT change _block
 
-        if self._note_editor:
-            self._note_editor.set_page(self._loop_selector._block)
-            self._note_editor.update()
+        self._control_surface.show_message("Page offset: %d" % self._loop_page_offset)
+        self._update_cycle_button()
 
     def _set_cycle_button(self, button):
         assert isinstance(button, (ButtonElement, type(None)))

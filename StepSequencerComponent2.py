@@ -103,6 +103,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_velocity_shifted = False
 		self._is_mute_shifted = False
 
+		# disable the lock but allow the code to be used in the future if desired
+		self._is_locked = False  # Add this line
+		self._lock_to_track = False  # Add this line
+
+
 	def disconnect(self):
 		self._step_sequencer = None
 		self._matrix = None
@@ -257,7 +262,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					# note and octave
 					found = False
-					for j in range(max(7, len(self._key_indexes))):
+					for j in range(min(7, len(self._key_indexes))):#was max
 						for octave in range(7):
 							if note_key == self._key_indexes[j] + 12 * (octave - 2) and not found:
 								found = True
@@ -266,7 +271,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				elif not self._is_monophonic:
 					# note
 					found = False
-					for j in range(max(7, len(self._key_indexes))):
+					for j in range(min(7, len(self._key_indexes))): #was max
 						if note_key == self._key_indexes[j] + 12 * (self._notes_octaves[i] - 2) and not found:
 							found = True
 							self._notes_pitches[i * 7 + j] = 1
@@ -444,6 +449,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			self._force_update = False
 
+			# for debuging
+			# play = -1 if self._playhead is None else int(self._playhead)
+			# self._control_surface.show_message(
+			# 	"page=%d offset=%d effective=%d play=%d" %
+			# 	(
+			# 		self._page,
+			# 		self._step_sequencer._loop_page_offset,
+			# 		self._get_effective_page(),
+			# 		play
+			# 	)
+			# )
+
 	def _matrix_value(self, value, x, y, is_momentary):  # matrix buttons listener
 		effective_page = self._get_effective_page()
 		if self.is_enabled() and self._matrix!=None:
@@ -499,7 +516,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								for x1 in range(start, end):
 									if y < 3 and self._notes_velocities[x1] < 6:
 										self._notes_velocities[x1] = self._notes_velocities[x1] + 1
-									if y > 3 and self._notes_velocities[x] > 0:
+									if y > 3 and self._notes_velocities[x1] > 0:
 										self._notes_velocities[x1] = self._notes_velocities[x1] - 1
 
 						else:
@@ -526,7 +543,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 # LOOP SELECTOR
 	def _get_effective_page(self):
-		return self._page + self._step_sequencer._loop_page_offset
+		return self._page
 
 
 # RANDOM
@@ -753,11 +770,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 class StepSequencerComponent2(StepSequencerComponent):
 
 	def __init__(self, matrix, side_buttons, top_buttons, control_surface):
-		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
+		# Initialization of _loop_page_offset is done in StepSequencerComponent
 		self._new_clip_pages = 1
 		self._name = "melodic step sequencer"
-		
-		
+		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
+
+
 	def _set_scale_selector(self):
 		super(StepSequencerComponent2, self)._set_scale_selector()
 		self._scale_selector._mode = "diatonic"
@@ -781,9 +799,12 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def _set_loop_selector(self):
 		self._loop_selector = self.register_component(LoopSelectorComponent(self, [
-			self._matrix.get_button(0, 7), self._matrix.get_button(1, 7), self._matrix.get_button(2, 7), self._matrix.get_button(3, 7),
-			self._matrix.get_button(4, 7), self._matrix.get_button(5, 7), self._matrix.get_button(6, 7), self._matrix.get_button(7, 7)
-		],self._control_surface))
+			self._matrix.get_button(0, 7), self._matrix.get_button(1, 7), self._matrix.get_button(2, 7),
+			self._matrix.get_button(3, 7),
+			self._matrix.get_button(4, 7), self._matrix.get_button(5, 7), self._matrix.get_button(6, 7),
+			self._matrix.get_button(7, 7)
+		], self._control_surface))
+		self._loop_selector.set_loop_page_offset(self._loop_page_offset)
 		self.set_left_button(self._top_buttons[2])
 		self.set_right_button(self._top_buttons[3])
 

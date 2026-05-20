@@ -290,6 +290,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			return 1
 		elif self._main_mode_index == 3:
 			return 2
+		return 0  # fallback safety
 
 
 	def update(self):
