@@ -370,6 +370,7 @@ class Colors:
             Playing = Rgb.PURPLE_HALF
             Selected = Rgb.BLUE
             InLoop = Rgb.BLUE_THIRD
+            Stopped = Rgb.DARK_GREY
 
         class Quantization:
             One = Rgb.GREEN

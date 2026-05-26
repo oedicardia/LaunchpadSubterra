@@ -158,9 +158,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             self._clip.start_marker = start
             self._clip.end_marker = end
 
-            self._debug(
-                f"APPLIED LOOP start={start} end={end}"
-            )
+            # self._debug(
+            #     f"APPLIED LOOP start={start} end={end}"
+            # )
 
         except (RuntimeError, IndexError) as e:
 
@@ -168,6 +168,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             return
 
         self.update()
+
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
 
@@ -376,62 +377,179 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
     def update(self):
+
         if self.is_enabled():
+
             self._get_clip_loop()
+
+            clip_is_playing = (
+                    self._clip is not None and
+                    self._clip.is_playing
+            )
+
             i = 0
+
             for button in self._buttons:
-                if self._clip == None:
-                    button.set_on_off_values("DefaultButton.Disabled", "DefaultButton.Disabled")
+
+                # -------------------------------------------------
+                # NO CLIP
+                # -------------------------------------------------
+
+                if self._clip is None:
+
+                    button.set_on_off_values(
+                        "DefaultButton.Disabled",
+                        "DefaultButton.Disabled"
+                    )
+
                     if self._cache[i] != button._off_value:
                         button.turn_off()
                         self._cache[i] = button._off_value
+
                 else:
-                    # Calculate the absolute block index for this button
-                    absolute_block = i + (self._loop_page_offset * 8)
+
+                    # -------------------------------------------------
+                    # ABSOLUTE BLOCK INDEX
+                    # -------------------------------------------------
+
+                    absolute_block = (
+                            i +
+                            (self._loop_page_offset * 8)
+                    )
+
+                    block_start = (
+                            absolute_block *
+                            self._blocksize *
+                            self._quantization
+                    )
+
+                    block_end = (
+                            (absolute_block + 1) *
+                            self._blocksize *
+                            self._quantization
+                    )
+
+                    # -------------------------------------------------
+                    # STATE CHECKS
+                    # -------------------------------------------------
+
                     in_loop = (
-                                      absolute_block * self._blocksize * self._quantization < self._loop_end) and (
-                                      absolute_block * self._blocksize * self._quantization >= self._loop_start)
-                    playing = self._playhead != None and self._playhead >= absolute_block * self._blocksize * self._quantization and self._playhead < (
-                            absolute_block + 1) * self._blocksize * self._quantization
-                    # _block is the relative index (0-7) within the current page
-                    selected = i == self._block
-                    if in_loop:
-                        if playing:
-                            if selected:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.SelectedPlaying"
-                            else:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.Playing"
+                            block_start < self._loop_end and
+                            block_start >= self._loop_start
+                    )
+
+                    playing = (
+                            self._playhead is not None and
+                            self._playhead >= block_start and
+                            self._playhead < block_end
+                    )
+
+                    selected = (i == self._block)
+
+                    # -------------------------------------------------
+                    # CLIP STOPPED
+                    # -------------------------------------------------
+
+                    if not clip_is_playing:
+
+                        if selected:
+
+                            # selected page dimmed
+                            self._cache[i] = (
+                                "StepSequencer.LoopSelector.InLoop"
+                            )
+
                         else:
-                            if selected:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.Selected"
-                            else:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.InLoop"
+
+                            # all others grey/off
+                            self._cache[i] = (
+                                "StepSequencer.LoopSelector.Stopped"
+                            )
+
+                    # -------------------------------------------------
+                    # CLIP PLAYING
+                    # -------------------------------------------------
+
                     else:
-                        if playing:
-                            if selected:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.SelectedPlaying"
+
+                        if in_loop:
+
+                            if playing:
+
+                                if selected:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.SelectedPlaying"
+                                    )
+
+                                else:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.Playing"
+                                    )
+
                             else:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.Playing"
+
+                                if selected:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.Selected"
+                                    )
+
+                                else:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.InLoop"
+                                    )
+
                         else:
-                            if selected:
-                                self._cache[
-                                    i] = "StepSequencer.LoopSelector.Selected"
+
+                            if playing:
+
+                                if selected:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.SelectedPlaying"
+                                    )
+
+                                else:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.Playing"
+                                    )
+
                             else:
-                                self._cache[i] = "DefaultButton.Disabled"
 
-                    if self._cache[
-                        i] != button._on_value or self._force:  # Enable/turn on all buttons
-                        button.set_on_off_values(self._cache[i], self._cache[i])
+                                if selected:
+
+                                    self._cache[i] = (
+                                        "StepSequencer.LoopSelector.Selected"
+                                    )
+
+                                else:
+
+                                    self._cache[i] = (
+                                        "DefaultButton.Disabled"
+                                    )
+
+                    # -------------------------------------------------
+                    # APPLY COLOR
+                    # -------------------------------------------------
+
+                    if (
+                            self._cache[i] != button._on_value or
+                            self._force
+                    ):
+                        button.set_on_off_values(
+                            self._cache[i],
+                            self._cache[i]
+                        )
+
                         button.turn_on()
-                i = i + 1
-            self._force = False
 
+                i += 1
+
+            self._force = False
     # Make a copy of the current loop to the next N empty blocks OK
     def _extend_clip_content(self, loop_start, old_loop_end, new_loop_end):
         if (self._no_notes_in_range(old_loop_end, new_loop_end, True)):
