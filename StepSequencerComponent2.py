@@ -51,6 +51,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], 
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]
 
+		# debug
+		self._control_surface.log_message("MATRIX ASSIGNED")
+
 		# clip
 		self._clip = None
 		self._note_cache = []
@@ -156,6 +159,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def set_enabled(self, enabled):
 		ControlSurfaceComponent.set_enabled(self, enabled)
+		# debug
+		self._control_surface.log_message(
+			f"{self.__class__.__name__} enabled={enabled}"
+		)
+
 		if not enabled:
 			self._remove_scale_listeners()
 		else:
@@ -324,31 +332,50 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_matrix(self, matrix):
 		assert isinstance(matrix, (ButtonMatrixElement, type(None)))
 		self._grid_buffer = [
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0]
 		]
 		self._grid_back_buffer = [
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
 			[0, 0, 0, 0, 0, 0, 0, 0],
-		 	[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
-			[0, 0, 0, 0, 0, 0, 0, 0], 
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+		 	[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0]
 		]
-		if matrix != self._matrix:
-			if self._matrix != None:
-				self._matrix.remove_value_listener(self._matrix_value)
-			self._matrix = matrix
-			if self._matrix != None:
-				self._matrix.add_value_listener(self._matrix_value)
+
+		# remove old listeners
+		if self._matrix != None:
+			for x in range(8):
+				for y in range(7):
+					button = self._matrix.get_button(x, y)
+					button.remove_value_listener(self._matrix_value)
+
+		# assign FIRST
+		self._matrix = matrix
+
+		# add listeners to NEW matrix
+		if self._matrix != None:
+			for x in range(8):
+				for y in range(7):
+					button = self._matrix.get_button(x, y)
+					button.add_value_listener(
+						self._matrix_value,
+						identify_sender=True
+					)
+
+		self._force_update = True
+
+		# debug
+		self._control_surface.log_message("MATRIX ASSIGNED")
 
 	def _update_matrix(self):  # step grid LEDs are updated here
 		if self.is_enabled() and self._matrix != None:
@@ -461,7 +488,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# 	)
 			# )
 
-	def _matrix_value(self, value, x, y, is_momentary):  # matrix buttons listener
+	def _matrix_value(self, value, sender):# x, y, is_momentary):  # matrix buttons listener
+		for xx in range(8):
+			for yy in range(7):
+				if self._matrix.get_button(xx, yy) == sender:
+					x = xx
+					y = yy
+		# debug
+		self._control_surface.log_message("MATRIX CALLBACK FIRED")
+		self._control_surface.log_message(
+			f"MATRIX PRESS value={value} x={x} y={y}")
+
 		effective_page = self._get_effective_page()
 		if self.is_enabled() and self._matrix!=None:
 			if self._clip == None:
@@ -476,7 +513,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					start = effective_page * 8
 					end = (effective_page + 1) * 8
 
-				if ((value != 0) or (not is_momentary)) and y < 7:
+				if ((value != 0) or (not sender.is_momentary())) and y < 7:
 					idx = self._get_step_index(x)
 					if self._mode == STEPSEQ_MODE_NOTES:
 						if self._is_notes_pitches_shifted:
@@ -789,6 +826,7 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._track_controller.set_next_track_button(self._top_buttons[3])
 
 	def _set_note_editor(self):
+		self._clear_side_button_listeners()
 		self._note_editor = self.register_component(MelodicNoteEditorComponent(self, self._matrix, self._side_buttons, self._control_surface))
 
 	def _set_mute_shift_function(self):
@@ -896,3 +934,27 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def _mode_button_value(self, value, sender):
 		pass
+
+	def _clear_side_button_listeners(self):
+
+		for button in self._side_buttons:
+
+			try:
+				button.reset()
+			except:
+				pass
+
+			try:
+				button.remove_value_listener(self._mode_button_value)
+			except:
+				pass
+
+			try:
+				button.remove_value_listener(self._sub_mode_value)
+			except:
+				pass
+
+			try:
+				button.remove_value_listener(self._mode_value)
+			except:
+				pass

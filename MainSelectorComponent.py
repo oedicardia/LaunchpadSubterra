@@ -118,6 +118,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 		#User2 stepSequencer (Retro style)
 		self._stepseq2 = StepSequencerComponent2(self._matrix, self._side_buttons, self._nav_buttons, self._control_surface)
 		self._stepseq2.set_osd(self._osd)
+		# debug
+		# for button, (x, y) in self._matrix.iterbuttons():
+		# 	self.log_message(
+		# 		f"button {x},{y} listeners={button.value_has_listener(self._stepseq2._matrix_value)}"
+		# 	)
 		
 		#User1 Instrument controller (Scale)
 		self._instrument_controller = InstrumentControllerComponent(self._matrix, self._side_buttons, self._nav_buttons, self._control_surface, self._note_repeat)
@@ -608,21 +613,39 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._activate_navigation_buttons(True)
 				self._config_button.send_value(32)
 				self._stepseq2.set_enabled(True)
+				self._stepseq2.update()
 			else:
 				self._stepseq2.set_enabled(False)
+		# debug
+		self.log_message(
+			f"STEPSEQ2 active={as_active} "
+			f"submodes={self._sub_modes.is_enabled()} "
+			f"device={self._device_controller.is_enabled()}"
+		)
 
 	def _setup_mixer(self, as_active):
+
+		# object not created yet during init
+		if not hasattr(self, "_sub_modes") or self._sub_modes is None:
+			return
+
 		assert isinstance(as_active, type(False))
+
 		if as_active:
 			self._activate_navigation_buttons(True)
 			self._activate_scene_buttons(True)
 			self._activate_matrix(True)
-			if(self._sub_modes.is_enabled()):# go back to default mode
+
+			self._sub_modes.set_enabled(True)
+
+			if self._sub_modes.is_enabled():
 				self._sub_modes.set_mode(-1)
 			else:
 				self._sub_modes.release_controls()
 
-		#self._sub_modes.set_enabled(as_active)
+		else:
+			self._sub_modes.set_enabled(False)
+			self._sub_modes.release_controls()
 
 	def _init_session(self):
 		#self._session.set_stop_clip_value("Session.StopClip")

@@ -99,36 +99,46 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     # Write LoopSelector Values to Live's Clip loop values (loop and marker) OK
     def set_clip_loop(self, start, end):
-        if self._clip != None:
 
-            # --- SANITY CHECKS ---
-            clip_length = max(
+        if self._clip is None:
+            return
+
+        try:
+
+            # Current valid clip range
+            clip_max = max(
+                self._clip.length,
                 self._clip.loop_end,
                 self._clip.end_marker,
                 end
             )
 
-            start = max(0, start)
-            end = max(start + self._quantization, end)
-            # ---------------------
+            # Sanitize values
+            start = max(0.0, min(start, clip_max))
+            end = max(start + self._quantization, min(end, clip_max))
+
+            # Prevent invalid ranges
+            if start >= end:
+                return
 
             self._loop_start = start
             self._loop_end = end
 
-            try:
-                if self._loop_start >= self._clip.loop_end:
-                    self._clip.loop_end = self._loop_end
-                    self._clip.loop_start = self._loop_start
-                    self._clip.end_marker = self._loop_end
-                    self._clip.start_marker = self._loop_start
-                else:
-                    self._clip.loop_start = self._loop_start
-                    self._clip.loop_end = self._loop_end
-                    self._clip.start_marker = self._loop_start
-                    self._clip.end_marker = self._loop_end
+            # IMPORTANT:
+            # Expand loop first if needed
+            if self._loop_start >= self._clip.loop_end:
+                self._clip.loop_end = self._loop_end
 
-            except RuntimeError:
-                return
+            # Apply loop bounds first
+            self._clip.loop_start = self._loop_start
+            self._clip.loop_end = self._loop_end
+
+            # Then markers
+            self._clip.start_marker = self._loop_start
+            self._clip.end_marker = self._loop_end
+
+        except (RuntimeError, IndexError):
+            return
 
             self.update()
     # def set_clip_loop(self, start, end):
