@@ -52,7 +52,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]
 
 		# debug
-		self._control_surface.log_message("MATRIX ASSIGNED")
+		# self._control_surface.log_message("MATRIX ASSIGNED")
 
 		# clip
 		self._clip = None
@@ -160,9 +160,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_enabled(self, enabled):
 		ControlSurfaceComponent.set_enabled(self, enabled)
 		# debug
-		self._control_surface.log_message(
-			f"{self.__class__.__name__} enabled={enabled}"
-		)
+		# self._control_surface.log_message(
+		# 	f"{self.__class__.__name__} enabled={enabled}"
+		# )
 
 		if not enabled:
 			self._remove_scale_listeners()
@@ -375,7 +375,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._force_update = True
 
 		# debug
-		self._control_surface.log_message("MATRIX ASSIGNED")
+		# self._control_surface.log_message("MATRIX ASSIGNED")
 
 	def _update_matrix(self):  # step grid LEDs are updated here
 		if self.is_enabled() and self._matrix != None:
@@ -495,9 +495,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					x = xx
 					y = yy
 		# debug
-		self._control_surface.log_message("MATRIX CALLBACK FIRED")
-		self._control_surface.log_message(
-			f"MATRIX PRESS value={value} x={x} y={y}")
+		# self._control_surface.log_message("MATRIX CALLBACK FIRED")
+		# self._control_surface.log_message(
+		# 	f"MATRIX PRESS value={value} x={x} y={y}")
 
 		effective_page = self._get_effective_page()
 		if self.is_enabled() and self._matrix!=None:

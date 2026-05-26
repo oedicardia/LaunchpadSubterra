@@ -16,6 +16,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._notes = None  # notes of the clip
         self._playhead = None  # contains the clip playing position
 
+        self._full_loop_start = 0.0
+        self._full_loop_end = 0.0
         self._loop_end = 0
         self._loop_start = 0
 
@@ -51,6 +53,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     def set_clip(self, clip):
         self._clip = clip
+
+        if clip is not None:
+            self._full_loop_start = clip.loop_start
+            self._full_loop_end = clip.loop_end
 
     @property
     def _mode(self):
@@ -105,7 +111,6 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
         try:
 
-            # Current valid clip range
             clip_max = max(
                 self._clip.length,
                 self._clip.loop_end,
@@ -113,58 +118,71 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 end
             )
 
-            # Sanitize values
             start = max(0.0, min(start, clip_max))
             end = max(start + self._quantization, min(end, clip_max))
 
-            # Prevent invalid ranges
             if start >= end:
                 return
 
             self._loop_start = start
             self._loop_end = end
 
+            # ----------------------------------------
             # IMPORTANT:
-            # Expand loop first if needed
-            if self._loop_start >= self._clip.loop_end:
-                self._clip.loop_end = self._loop_end
+            # expand markers FIRST
+            # ----------------------------------------
 
-            # Apply loop bounds first
-            self._clip.loop_start = self._loop_start
-            self._clip.loop_end = self._loop_end
+            if end > self._clip.end_marker:
+                self._clip.end_marker = end
 
-            # Then markers
-            self._clip.start_marker = self._loop_start
-            self._clip.end_marker = self._loop_end
+            if start < self._clip.start_marker:
+                self._clip.start_marker = start
 
-        except (RuntimeError, IndexError):
+            # ----------------------------------------
+            # expand loop bounds
+            # ----------------------------------------
+
+            if end > self._clip.loop_end:
+                self._clip.loop_end = end
+
+            if start < self._clip.loop_start:
+                self._clip.loop_start = start
+
+            # ----------------------------------------
+            # final exact values
+            # ----------------------------------------
+
+            self._clip.loop_start = start
+            self._clip.loop_end = end
+
+            self._clip.start_marker = start
+            self._clip.end_marker = end
+
+            self._debug(
+                f"APPLIED LOOP start={start} end={end}"
+            )
+
+        except (RuntimeError, IndexError) as e:
+
+            self._debug(f"SET LOOP FAILED: {str(e)}")
             return
 
-            self.update()
-    # def set_clip_loop(self, start, end):
-    #     if self._clip != None:
-    #         self._loop_end = end
-    #         self._loop_start = start
-    #         if self._loop_start >= self._clip.loop_end:
-    #             self._clip.loop_end = self._loop_end
-    #             self._clip.loop_start = self._loop_start
-    #             self._clip.end_marker = self._loop_end
-    #             self._clip.start_marker = self._loop_start
-    #         else:
-    #             self._clip.loop_start = self._loop_start
-    #             self._clip.loop_end = self._loop_end
-    #             self._clip.start_marker = self._loop_start
-    #             self._clip.end_marker = self._loop_end
-    #         self.update()
-
+        self.update()
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
 
-    # LoopSelector listener OK
     def _loop_button_value(self, value, sender):
+
         if self.is_enabled():
+
             idx = self._buttons.index(sender)
+            self._debug(
+                f"button={idx} value={value} "
+                f"loop1={self._loop_point1} "
+                f"loop2={self._loop_point2}"
+            )
             if value > 0:
+
                 pressed = 0
                 for b in self._buttons:
                     if b.is_pressed():
@@ -172,61 +190,165 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
                 if pressed > 2:
                     return
+
                 if self._loop_point1 == -1:
                     self._loop_point1 = idx
+
                 elif self._loop_point2 == -1:
                     self._loop_point2 = idx
 
             elif self._loop_point1 != -1:
+
                 setloop = self._loop_point2 != -1
+
                 if self._loop_point2 == -1:
+
                     self._loop_point2 = idx
-                    if self._last_button_idx == idx and (time.time() - self._last_button_time) < 0.25:
+
+                    if (
+                            self._last_button_idx == idx and
+                            (time.time() - self._last_button_time) < 0.25
+                    ):
+                        # debug
+                        self._debug("DOUBLE TAP DETECTED")
                         setloop = True
                         self._last_button_time = time.time()
                         self._last_button_idx = -1
 
                 if self._loop_point1 != -1 and self._loop_point2 != -1:
+
                     start = min(self._loop_point1, self._loop_point2)
                     end = max(self._loop_point1, self._loop_point2) + 1
 
-                    # _block is the relative index (0-7)
-                    self._block = start  # This is correct: start is 0-7
+                    # relative block index (0-7)
+                    self._block = start
 
                     if setloop:
-                        # Use absolute block for loop operations
+
+                        # absolute block indexes
                         absolute_start = start + (self._loop_page_offset * 8)
                         absolute_end = end + (self._loop_page_offset * 8)
+                        self._debug(
+                            f"selection start={absolute_start} "
+                            f"end={absolute_end}"
+                        )
                         if absolute_end <= absolute_start:
                             return
-                        if self._is_mute_shifted:
-                            if self._is_velocity_shifted:
-                                self._mute_notes_in_range(
-                                    absolute_start * self._blocksize * self._quantization,
-                                    absolute_end * self._blocksize * self._quantization)
-                            else:
-                                self._delete_notes_in_range(
-                                    absolute_start * self._blocksize * self._quantization,
-                                    absolute_end * self._blocksize * self._quantization)
-                        else:
-                            if self._is_velocity_shifted:
-                                self._extend_clip_content(
-                                    absolute_start * self._blocksize * self._quantization,
-                                    self._loop_end,
-                                    absolute_end * self._blocksize * self._quantization)
-                            self.set_clip_loop(
-                                absolute_start * self._blocksize * self._quantization,
-                                absolute_end * self._blocksize * self._quantization)
 
-                    # Calculate the absolute block for set_page
-                    absolute_block = self._block + (self._loop_page_offset * 8)
-                    # set sequencer focus
+                        new_start = (
+                                absolute_start *
+                                self._blocksize *
+                                self._quantization
+                        )
+
+                        new_end = (
+                                absolute_end *
+                                self._blocksize *
+                                self._quantization
+                        )
+
+                        # -----------------------------------------
+                        # MUTE / DELETE MODES
+                        # -----------------------------------------
+                        if self._is_mute_shifted:
+
+                            if self._is_velocity_shifted:
+
+                                self._mute_notes_in_range(
+                                    new_start,
+                                    new_end
+                                )
+
+                            else:
+
+                                self._delete_notes_in_range(
+                                    new_start,
+                                    new_end
+                                )
+
+                        # -----------------------------------------
+                        # NORMAL LOOP SELECTION
+                        # -----------------------------------------
+                        else:
+
+                            # SAME LOOP SELECTED AGAIN
+                            # -> restore full clip
+                            if self._is_selecting_current_loop(absolute_start, absolute_end):
+
+                                self._control_surface.log_message(
+                                    "[LoopSelector] RESTORING FULL LOOP "
+                                    "stored=(%s,%s)" % (
+                                        self._full_loop_start,
+                                        self._full_loop_end
+                                    )
+                                )
+
+                                self.set_clip_loop(
+                                    self._full_loop_start,
+                                    self._full_loop_end
+                                )
+
+                            else:
+
+                                if self._is_velocity_shifted:
+                                    self._extend_clip_content(
+                                        new_start,
+                                        self._loop_end,
+                                        new_end
+                                    )
+
+                                self._debug(
+                                    f"SETTING LOOP "
+                                    f"{new_start} -> {new_end}"
+                                )
+                                self.set_clip_loop(
+                                    new_start,
+                                    new_end
+                                )
+
+                    # sequencer page follows selection
+                    absolute_block = (
+                            self._block +
+                            (self._loop_page_offset * 8)
+                    )
+
                     self._step_sequencer.set_page(absolute_block)
+
                     self._loop_point1 = -1
                     self._loop_point2 = -1
+
                     self.update()
+
                 self._last_button_time = time.time()
                 self._last_button_idx = idx
+
+    def _is_selecting_current_loop(self, start, end):
+
+        block_size = (
+                self._blocksize *
+                self._quantization
+        )
+
+        current_start_block = int(
+            round(self._clip.loop_start / block_size)
+        )
+
+        current_end_block = int(
+            round(self._clip.loop_end / block_size)
+        )
+
+        same = (
+                current_start_block == start and
+                current_end_block == end
+        )
+
+        self._debug(
+            f"current=({current_start_block},{current_end_block}) "
+            f"selected=({start},{end}) "
+            f"same={same}"
+        )
+
+        return same
 
     # Index check for page boundaries scroll OK
     def can_scroll(self, blocks):
@@ -368,3 +490,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                                   not note[4]])  # Negate mute state
         self._clip.select_all_notes()
         self._clip.replace_selected_notes(tuple(new_notes))
+
+    # debug
+    def _debug(self, msg):
+        self._control_surface.log_message("[LoopSelector] " + str(msg))

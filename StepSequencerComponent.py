@@ -313,7 +313,7 @@ class StepSequencerComponent(CompoundComponent):
             self._track_controller.set_enabled(enabled)    
             self._note_editor.set_enabled(enabled)
             # debug
-            self._control_surface.log_message("MATRIX OWNER = " + str(self._matrix))
+            # self._control_surface.log_message("MATRIX OWNER = " + str(self._matrix))
 
             # update clip notes as they might have changed while we were sleeping
             self.on_clip_slot_changed()

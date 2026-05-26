@@ -617,11 +617,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 			else:
 				self._stepseq2.set_enabled(False)
 		# debug
-		self.log_message(
-			f"STEPSEQ2 active={as_active} "
-			f"submodes={self._sub_modes.is_enabled()} "
-			f"device={self._device_controller.is_enabled()}"
-		)
+		# self.log_message(
+		# 	f"STEPSEQ2 active={as_active} "
+		# 	f"submodes={self._sub_modes.is_enabled()} "
+		# 	f"device={self._device_controller.is_enabled()}"
+		# )
 
 	def _setup_mixer(self, as_active):
 
