@@ -185,13 +185,13 @@ class Launchpad(ControlSurface):
 			# and request update 
 			self._selector.update()
 			if self._lpx:
-				self.log_message("LaunchPad_Subterra_L (LPX) Loaded !")
+				self.log_message("LaunchPad_Subterra (LPX) Loaded !")
 			elif self._mk3_rgb:
-				self.log_message("LaunchPad_Subterra_L (mk3) Loaded !")
+				self.log_message("LaunchPad_Subterra (mk3) Loaded !")
 			elif self._mk2_rgb:
-				self.log_message("LaunchPad_Subterra_L (mk2) Loaded !")
+				self.log_message("LaunchPad_Subterra (mk2) Loaded !")
 			else:
-				self.log_message("LaunchPad_Subterra_L (classic) Loaded !")
+				self.log_message("LaunchPad_Subterra (classic) Loaded !")
 				
 	def disconnect(self):
 		self._suppress_send_midi = True

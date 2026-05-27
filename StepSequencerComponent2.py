@@ -33,8 +33,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		self._step_sequencer = step_sequencer
 
-		self._clip = None
-		self._playhead = None
+		# ths needs to be right after self._step_sequencer = step_sequencer
+		self._clip_slot = None
 
 		self._matrix = matrix
 		self._side_buttons = side_buttons
@@ -53,11 +53,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		# debug
 		# self._control_surface.log_message("MATRIX ASSIGNED")
+		# init
+		self._initializing = True
 
-		# clip
+
+		# clip (rest)
 		self._clip = None
+		self._playhead = None
 		self._note_cache = []
 		self._force_update = True
+		#self.song().view.add_selected_track_listener(self._on_selected_track_changed)
+		#self.song().view.add_selected_scene_listener(self._on_selected_scene_changed)
+		self._register_clip_slot_listener()
+
 		self._init_data()
 
 		self._velocity_map = [0, 30, 60, 80, 100, 115, 127]
@@ -80,8 +88,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._mode = STEPSEQ_MODE_NOTES
 
 		# buttons
-		self._random_button = None
-		self.set_random_button(self._side_buttons[3])
+		self._clip_toggle_button = None
+		self.set_clip_toggle_button(self._side_buttons[2])
 
 		self._mode_notes_lengths_button = None
 		self.set_mode_notes_lengths_button(self._side_buttons[4])
@@ -89,12 +97,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._last_notes_lengths_button_press = time.time()
 
 		self._mode_notes_octaves_button = None
-		self.set_mode_notes_octaves_button(self._side_buttons[5])
+		self.set_mode_notes_octaves_button(self._side_buttons[6])
 		self._is_octave_shifted = False
 		self._last_notes_octaves_button_press = time.time()
 
 		self._mode_notes_velocities_button = None
-		self.set_mode_notes_velocities_button(self._side_buttons[6])
+		self.set_mode_notes_velocities_button(self._side_buttons[5])
 		self._is_notes_velocity_shifted = False
 		self._last_notes_velocity_button_press = time.time()
 
@@ -110,8 +118,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_locked = False  # Add this line
 		self._lock_to_track = False  # Add this line
 
+		# end init
+		self._initializing = False
+
 
 	def disconnect(self):
+		self._remove_highlighted_clip_slot_listener()
+		self._remove_clip_slot_listener()
 		self._step_sequencer = None
 		self._matrix = None
 		self._mode_notes_lengths_button = None
@@ -185,6 +198,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if self._clip != clip:
 			self._init_data()
 			self._clip = clip
+			self._register_clip_slot_listener()
 
 	def set_note_cache(self, note_cache):
 		if self._note_cache != note_cache:
@@ -203,24 +217,43 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return self._quantization
 
 	def set_quantization(self, quantization):
+
 		old_quantize = self._quantization
 		self._quantization = quantization
+
 		# update loop point
 		if self._clip != None and old_quantize != self._quantization:
-			self._loop_start = int(self._clip.loop_start * self._quantization / old_quantize)
-			self._loop_end = int(self._clip.loop_end * self._quantization / old_quantize)
-			if self._loop_start >= self._clip.loop_end:
-				self._clip.loop_end = self._loop_end
+
+			self._loop_start = int(
+				self._clip.loop_start *
+				self._quantization /
+				old_quantize
+			)
+
+			self._loop_end = int(
+				self._clip.loop_end *
+				self._quantization /
+				old_quantize
+			)
+
+			# safety
+			if self._loop_end <= self._loop_start:
+				self._loop_end = self._loop_start + 1
+
+			try:
 				self._clip.loop_start = self._loop_start
-				self._clip.end_marker = self._loop_end
-				self._clip.start_marker = self._loop_start
-			else:
-				self._clip.loop_start = self._loop_start
 				self._clip.loop_end = self._loop_end
+
 				self._clip.start_marker = self._loop_start
 				self._clip.end_marker = self._loop_end
-		# update clip notes
-		self._update_clip_notes()
+
+			except RuntimeError:
+				pass
+
+			# IMPORTANT:
+			# do not rewrite notes during controller init
+			if not self._initializing:
+				self._update_clip_notes()
 
 	def set_diatonic(self, diatonic):
 		self._diatonic = diatonic
@@ -318,7 +351,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._update_mode_notes_lengths_button()
 			self._update_mode_notes_velocities_button()
 			self._update_mode_notes_pitches_button()
-			self._update_random_button()
+			self._update_clip_toggle_button()
 			self._update_matrix()
 
 	def request_display_page(self):
@@ -583,65 +616,188 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return self._page
 
 
-# RANDOM
-	def _update_random_button(self):
-		if self.is_enabled():
-			if (self._random_button != None):
-				if self._clip != None:
-					self._random_button.set_on_off_values("StepSequencer2.Random.On", "StepSequencer2.Random.Off")
-					self._random_button.turn_off()
-				else:
-					self._random_button.set_light("DefaultButton.Disabled")
-					
-	def set_random_button(self, button):
+# CLIP ON/OFF
+	def _update_clip_toggle_button(self):
+
+		if not self.is_enabled():
+			return
+
+		if self._clip_toggle_button is None:
+			return
+
+		clip_slot = self.song().view.highlighted_clip_slot
+
+		if clip_slot is None or not clip_slot.has_clip:
+			self._clip_toggle_button.set_light(
+				"DefaultButton.Disabled"
+			)
+			return
+
+		clip = clip_slot.clip
+
+		self._clip_toggle_button.set_on_off_values(
+			"StepSequencer2.Clip.On",
+			"StepSequencer2.Clip.Off"
+		)
+
+		# BLINKING
+		if clip_slot.is_triggered:
+			self._clip_toggle_button.set_light(
+				"StepSequencer2.Clip.Triggered"
+			)
+
+		# PLAYING
+		elif clip.is_playing:
+			self._clip_toggle_button.turn_on()
+
+		# STOPPED
+		else:
+			self._clip_toggle_button.turn_off()
+
+	def set_clip_toggle_button(self, button):
+		# debug
+		#self._control_surface.log_message(">>>>>>>>>> set_clip_toggle_button called")
 		assert (isinstance(button, (ButtonElement, type(None))))
-		if (self._random_button != button):
-			if (self._random_button != None):
-				self._random_button.remove_value_listener(self._random_button_value)
-			self._random_button = button
-			if (self._random_button != None):
+
+		if (self._clip_toggle_button != button):
+
+			if (self._clip_toggle_button != None):
+				self._clip_toggle_button.remove_value_listener(
+					self._clip_toggle_button_value
+				)
+
+			self._clip_toggle_button = button
+
+			if (self._clip_toggle_button != None):
+
 				assert isinstance(button, ButtonElement)
-				self._random_button.add_value_listener(self._random_button_value, identify_sender=True)
 
-	def _random_button_value(self, value, sender):
-		assert (self._random_button != None)
+				self._clip_toggle_button.add_value_listener(
+					self._clip_toggle_button_value,
+					identify_sender=True
+				)
+
+	def _clip_toggle_button_value(self, value, sender):
+
+		assert (self._clip_toggle_button != None)
 		assert (value in range(128))
+
 		if self.is_enabled() and self._clip != None:
-			self._random_button.set_on_off_values("StepSequencer2.Random.On", "StepSequencer2.Random.Off")
-			if ((value ==0) and (sender.is_momentary())):
-				self._random_button.turn_off()
-				self._control_surface.show_message("randomise")
-				self._randomise()
-			else:
-				self._random_button.turn_on()
 
-	def _randomise(self):
-		start = int(self._clip.loop_start / self._quantization)
-		end = int(self._clip.loop_end / self._quantization)
-		effective_page = self._get_effective_page()
-		if (effective_page + 1) * 8 > end or effective_page * 8 < start:
-			# current page is outside of running loop.
-			# only update this page.
-			start = effective_page * 8
-			end = (effective_page + 1) * 8
+			if ((value != 0) or (not sender.is_momentary())):
 
-		for x in range(start, end):
-			if self._mode == STEPSEQ_MODE_NOTES:
-				val2 = randrange(0, 9)
-				for y in range(7):
-					self._notes_pitches[x * 7 + 6 - y] = val2 == y
-			elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-				val = randrange(2, 6)
-				self._notes_octaves[x] = val
-			elif self._mode == STEPSEQ_MODE_NOTES_VELOCITIES:
-				val = randrange(0, 7)
-				self._notes_velocities[x] = val
-			elif self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
-				val = randrange(0, 4)
-				self._notes_lengths[x] = val
+				clip_slot = self.song().view.highlighted_clip_slot
 
-		self._update_clip_notes()
+				if clip_slot != None:
 
+					# toggle playback
+					if clip_slot.is_playing:
+						clip_slot.stop()
+						self._control_surface.show_message("clip stopped")
+					else:
+						clip_slot.fire()
+						self._control_surface.show_message("clip playing")
+
+					self._control_surface.schedule_message(1,self._update_clip_toggle_button)
+
+	def _remove_highlighted_clip_slot_listener(self):
+		try:
+			self.song().view.remove_selected_track_listener(self._on_selected_track_changed)
+		except:
+			pass
+
+		try:
+			self.song().view.remove_selected_scene_listener(self._on_selected_scene_changed)
+		except:
+			pass
+
+	def _on_selected_track_changed(self):
+		self._on_clip_slot_changed()
+
+	def _on_selected_scene_changed(self):
+		self._on_clip_slot_changed()
+
+	def _on_clip_slot_changed(self):
+		self._register_clip_slot_listener()
+		self._update_clip_toggle_button()
+
+	def _remove_clip_slot_listener(self):
+
+		if self._clip_slot != None:
+
+			try:
+				if self._clip_slot.playing_status_has_listener(
+						self._on_clip_playing_changed):
+					self._clip_slot.remove_playing_status_listener(
+						self._on_clip_playing_changed)
+			except:
+				pass
+
+			try:
+				if self._clip_slot.is_triggered_has_listener(
+						self._on_clip_triggered_changed):
+					self._clip_slot.remove_is_triggered_listener(
+						self._on_clip_triggered_changed)
+			except:
+				pass
+
+		# REMOVE CLIP LISTENER
+		if self._clip != None:
+
+			try:
+				if self._clip.playing_status_has_listener(
+						self._on_clip_playing_changed):
+					self._clip.remove_playing_status_listener(
+						self._on_clip_playing_changed)
+			except:
+				pass
+
+	def _register_clip_slot_listener(self):
+
+		self._remove_clip_slot_listener()
+
+		self._clip_slot = self.song().view.highlighted_clip_slot
+
+		if self._clip_slot != None:
+
+			# SLOT PLAYING
+			try:
+				if not self._clip_slot.playing_status_has_listener(
+						self._on_clip_playing_changed):
+					self._clip_slot.add_playing_status_listener(
+						self._on_clip_playing_changed)
+			except:
+				pass
+
+			# SLOT TRIGGERED
+			try:
+				if not self._clip_slot.is_triggered_has_listener(
+						self._on_clip_triggered_changed):
+					self._clip_slot.add_is_triggered_listener(
+						self._on_clip_triggered_changed)
+			except:
+				pass
+
+			# CLIP PLAYING
+			if self._clip_slot.has_clip:
+
+				self._clip = self._clip_slot.clip
+
+				try:
+					if not self._clip.playing_status_has_listener(
+							self._on_clip_playing_changed):
+						self._clip.add_playing_status_listener(
+							self._on_clip_playing_changed)
+				except:
+					pass
+
+		self._update_clip_toggle_button()
+
+	def _on_clip_playing_changed(self):
+		self._update_clip_toggle_button()
+
+	def _on_clip_triggered_changed(self):
+		self._update_clip_toggle_button()
 
 # PITCHES
 	def _update_mode_notes_pitches_button(self):
@@ -757,8 +913,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if ((value ==0) and (sender.is_momentary())):
 				self._is_mute_shifted = False
 				self._is_notes_velocities_shifted = False
-				self.set_mode(STEPSEQ_MODE_NOTES_VELOCITIES)
-				self._control_surface.show_message("velocity")
+
+				# TOGGLE BETWEEN VELOCITIES <-> NOTES
+				if self._mode == STEPSEQ_MODE_NOTES_VELOCITIES:
+					self.set_mode(STEPSEQ_MODE_NOTES)
+					self._control_surface.show_message("pitch")
+				else:
+					self.set_mode(STEPSEQ_MODE_NOTES_VELOCITIES)
+					self._control_surface.show_message("velocity")
+
 				self.update()
 				self._step_sequencer._update_OSD()
 			else:
@@ -793,13 +956,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _mode_button_notes_lengths_value(self, value, sender):
 		assert (self._mode_notes_lengths_button != None)
 		assert (value in range(128))
+
 		if self.is_enabled() and self._clip != None:
-			if ((value ==0) and (sender.is_momentary())):
+
+			if ((value == 0) and (sender.is_momentary())):
+
 				self._is_notes_lengths_shifted = False
-				self.set_mode(STEPSEQ_MODE_NOTES_LENGTHS)
+
+				# TOGGLE BETWEEN LENGTHS <-> NOTES
+				if self._mode == STEPSEQ_MODE_NOTES_LENGTHS:
+					self.set_mode(STEPSEQ_MODE_NOTES)
+					self._control_surface.show_message("pitch")
+				else:
+					self.set_mode(STEPSEQ_MODE_NOTES_LENGTHS)
+					self._control_surface.show_message("length")
+
 				self.update()
-				self._control_surface.show_message("length")
 				self._step_sequencer._update_OSD()
+
 			else:
 				self._is_notes_lengths_shifted = True
 
@@ -849,7 +1023,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 	def _update_buttons(self):
 		self._update_quantization_button()
 		#self._update_lock_button()
-		self._update_cycle_button()
+		self._update_clip_toggle_button()
+		#self._update_cycle_button()
 		self._update_scale_selector_button()
 		self._update_left_button()
 		self._update_right_button()
@@ -930,7 +1105,7 @@ class StepSequencerComponent2(StepSequencerComponent):
 	def _update_mode_button(self):
 		if self.is_enabled():
 			if (self._mode_button != None):
-				self._mode_button.set_on_off_values("DefaultButton.Disaled")
+				self._mode_button.set_on_off_values("DefaultButton.Disabled")
 
 	def _mode_button_value(self, value, sender):
 		pass

@@ -446,6 +446,10 @@ class Colors:
             Page3 = Rgb.AMBER
             Page4Plus = Rgb.RED
 
+        class Clip:
+            On = Rgb.GREEN
+            Off = Rgb.DARK_GREY
+            Triggered = Rgb.GREEN_BLINK
 
     class Recording:
         On = Rgb.RED

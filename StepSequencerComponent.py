@@ -100,7 +100,7 @@ class StepSequencerComponent(CompoundComponent):
 # SET FUNCTIONS
     def _set_mode_function(self): #Change the resolution of the sequencer
         self._mode_button = None
-        self.set_mode_button(self._side_buttons[3]) #SndB
+        self.set_mode_button(self._side_buttons[2]) #SndB
         self._last_mode_button_press = time.time()
         self._number_of_lines_per_note = 1
 
@@ -134,7 +134,7 @@ class StepSequencerComponent(CompoundComponent):
         self.set_quantization(QUANTIZATION_MAP[self._quantization_index])
         self._quantization_button = None
         self._last_quantize_button_press = time.time()
-        self.set_quantization_button(self._side_buttons[2])#SndA
+        self.set_quantization_button(self._side_buttons[3])#SndA
 
     # Set 4x4 lower right matrix section that manages the loop range OK
     def _set_loop_selector(self):
@@ -484,6 +484,7 @@ class StepSequencerComponent(CompoundComponent):
     def on_clip_slot_changed(self, scheduled=False):
         # get old reference to clipslot
         clip_slot = self._clip_slot
+        #self._update_clip_toggle_button()
 
         # update track if not track locked
         if not self._is_locked or self._selected_track == None:
@@ -527,13 +528,30 @@ class StepSequencerComponent(CompoundComponent):
 
         # update clip slot
         if clip_slot != self._clip_slot or self._clip_slot == None:
-            if clip_slot != None and clip_slot.has_clip_has_listener(self.on_clip_slot_has_clip_changed):
-                clip_slot.remove_has_clip_listener(self.on_clip_slot_has_clip_changed)
+
+            #self._remove_clip_toggle_listener()
+
+            if clip_slot != None and clip_slot.has_clip_has_listener(
+                    self.on_clip_slot_has_clip_changed):
+                clip_slot.remove_has_clip_listener(
+                    self.on_clip_slot_has_clip_changed
+                )
+
             self._clip_slot = clip_slot
+
+            #self._register_clip_toggle_listener()
+            #self._update_clip_toggle_button()
+
             if self._clip_slot != None:
-                if self._clip_slot.has_clip_has_listener(self.on_clip_slot_has_clip_changed):
-                    self._clip_slot.remove_has_clip_listener(self.on_clip_slot_has_clip_changed)
-                self._clip_slot.add_has_clip_listener(self.on_clip_slot_has_clip_changed)
+                if self._clip_slot.has_clip_has_listener(
+                        self.on_clip_slot_has_clip_changed):
+                    self._clip_slot.remove_has_clip_listener(
+                        self.on_clip_slot_has_clip_changed
+                    )
+
+                self._clip_slot.add_has_clip_listener(
+                    self.on_clip_slot_has_clip_changed
+                )
 
         if self._clip_slot != None and self._clip_slot.has_clip and self._clip_slot.clip != None and self._clip_slot.clip.is_midi_clip:
             if self._clip == None or self._clip != self._clip_slot.clip:
@@ -616,10 +634,40 @@ class StepSequencerComponent(CompoundComponent):
                 self._loop_selector.set_note_cache(self._note_cache)
                 self._note_editor.update()
 
+    def _update_clip_toggle_button(self):
+        pass
+
+    def _set_clip_toggle_button(self, button):
+        pass
+
+    # def _on_clip_play_state_changed(self):
+    #     self._update_clip_toggle_button()
+    #
+    # def _remove_clip_toggle_listener(self):
+    #     if self._clip_slot is not None:
+    #         if self._clip_slot.is_playing_has_listener(self._on_clip_play_state_changed):
+    #             self._clip_slot.remove_is_playing_listener(
+    #                 self._on_clip_play_state_changed
+    #             )
+    #
+    # def _register_clip_toggle_listener(self):
+    #     if self._clip_slot is not None:
+    #         if not self._clip_slot.is_playing_has_listener(
+    #                 self._on_clip_play_state_changed
+    #         ):
+    #             self._clip_slot.add_is_playing_listener(
+    #                 self._on_clip_play_state_changed
+    #             )
+
+
+
+
+
 # PLAY POSITION
-    def _on_playing_status_changed(self):  # playing status changed listener
+    def _on_playing_status_changed(self):
         if self.is_enabled():
             self._on_playing_position_changed()
+            #self._update_clip_toggle_button()
 
     def _on_playing_position_changed(self):  # playing position changed listener
         if self.is_enabled():
@@ -757,7 +805,10 @@ class StepSequencerComponent(CompoundComponent):
                 else:
                     self._mode_button.set_light("DefaultButton.Disabled")
 
-    def set_mode_button(self, button):#remove old mode button listener and adds new one 
+    def set_mode_button(self, button):#remove old mode button listener and adds new one
+        # debug
+        #self._control_surface.log_message(" - - - - -set_mode_button called - - - - -")
+
         assert (isinstance(button, (ButtonElement, type(None))))
         if (self._mode_button != button):
             if (self._mode_button != None):
