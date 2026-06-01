@@ -47,7 +47,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._grid_buffer = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], 
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], 
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]
-		self._grid_back_buffer = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], 
+		self._grid_back_buffer = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0],
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], 
 		[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]
 
@@ -62,8 +62,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._playhead = None
 		self._note_cache = []
 		self._force_update = True
-		#self.song().view.add_selected_track_listener(self._on_selected_track_changed)
-		#self.song().view.add_selected_scene_listener(self._on_selected_scene_changed)
+		self.song().view.add_selected_track_listener(self._on_selected_track_changed)
+		self.song().view.add_selected_scene_listener(self._on_selected_scene_changed)
 		self._register_clip_slot_listener()
 
 		self._init_data()
@@ -120,7 +120,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		# end init
 		self._initializing = False
-
 
 	def disconnect(self):
 		self._remove_highlighted_clip_slot_listener()
@@ -198,7 +197,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if self._clip != clip:
 			self._init_data()
 			self._clip = clip
-			self._register_clip_slot_listener()
+			#self._register_clip_slot_listener() --> removed because it empties top clip of selected track during initialization
 
 	def set_note_cache(self, note_cache):
 		if self._note_cache != note_cache:
@@ -319,6 +318,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._update_matrix()
 
 	def _update_clip_notes(self):
+		if self._initializing:
+			return
 		if self._clip != None and self._step_sequencer.is_enabled():
 			note_cache = list()
 			for x in range(len(self._notes_velocities)):
@@ -331,6 +332,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if(pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0):
 							note_cache.append([pitch, time, length, velocity, False])
 			self._clip.select_all_notes()
+			# debug
+			# self._control_surface.log_message(
+			# ">>>>>>>>>>>> _update_clip_notes called, cache size=%d" %
+			# len(self._note_cache))
+			# self._control_surface.log_message(
+			# 	"clip notes about to be written"
+			# )
+
 			self._clip.replace_selected_notes(tuple(note_cache)) # Todo : deprecated
 			#self._control_surface.schedule_message(1, self._sch_update, ([self._clip,tuple(note_cache)]))
 
@@ -339,8 +348,21 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			note_cache = data[1]
 			clip.select_all_notes()
 			if(note_cache == None):
+				# debug
+				# self._control_surface.log_message(
+				# 	">>>>>>>>>>>> _update_clip_notes called, tuple")
+				# self._control_surface.log_message(
+				# 	"clip notes about to be written"
+				# )
 				clip.replace_selected_notes(tuple())
 			else:
+				# debug
+				# self._control_surface.log_message(
+				# 	">>>>>>>>>>>>>>>> _update_clip_notes called, cache size=%d" %
+				# 	len(self._note_cache))
+				# self._control_surface.log_message(
+				# 	"clip notes about to be written"
+				# )
 				clip.replace_selected_notes(note_cache)
 				
 	def update(self, force=False):
@@ -635,6 +657,16 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		clip = clip_slot.clip
 
+		# debug
+		# self._control_surface.log_message(
+		# 	"playing=%s triggered=%s slot_playing=%s" %
+		# 	(
+		# 		str(clip.is_playing),
+		# 		str(clip_slot.is_triggered),
+		# 		str(clip_slot.is_playing)
+		# 	)
+		# )
+
 		self._clip_toggle_button.set_on_off_values(
 			"StepSequencer2.Clip.On",
 			"StepSequencer2.Clip.Off"
@@ -647,7 +679,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			)
 
 		# PLAYING
-		elif clip.is_playing:
+		elif clip_slot.is_playing:
 			self._clip_toggle_button.turn_on()
 
 		# STOPPED
@@ -682,7 +714,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		assert (self._clip_toggle_button != None)
 		assert (value in range(128))
 
-		if self.is_enabled() and self._clip != None:
+		#if self.is_enabled() and self._clip != None:
+		clip_slot = self.song().view.highlighted_clip_slot
+		#if self.is_enabled() and self._clip != None:
+		if (self.is_enabled() and clip_slot is not None and clip_slot.has_clip):
 
 			if ((value != 0) or (not sender.is_momentary())):
 
@@ -781,7 +816,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# CLIP PLAYING
 			if self._clip_slot.has_clip:
 
-				self._clip = self._clip_slot.clip
+				# self._clip = self._clip_slot.clip --> removed because it otherwise empties top slot's clip.
 
 				try:
 					if not self._clip.playing_status_has_listener(
