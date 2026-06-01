@@ -369,6 +369,7 @@ class Colors:
             SelectedPlaying = Rgb.PURPLE
             Playing = Rgb.PURPLE_HALF
             Selected = Rgb.BLUE
+            StoppedSelected = Rgb.WHITE
             InLoop = Rgb.BLUE_THIRD
             Stopped = Rgb.DARK_GREY
 

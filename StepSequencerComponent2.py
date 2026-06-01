@@ -1052,8 +1052,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 			self._matrix.get_button(7, 7)
 		], self._control_surface))
 		self._loop_selector.set_loop_page_offset(self._loop_page_offset)
-		self.set_left_button(self._top_buttons[2])
-		self.set_right_button(self._top_buttons[3])
+		#self.set_left_button(self._top_buttons[2])
+		#self.set_right_button(self._top_buttons[3])
 
 	def _update_buttons(self):
 		self._update_quantization_button()

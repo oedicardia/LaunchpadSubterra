@@ -294,6 +294,9 @@ class StepSequencerComponent(CompoundComponent):
 
 # enabled
     def set_enabled(self, enabled):
+        # debug
+        #self._control_surface.log_message("StepSeq enabled=%s" % enabled)
+
         if enabled:
             if self._mode == STEPSEQ_MODE_SCALE_EDIT:
                 self.set_mode(self._mode_backup)
@@ -317,6 +320,8 @@ class StepSequencerComponent(CompoundComponent):
 
             # update clip notes as they might have changed while we were sleeping
             self.on_clip_slot_changed()
+            # button redrawn with the clip-dependent color as soon as the clip is known
+            self._update_cycle_button()
             # call super.set_enabled()
             CompoundComponent.set_enabled(self, enabled)
             if self._clip != None and self._is_locked:
@@ -660,13 +665,15 @@ class StepSequencerComponent(CompoundComponent):
     #             )
 
 
-
-
-
 # PLAY POSITION
     def _on_playing_status_changed(self):
+        # debug
+        # self._control_surface.log_message("playing status changed: playing=%s triggered=%s" % (self._clip.is_playing,self._clip.is_triggered))
+
         if self.is_enabled():
             self._on_playing_position_changed()
+            #self._update_buttons()
+            self.update() # added to allow the LED feedback off when first clip is switched off beore navigating to/selecting another clip
             #self._update_clip_toggle_button()
 
     def _on_playing_position_changed(self):  # playing position changed listener
@@ -945,25 +952,29 @@ class StepSequencerComponent(CompoundComponent):
             self._update_cycle_button()
 
     def _update_cycle_button(self):
+        #debug
+        #self._control_surface.log_message(" >>>>>>>>>> cycle update offset=%d enabled=%s"% (self._loop_page_offset, self.is_enabled()))
+        #self._control_surface.log_message(" >>>>>>>>>>>>> cycle update clip=%s enabled=%s" % (self._clip is not None, self.is_enabled()))
         if self._cycle_button is None:
             return
+        if self._clip != None:
+            offset = self._loop_page_offset
 
-        offset = self._loop_page_offset
+            if offset == 0:
+                color = "StepSequencer2.Cycle.Page0"
+            elif offset == 1:
+                color = "StepSequencer2.Cycle.Page1"
+            elif offset == 2:
+                color = "StepSequencer2.Cycle.Page2"
+            elif offset == 3:
+                color = "StepSequencer2.Cycle.Page3"
+            else:
+                color = "StepSequencer2.Cycle.Page4Plus"
 
-        if offset == 0:
-            color = "StepSequencer2.Cycle.Page0"
-        elif offset == 1:
-            color = "StepSequencer2.Cycle.Page1"
-        elif offset == 2:
-            color = "StepSequencer2.Cycle.Page2"
-        elif offset == 3:
-            color = "StepSequencer2.Cycle.Page3"
+            self._cycle_button.set_on_off_values(color, color)
+            self._cycle_button.turn_on()
         else:
-            color = "StepSequencer2.Cycle.Page4Plus"
-
-        self._cycle_button.set_on_off_values(color, color)
-        self._cycle_button.turn_on()
-
+            self._cycle_button.set_light("DefaultButton.Disabled")
 
 # LOCK Button
     def _update_lock_button(self):
@@ -979,7 +990,7 @@ class StepSequencerComponent(CompoundComponent):
                     else:
                         self._lock_button.turn_off()
                 else:
-                    self._lock_button.set_light("DefaultButton.Disable")
+                    self._lock_button.set_light("DefaultButton.Disabled")
 
     def set_lock_button(self, button):
         assert (isinstance(button, (ButtonElement, type(None))))

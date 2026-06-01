@@ -177,11 +177,11 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         if self.is_enabled():
 
             idx = self._buttons.index(sender)
-            self._debug(
-                f"button={idx} value={value} "
-                f"loop1={self._loop_point1} "
-                f"loop2={self._loop_point2}"
-            )
+            # self._debug(
+            #     f"button={idx} value={value} "
+            #     f"loop1={self._loop_point1} "
+            #     f"loop2={self._loop_point2}"
+            # )
             if value > 0:
 
                 pressed = 0
@@ -211,7 +211,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                             (time.time() - self._last_button_time) < 0.25
                     ):
                         # debug
-                        self._debug("DOUBLE TAP DETECTED")
+                        #self._debug("DOUBLE TAP DETECTED")
                         setloop = True
                         self._last_button_time = time.time()
                         self._last_button_idx = -1
@@ -229,10 +229,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                         # absolute block indexes
                         absolute_start = start + (self._loop_page_offset * 8)
                         absolute_end = end + (self._loop_page_offset * 8)
-                        self._debug(
-                            f"selection start={absolute_start} "
-                            f"end={absolute_end}"
-                        )
+                        # self._debug(
+                        #     f"selection start={absolute_start} "
+                        #     f"end={absolute_end}"
+                        # )
                         if absolute_end <= absolute_start:
                             return
 
@@ -298,10 +298,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                                         new_end
                                     )
 
-                                self._debug(
-                                    f"SETTING LOOP "
-                                    f"{new_start} -> {new_end}"
-                                )
+                                # self._debug(
+                                #     f"SETTING LOOP "
+                                #     f"{new_start} -> {new_end}"
+                                # )
                                 self.set_clip_loop(
                                     new_start,
                                     new_end
@@ -343,11 +343,11 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 current_end_block == end
         )
 
-        self._debug(
-            f"current=({current_start_block},{current_end_block}) "
-            f"selected=({start},{end}) "
-            f"same={same}"
-        )
+        # self._debug(
+        #     f"current=({current_start_block},{current_end_block}) "
+        #     f"selected=({start},{end}) "
+        #     f"same={same}"
+        # )
 
         return same
 
@@ -452,18 +452,24 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
                     if not clip_is_playing:
 
-                        if selected:
+                        if in_loop:
 
-                            # selected page dimmed
+                            # blocks inside the loop become dark grey
                             self._cache[i] = (
-                                "StepSequencer.LoopSelector.InLoop"
+                                "StepSequencer.LoopSelector.Stopped"
                             )
 
                         else:
 
-                            # all others grey/off
+                            # blocks outside the loop stay off
                             self._cache[i] = (
-                                "StepSequencer.LoopSelector.Stopped"
+                                "DefaultButton.Disabled"
+                            )
+
+                        # selected block keeps its selected colour
+                        if selected:
+                            self._cache[i] = (
+                                "StepSequencer.LoopSelector.StoppedSelected"
                             )
 
                     # -------------------------------------------------
@@ -550,6 +556,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 i += 1
 
             self._force = False
+
     # Make a copy of the current loop to the next N empty blocks OK
     def _extend_clip_content(self, loop_start, old_loop_end, new_loop_end):
         if (self._no_notes_in_range(old_loop_end, new_loop_end, True)):
