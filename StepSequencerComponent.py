@@ -2,6 +2,7 @@ import Live
 
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
+from .SequencerConstants import RESOLUTION_MAP, RESOLUTION_NAMES
 from _Framework.CompoundComponent import CompoundComponent
 from _Framework.ButtonElement import ButtonElement
 from _Framework.Util import find_if
@@ -21,6 +22,9 @@ except ImportError:
 # quantization button colours. this must remain of length 4.
 QUANTIZATION_MAP = [1, 0.5, 0.25, 0.125]  # 1/4 1/8 1/16 1/32
 QUANTIZATION_NAMES = ["1/4", "1/8", "1/16", "1/32"]
+# resolution levels (formerly quantization)
+# RESOLUTION_MAP = [1, 0.5, 0.25, 0.125]
+# RESOLUTION_NAMES = ["1/4", "1/8", "1/16", "1/32"]
 
 STEPSEQ_MODE_NORMAL = 1
 STEPSEQ_MODE_MULTINOTE = 2
@@ -37,10 +41,17 @@ class StepSequencerComponent(CompoundComponent):
         self._osd = None
         super(StepSequencerComponent, self).__init__()
         self._lock_button = None
+
+        # self._quantization_button = None
+        # self._quantization_index = 2
+        self._resolution_button = None
+        self._resolution_index = 2
         self._control_surface = control_surface
         self._number_of_lines_per_note = 1
-        self.QUANTIZATION_COLOR_MAP = ["StepSequencer.Quantization.One", "StepSequencer.Quantization.Two", "StepSequencer.Quantization.Three", "StepSequencer.Quantization.Four"]
-        self.QUANTIZATION_COLOR_MAP_LOW = ["StepSequencer.QuantizationLow.One", "StepSequencer.QuantizationLow.Two", "StepSequencer.QuantizationLow.Three", "StepSequencer.QuantizationLow.Four"]
+        #self.QUANTIZATION_COLOR_MAP = ["StepSequencer.Quantization.One", "StepSequencer.Quantization.Two", "StepSequencer.Quantization.Three", "StepSequencer.Quantization.Four"]
+        #self.QUANTIZATION_COLOR_MAP_LOW = ["StepSequencer.QuantizationLow.One", "StepSequencer.QuantizationLow.Two", "StepSequencer.QuantizationLow.Three", "StepSequencer.QuantizationLow.Four"]
+        self.RESOLUTION_COLOR_MAP = ["StepSequencer.Resolution.One", "StepSequencer.Resolution.Two", "StepSequencer.Resolution.Three", "StepSequencer.Resolution.Four","StepSequencer.Resolution.Five", "StepSequencer.Resolution.Six", "StepSequencer.Resolution.Seven", "StepSequencer.Resolution.Eight"]
+        self.RESOLUTION_COLOR_MAP_LOW = ["StepSequencer.ResolutionLow.One", "StepSequencer.ResolutionLow.Two", "StepSequencer.ResolutionLow.Three", "StepSequencer.ResolutionLow.Four","StepSequencer.ResolutionLow.Five", "StepSequencer.ResolutionLow.Six", "StepSequencer.ResolutionLow.Seven", "StepSequencer.ResolutionLow.Eight"]
         self._name = "drum step sequencer"
         # clip
         self._clip = None
@@ -72,7 +83,8 @@ class StepSequencerComponent(CompoundComponent):
         self._set_note_selector()
         self._set_track_controller()
         self._set_scale_selector()
-        self._set_quantization_function()
+        self._set_resolution_function()
+        #self._set_quantization_function()
         self._set_mute_shift_function()
         self._set_cycle_function()
         #self._set_lock_function()
@@ -86,7 +98,7 @@ class StepSequencerComponent(CompoundComponent):
         self._cycle_button = None
         self._lock_button = None
         self._shift_button = None
-        self._quantization_button = None
+        #self._quantization_button = None
         self._top_buttons = None
         self._side_buttons = None
         self._matrix = None
@@ -122,19 +134,31 @@ class StepSequencerComponent(CompoundComponent):
         self._lock_button = None
         self.set_lock_button(self._side_buttons[1])#Pan
         self._selected_track = None
-            
-    def _set_mute_shift_function(self): #Allow to mute notes in the grid or all notes if selecting on Note Selector #FIX bad behavior
-        self._mute_shift_button = None
-        self._last_mute_shift_button_press = time.time()
-        self.set_mute_shift_button(self._side_buttons[7])#Arm
-        self._is_mute_shifted = False
 
-    def _set_quantization_function(self):
-        self._quantization_index = 2
-        self.set_quantization(QUANTIZATION_MAP[self._quantization_index])
-        self._quantization_button = None
-        self._last_quantize_button_press = time.time()
-        self.set_quantization_button(self._side_buttons[3])#SndA
+    def _set_mute_shift_function(self):
+        pass
+    # def _set_mute_shift_function(self): #Allow to mute notes in the grid or all notes if selecting on Note Selector #FIX bad behavior
+    #     self._mute_shift_button = None
+    #     self._last_mute_shift_button_press = time.time()
+    #     self.set_mute_shift_button(self._side_buttons[7])#Arm
+    #     self._is_mute_shifted = False
+
+    def _set_resolution_function(self):
+        # debug
+        #self._control_surface.log_message(" >>>>>>>>>> _set_resolution_function")
+
+        self._resolution_index = 2
+        self.set_resolution(RESOLUTION_MAP[self._resolution_index])
+        self._resolution_button = None
+        #self._last_quantize_button_press = time.time()
+        self.set_resolution_button(self._side_buttons[7])#SndA
+
+    # def _set_quantization_function(self):
+    #     self._quantization_index = 2
+    #     self.set_quantization(QUANTIZATION_MAP[self._quantization_index])
+    #     self._quantization_button = None
+    #     self._last_quantize_button_press = time.time()
+    #     self.set_quantization_button(self._side_buttons[7])#SndA
 
     # Set 4x4 lower right matrix section that manages the loop range OK
     def _set_loop_selector(self):
@@ -203,8 +227,10 @@ class StepSequencerComponent(CompoundComponent):
                 self._osd.attribute_names[1] = "Root Note"
                 self._osd.attributes[2] = self._scale_selector._octave
                 self._osd.attribute_names[2] = "Octave"
-                self._osd.attributes[3] = QUANTIZATION_NAMES[self._quantization_index]
-                self._osd.attribute_names[3] = "Quantisation"
+                self._osd.attributes[3] = RESOLUTION_NAMES[self._resolution_index]
+                self._osd.attribute_names[3] = "Resolution"
+                #self._osd.attributes[3] = QUANTIZATION_NAMES[self._quantization_index]
+                #self._osd.attribute_names[3] = "Quantisation"
                 self._osd.attributes[4] = " "
                 self._osd.attribute_names[4] = " "
                 self._osd.attributes[5] = " "
@@ -448,7 +474,8 @@ class StepSequencerComponent(CompoundComponent):
         self._note_editor.update()
 
     def _update_buttons(self):
-        self._update_quantization_button()
+        self._update_resolution_button()
+        #self._update_quantization_button()
         self._update_lock_button()
         self._update_cycle_button()
         self._update_mode_button()
@@ -846,59 +873,68 @@ class StepSequencerComponent(CompoundComponent):
                     self.set_mode(STEPSEQ_MODE_NORMAL, self._number_of_lines_per_note)
                 self._scale_updated()
 
-# QUANTIZE
-    def _update_quantization_button(self):
-        if self.is_enabled() and self._quantization_button != None:
+# RESOLUTION (ZOOM)
+    def _update_resolution_button(self):
+        if self.is_enabled() and self._resolution_button != None:
             if self._clip != None:
-                self._quantization_button.set_light(self.QUANTIZATION_COLOR_MAP[self._quantization_index])
+                self._resolution_button.set_light(
+                    self.RESOLUTION_COLOR_MAP[self._resolution_index]
+                )
             else:
-                self._quantization_button.set_light("DefaultButton.Disabled")
+                self._resolution_button.set_light("DefaultButton.Disabled")
 
     # Refresh button and its listener OK
-    def set_quantization_button(self, button):
-        assert (isinstance(button, (ButtonElement, type(None))))
-        if (self._quantization_button != button):
-            if (self._quantization_button != None):
-                self._quantization_button.remove_value_listener(self._quantization_button_value)
-            self._quantization_button = button
-            if (self._quantization_button != None):
-                self._quantization_button.add_value_listener(self._quantization_button_value, identify_sender=True)
+    def set_resolution_button(self, button):
+        # debug
+        #self._control_surface.log_message(" - - - - -set_resolution_button called - - - - -")
 
-    # Handle button holded and quantization resolution selection OK    
-    def _quantization_button_value(self, value, sender):
-        assert (self._quantization_button != None)
+        assert (isinstance(button, (ButtonElement, type(None))))
+        if (self._resolution_button != button):
+            if (self._resolution_button != None):
+                self._resolution_button.remove_value_listener(self._resolution_button_value)
+            self._resolution_button = button
+            if (self._resolution_button != None):
+                self._resolution_button.add_value_listener(self._resolution_button_value, identify_sender=True)
+
+    # Handle button held and resolution resolution selection OK
+    def _resolution_button_value(self, value, sender):
+        # debug
+        #self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -")
+        assert (self._resolution_button != None)
         assert (value in range(128))
         if self.is_enabled() and self._clip != None:
             now = time.time()
             if ((value != 0) or (not sender.is_momentary())):
-                self._last_quantize_button_press = now
+                pass#self._last_res_button_press = now
             else:
-                if now - self._last_quantize_button_press > 0.5:
-                    self._control_surface.show_message("Step Sequencer: duplicate clip")
-                    self.duplicate_clip()
+                # if now - self._last_res_button_press > 0.5:
+                #     self._control_surface.show_message("Step Sequencer: duplicate clip")
+                #     self.duplicate_clip()
+                # else:
+                if(self._mode == STEPSEQ_MODE_SCALE_EDIT):
+                    self._resolution_index = (self._resolution_index - 1+len(RESOLUTION_MAP)) % len(RESOLUTION_MAP)
                 else:
-                    if(self._mode == STEPSEQ_MODE_SCALE_EDIT):
-                        self._quantization_index = (self._quantization_index - 1+len(QUANTIZATION_MAP)) % len(QUANTIZATION_MAP)
-                    else:
-                        self._quantization_index = (self._quantization_index + 1) % len(QUANTIZATION_MAP)
-                    self.set_quantization(QUANTIZATION_MAP[self._quantization_index])
-                    self._control_surface.show_message("QUANTIZATION : "+QUANTIZATION_NAMES[self._quantization_index])
-                    
-                    self._update_quantization_button()
+                    self._resolution_index = (self._resolution_index + 1) % len(RESOLUTION_MAP)
+                self.set_resolution(RESOLUTION_MAP[self._resolution_index])
+                self._control_surface.show_message("RESOLUTION : "+RESOLUTION_NAMES[self._resolution_index])
 
+                self._update_resolution_button()
+        # debug
+        self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -self_note_cache ="+ str(self._note_cache))
 
     def updateQuantizationButton(self):
-        if self.is_enabled() and self._quantization_button != None and self._playhead != None:
+        if self.is_enabled() and self._resolution_button != None and self._playhead != None:
             if(self._beat == int(self._playhead)):
-                self._quantization_button.set_light(self.QUANTIZATION_COLOR_MAP_LOW[self._quantization_index])
+                self._resolution_button.set_light(self.RESOLUTION_COLOR_MAP_LOW[self._resolution_index])
             else:
                 self._beat = int(self._playhead)
-                self._update_quantization_button()
+                self._update_resolution_button()
 
-    def set_quantization(self, quantization):
-        self._quantization = quantization
+    def set_resolution(self, resolution):
+        self._resolution = resolution
         if self._note_editor != None:
-            self._note_editor.set_quantization(self._quantization)
+            self._note_editor.set_resolution(self._resolution)
+            #self._note_editor.set_quantization(self._quantization)
         if self._loop_selector != None:
             self._update_loop_selector()
         if self._note_selector != None:
@@ -916,7 +952,9 @@ class StepSequencerComponent(CompoundComponent):
 
         # Calculate total blocks (each block = 8 steps)
         steps_per_block = 8
-        step_length = self._quantization
+        step_length = self._resolution
+        #step_length = self._quantization
+
         clip_length = self._clip.loop_end - self._clip.loop_start
         total_steps = int(clip_length / step_length)
         total_blocks = (total_steps + steps_per_block - 1) // steps_per_block  # Round up
@@ -1091,9 +1129,13 @@ class StepSequencerComponent(CompoundComponent):
             clip_slot = self.song().view.highlighted_clip_slot
             if not clip_slot.has_clip:
                 if self._mode == STEPSEQ_MODE_NORMAL:
-                    clip_slot.create_clip(QUANTIZATION_MAP[self._quantization_index] * 8 * 4)
+                    clip_slot.create_clip(RESOLUTION_MAP[self._resolution_index] * 8 * 4)
                 else:
-                    clip_slot.create_clip(QUANTIZATION_MAP[self._quantization_index] * 8)
+                    clip_slot.create_clip(RESOLUTION_MAP[self._resolution_index] * 8)
+                # if self._mode == STEPSEQ_MODE_NORMAL:
+                #     clip_slot.create_clip(QUANTIZATION_MAP[self._quantization_index] * 8 * 4)
+                # else:
+                #     clip_slot.create_clip(QUANTIZATION_MAP[self._quantization_index] * 8)
                 self._detect_scale_mode()
                 clip_slot.fire()
                 self.on_clip_slot_changed()

@@ -54,6 +54,9 @@ class NoteEditorComponent(ControlSurfaceComponent):
 		# quantization
 		self._quantization = 16
 
+		# resolutio
+		self._resolution = 16
+
 		# velocity
 		self._velocity_index = 3
 		self._velocity = self.velocity_map[self._velocity_index]
@@ -83,11 +86,20 @@ class NoteEditorComponent(ControlSurfaceComponent):
 		self._number_of_lines_per_note = number_of_lines_per_note
 
 	@property
+	def resolution(self):
+		return self._resolution
+
+	@property
 	def quantization(self):
 		return self._quantization
 
+	def set_resolution(self, resolution):
+		self._resolution = resolution
+
 	def set_quantization(self, quantization):
 		self._quantization = quantization
+
+
 
 	def set_scale(self, scale):
 		self._scale = scale
@@ -209,10 +221,10 @@ class NoteEditorComponent(ControlSurfaceComponent):
 				# play back position
 				if self._playhead != None:
 					play_position = self._playhead  # position in beats (integer = number of beats, decimal subdivisions)
-					play_page = int(play_position / self.quantization / self.width / self.number_of_lines_per_note)
-					play_row = int(play_position / self.quantization / self.width) % self.number_of_lines_per_note
-					play_x_position = int(play_position / self.quantization) % self.width
-					play_y_position = int(play_position / self.quantization / self.width) % self.height
+					play_page = int(play_position / self.resolution / self.width / self.number_of_lines_per_note)
+					play_row = int(play_position / self.resolution / self.width) % self.number_of_lines_per_note
+					play_x_position = int(play_position / self.resolution) % self.width
+					play_y_position = int(play_position / self.resolution / self.width) % self.height
 				else:
 					play_position = -1
 					play_page = -1
@@ -246,9 +258,9 @@ class NoteEditorComponent(ControlSurfaceComponent):
 					note_key = note[0]  # key: 0-127 MIDI note #
 					note_velocity = note[3] # velocity: 0-127 value #
 					note_muted = note[4]#Boolean
-					note_page = int(note_position / self.quantization / self.width / self.number_of_lines_per_note)
-					note_grid_x_position = int(note_position / self.quantization) % self.width
-					note_grid_y_position = int(note_position / self.quantization / self.width) % self.height
+					note_page = int(note_position / self.resolution / self.width / self.number_of_lines_per_note)
+					note_grid_x_position = int(note_position / self.resolution) % self.width
+					note_grid_y_position = int(note_position / self.resolution / self.width) % self.height
 
 					#Calculate note position in the grid (note position to matrix button logic)
 					if self.is_multinote:
@@ -263,7 +275,7 @@ class NoteEditorComponent(ControlSurfaceComponent):
 						if(note_grid_y_base < 0):
 							note_grid_y_base = -1
 
-						note_grid_y_offset = int(note_position / self.quantization / self.width) % self.number_of_lines_per_note
+						note_grid_y_offset = int(note_position / self.resolution / self.width) % self.number_of_lines_per_note
 					else:
 						idx = 1
 						try:
@@ -275,7 +287,7 @@ class NoteEditorComponent(ControlSurfaceComponent):
 							note_grid_y_base = 0
 						else:
 							note_grid_y_base = -1
-					note_grid_y_offset = int(note_position / self.quantization / self.width) % self.number_of_lines_per_note
+					note_grid_y_offset = int(note_position / self.resolution / self.width) % self.number_of_lines_per_note
 
 					if note_grid_y_base != -1 and note_grid_y_base < self.height:
 						note_grid_y_position = note_grid_y_base + note_grid_y_offset
@@ -352,13 +364,13 @@ class NoteEditorComponent(ControlSurfaceComponent):
 				# note data
 
 				if self.is_multinote: # Calculate note pitch and time for notes 
-					time = self.quantization * (self._page * self.width * self.number_of_lines_per_note + x + (y % self.number_of_lines_per_note * self.width))
+					time = self.resolution * (self._page * self.width * self.number_of_lines_per_note + x + (y % self.number_of_lines_per_note * self.width))
 					pitch = self._key_indexes[int(8 / self.number_of_lines_per_note - 1 - y / self.number_of_lines_per_note)]
 				else:
-					time = self.quantization * (self._page * self.width * self.number_of_lines_per_note + y * self.width + x)
+					time = self.resolution * (self._page * self.width * self.number_of_lines_per_note + y * self.width + x)
 					pitch = self._key_indexes[0]
 				velocity = self._velocity #setted by velocity button
-				duration = self.quantization #setted by quantization button in StepSequencerComponent
+				duration = 0.25#self.quantization #setted by quantization button in StepSequencerComponent
 
 				# TODO: use new better way for editing clip
 

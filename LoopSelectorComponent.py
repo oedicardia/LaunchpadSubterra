@@ -1,5 +1,6 @@
 import time
 
+from .SequencerConstants import RESOLUTION_MAP
 from _Framework.ButtonElement import ButtonElement
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
@@ -79,9 +80,13 @@ class LoopSelectorComponent(ControlSurfaceComponent):
     def _is_velocity_shifted(self):
         return self._step_sequencer._note_editor._is_velocity_shifted
 
+    # @property
+    # def _quantization(self):
+    #     return self._step_sequencer._quantization
+
     @property
-    def _quantization(self):
-        return self._step_sequencer._quantization
+    def _resolution(self):
+        return RESOLUTION_MAP[self._step_sequencer._resolution_index]
 
     @property
     def block(self):
@@ -119,7 +124,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             )
 
             start = max(0.0, min(start, clip_max))
-            end = max(start + self._quantization, min(end, clip_max))
+            end = max(start + self._resolution, min(end, clip_max))
+            #end = max(start + self._quantization, min(end, clip_max))
 
             if start >= end:
                 return
@@ -239,13 +245,15 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                         new_start = (
                                 absolute_start *
                                 self._blocksize *
-                                self._quantization
+                                #self._quantization
+                                self._resolution
                         )
 
                         new_end = (
                                 absolute_end *
                                 self._blocksize *
-                                self._quantization
+                                #self._quantization
+                                self._resolution
                         )
 
                         # -----------------------------------------
@@ -313,7 +321,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                             (self._loop_page_offset * 8)
                     )
 
-                    self._step_sequencer.set_page(absolute_block)
+                    #self._step_sequencer.set_page(absolute_block)
 
                     self._loop_point1 = -1
                     self._loop_point2 = -1
@@ -327,7 +335,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
         block_size = (
                 self._blocksize *
-                self._quantization
+                # self._quantization
+                self._resolution
         )
 
         current_start_block = int(
@@ -358,8 +367,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             if new_block < 0 or new_block >= 8:
                 return False  # Cannot scroll beyond 0-7
             absolute_block = new_block + (self._loop_page_offset * 8)
-            if (absolute_block * self._blocksize * self._quantization < self._clip.loop_start) or (
-                    (absolute_block + 1) * self._blocksize * self._quantization > self._clip.loop_end):
+            # if (absolute_block * self._blocksize * self._quantization < self._clip.loop_start) or (
+            #         (absolute_block + 1) * self._blocksize * self._quantization > self._clip.loop_end):
+            if (absolute_block * self._blocksize * self._resolution < self._clip.loop_start) or (
+                (absolute_block + 1) * self._blocksize * self._resolution > self._clip.loop_end):
                 return False
             return True
         return False
@@ -420,13 +431,15 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                     block_start = (
                             absolute_block *
                             self._blocksize *
-                            self._quantization
+                            # self._quantization
+                            self._resolution
                     )
 
                     block_end = (
                             (absolute_block + 1) *
                             self._blocksize *
-                            self._quantization
+                            # self._quantization
+                            self._resolution
                     )
 
                     # -------------------------------------------------

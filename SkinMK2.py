@@ -373,6 +373,26 @@ class Colors:
             InLoop = Rgb.BLUE_THIRD
             Stopped = Rgb.DARK_GREY
 
+        class Resolution:
+            One = Rgb.PINK
+            Two = Rgb.PURPLE
+            Three = Rgb.BLUE
+            Four = Rgb.MINT
+            Five = Rgb.GREEN
+            Six = Rgb.YELLOW
+            Seven = Rgb.AMBER
+            Eight = Rgb.RED
+
+        class ResolutionLow:
+            One = Rgb.PINK_HALF
+            Two = Rgb.PURPLE_HALF
+            Three = Rgb.BLUE_HALF
+            Four = Rgb.MINT_HALF
+            Five = Rgb.GREEN_HALF
+            Six = Rgb.YELLOW_HALF
+            Seven = Rgb.AMBER_HALF
+            Eight = Rgb.RED_HALF
+
         class Quantization:
             One = Rgb.GREEN
             Two = Rgb.YELLOW
@@ -411,6 +431,17 @@ class Colors:
 
     class StepSequencer2:
         class Pitch:
+            On = Rgb.BLUE
+            Dim = Rgb.BLUE_THIRD
+            Off = Rgb.BLACK
+
+        class Zoom:
+            On = Rgb.BLUE
+            Dim = Rgb.BLUE_THIRD
+            Off = Rgb.BLACK
+
+
+        class CopyPaste:
             On = Rgb.BLUE
             Dim = Rgb.BLUE_THIRD
             Off = Rgb.BLACK

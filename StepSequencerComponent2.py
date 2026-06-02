@@ -1,7 +1,7 @@
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
-from .StepSequencerComponent import StepSequencerComponent, ButtonElement, \
-	QUANTIZATION_NAMES
+from .StepSequencerComponent import StepSequencerComponent, ButtonElement
+from .SequencerConstants import RESOLUTION_NAMES
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
@@ -13,6 +13,7 @@ STEPSEQ_MODE_NOTES = 1
 STEPSEQ_MODE_NOTES_OCTAVES = 2
 STEPSEQ_MODE_NOTES_VELOCITIES = 3
 STEPSEQ_MODE_NOTES_LENGTHS = 4
+STEPSEQ_MODE_COPY_PASTE = 5
 
 LONG_BUTTON_PRESS = 1.0
 
@@ -84,12 +85,21 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# quantization
 		self._quantization = 16
 
+		# Resolution
+		self._resolution = 16
+
 		# MODE
 		self._mode = STEPSEQ_MODE_NOTES
 
 		# buttons
 		self._clip_toggle_button = None
 		self.set_clip_toggle_button(self._side_buttons[2])
+
+		self._mode_copy_paste_button = None
+		self.set_mode_copy_paste_button(self._side_buttons[4])
+		self._is_copy_paste_shifted = False
+		self._last_copy_paste_button_press = time.time()
+
 
 		self._mode_notes_lengths_button = None
 		self.set_mode_notes_lengths_button(self._side_buttons[4])
@@ -106,10 +116,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_notes_velocity_shifted = False
 		self._last_notes_velocity_button_press = time.time()
 
-		self._mode_notes_pitches_button = None
-		self.set_mode_notes_pitches_button(self._side_buttons[7])
-		self._is_notes_pitches_shifted = False
-		self._last_notes_pitches_button_press = time.time()
+		# self._mode_notes_pitches_button = None
+		# self.set_mode_notes_pitches_button(self._side_buttons[7])
+		# self._is_notes_pitches_shifted = False
+		# self._last_notes_pitches_button_press = time.time()
+
+		# self._mode_zoom_button = None
+		# self.set_mode_zoom_button(self._side_buttons[7])
+		# self._is_zoom_shifted = False
+		# self._last_zoom_button_press = time.time()
 
 		self._is_velocity_shifted = False
 		self._is_mute_shifted = False
@@ -212,6 +227,51 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		pass
 
 	@property
+	def resolution(self):
+		return self._resolution
+
+	def set_resolution(self, resolution):
+
+		#old_resolution = self._resolution
+		self._resolution = resolution
+		self._parse_notes()
+		self._update_matrix()
+
+		# update loop point
+		#if self._clip != None and old_resolution != self._resolution:
+			#
+			# self._loop_start = int(
+			# 	self._clip.loop_start *
+			# 	self._resolution /
+			# 	old_resolution
+			# )
+			#
+			# self._loop_end = int(
+			# 	self._clip.loop_end *
+			# 	self._resolution /
+			# 	old_resolution
+			# )
+			#
+			# # safety
+			# if self._loop_end <= self._loop_start:
+			# 	self._loop_end = self._loop_start + 1
+			#
+			# try:
+			# 	self._clip.loop_start = self._loop_start
+			# 	self._clip.loop_end = self._loop_end
+			#
+			# 	self._clip.start_marker = self._loop_start
+			# 	self._clip.end_marker = self._loop_end
+
+			# except RuntimeError:
+			# 	pass
+
+			# IMPORTANT:
+			# do not rewrite notes during controller init
+			# if not self._initializing:
+			# 	self._update_clip_notes()
+
+	@property
 	def quantization(self):
 		return self._quantization
 
@@ -257,10 +317,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_diatonic(self, diatonic):
 		self._diatonic = diatonic
 
-	def set_key_indexes(self, key_indexes):
+	def set_key_indexes(self, key_indexes):			# debug
+		#self._control_surface.log_message(
+		#">>>>>>>>>>>> set_key_indexes called, key_indexes = "+str(key_indexes))
 		if self._key_indexes != key_indexes:
 			self._key_indexes = key_indexes
-			self._update_clip_notes()
+			#self._update_clip_notes()
 
 	def set_key_index_is_in_scale(self, key_index_is_in_scale):
 		self._key_index_is_in_scale = key_index_is_in_scale
@@ -284,8 +346,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			note_length = note[2]
 			note_velocity = note[3]
 			note_muted = note[4]
-			i = int(note_position / self._quantization)
-
+#			i = int(note_position / self._quantization)
+			i = int(note_position / self._resolution)
+			self._control_surface.log_message(
+				"note_position=%s resolution=%s i=%s" %
+				(note_position, self._resolution, i)
+			)
 			if not note_muted:
 				if first_note[i]:
 					first_note[i] = False
@@ -297,7 +363,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					# length
 					for x in range(7):
-						if note_length * 4 >= self._length_map[x] * self._quantization:
+						if note_length * 4 >= self._length_map[x] * self._resolution:
+						#if note_length * 4 >= self._length_map[x] * self._quantization:
 							self._notes_lengths[i] = x
 
 					# note and octave
@@ -317,6 +384,76 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._notes_pitches[i * 7 + j] = 1
 		self._update_matrix()
 
+	def _toggle_note_at_grid_position(self, idx, y):
+
+		grid_time = idx * self._resolution
+
+		octave = self._notes_octaves[idx]
+
+		pitch = (
+				self._key_indexes[6 - y]
+				+ 12 * (octave - 2)
+		)
+
+		notes = list(self._note_cache)
+
+		for note in notes:
+			if (
+					note[0] == pitch and
+					abs(note[1] - grid_time) < 0.0001
+			):
+				notes.remove(note)
+
+				self._clip.select_all_notes()
+				self._clip.replace_selected_notes(tuple(notes))
+
+				return
+
+		notes.append(
+			(
+				pitch,
+				grid_time,
+				self._resolution,
+				100,
+				False
+			)
+		)
+
+		self._clip.select_all_notes()
+		self._clip.replace_selected_notes(tuple(notes))
+	# 	grid_time = idx * self._resolution
+	#
+	# 	pitch = self._key_indexes[6 - y] + \
+	# 	        12 * (self._notes_octaves[idx] - 2)
+	#
+	# 	notes = list(self._note_cache)
+	#
+	# 	found = False
+	#
+	# 	for note in notes:
+	# 		if note.pitch == pitch and note.time == grid_time:
+	# 			notes.remove(note)
+	# 			found = True
+	# 			break
+	#
+	# 	if not found:
+	# 		notes.append(
+	# 			[pitch,
+	# 			 grid_time,
+	# 			 default_length,
+	# 			 default_velocity,
+	# 			 False]
+	# 		)
+	#
+	# 	write_notes_to_clip(notes)
+
+	def _write_note_cache_to_clip(self, note_cache):
+		if self._clip is None:
+			return
+
+		self._clip.select_all_notes()
+		self._clip.replace_selected_notes(tuple(note_cache))
+
 	def _update_clip_notes(self):
 		if self._initializing:
 			return
@@ -325,9 +462,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			for x in range(len(self._notes_velocities)):
 				for note_index in range(7):
 					if self._notes_pitches[x * 7 + note_index] == 1:
-						time = x * self._quantization
+						time = x * self._resolution
+						#time = x * self._quantization
 						velocity = self._velocity_map[self._notes_velocities[x]]
-						length = self._length_map[self._notes_lengths[x]] * self._quantization / 4.0
+						length = self._length_map[self._notes_lengths[x]] * self._resolution / 4.0
+						#length = self._length_map[self._notes_lengths[x]] * self._quantization / 4.0
 						pitch = self._key_indexes[note_index] + 12 * (self._notes_octaves[x] - 2)
 						if(pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0):
 							note_cache.append([pitch, time, length, velocity, False])
@@ -372,7 +511,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._update_mode_notes_octaves_button()
 			self._update_mode_notes_lengths_button()
 			self._update_mode_notes_velocities_button()
-			self._update_mode_notes_pitches_button()
+			#self._update_mode_zoom_button()
+			#self._update_mode_notes_pitches_button()
 			self._update_clip_toggle_button()
 			self._update_matrix()
 
@@ -559,8 +699,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if self._clip == None:
 				self._step_sequencer.create_clip()
 			else:
-				start = int(self._clip.loop_start / self._quantization)
-				end = int(self._clip.loop_end / self._quantization)
+				start = int(self._clip.loop_start / self._resolution)
+				end = int(self._clip.loop_end / self._resolution)
+				# start = int(self._clip.loop_start / self._quantization)
+				# end = int(self._clip.loop_end / self._quantization)
 
 				if (effective_page + 1) * 8 > end or effective_page * 8 < start:
 					# current page is outside of running loop.
@@ -571,21 +713,21 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if ((value != 0) or (not sender.is_momentary())) and y < 7:
 					idx = self._get_step_index(x)
 					if self._mode == STEPSEQ_MODE_NOTES:
-						if self._is_notes_pitches_shifted:
-							for x in range(start, end):
-								for yy in range(7):
-									self._notes_pitches[(x) * 7 + 6 - yy] = 0
-								self._notes_pitches[(x) * 7 + 6 - y] = 1
+						#if self._is_notes_pitches_shifted:
+							# for x in range(start, end):
+							# 	for yy in range(7):
+							# 		self._notes_pitches[(x) * 7 + 6 - yy] = 0
+							# 	self._notes_pitches[(x) * 7 + 6 - y] = 1
+						#else:
+						# clear note
+						if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
+							self._notes_pitches[(idx) * 7 + 6 - y] = 0
 						else:
-							# clear note
-							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
-								self._notes_pitches[(idx) * 7 + 6 - y] = 0
-							else:
-								# clear step
-								if self._is_monophonic:
-									for yy in range(7):
-										self._notes_pitches[(idx) * 7 + 6 - yy] = 0
-								self._notes_pitches[(idx) * 7 + 6 - y] = 1
+							# clear step
+							if self._is_monophonic:
+								for yy in range(7):
+									self._notes_pitches[(idx) * 7 + 6 - yy] = 0
+							self._notes_pitches[(idx) * 7 + 6 - y] = 1
 					elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
 						if self._is_notes_octaves_shifted:
 							if(x < 4):
@@ -627,7 +769,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						else:
 							self._notes_lengths[idx] = 6 - y
 					self._update_matrix()
-					self._update_clip_notes()
+
+					if self._mode == STEPSEQ_MODE_NOTES:
+						self._toggle_note_at_grid_position(idx, y)
+						return
+					else:
+						self._update_clip_notes()
 
 	def _get_step_index(self, x):
 		return x + 8 * self._get_effective_page()
@@ -834,6 +981,46 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _on_clip_triggered_changed(self):
 		self._update_clip_toggle_button()
 
+# ZOOM --> controlled by StepSequencerComponent()
+# 	def _update_mode_zoom_button(self):
+# 		if self.is_enabled():
+# 			if (self._mode_zoom_button != None):
+# 				if self._clip != None:
+# 					self._mode_zoom_button.set_on_off_values("StepSequencer2.Zoom.On", "StepSequencer2.Zoom.Dim")
+# 					if self._mode == STEPSEQ_MODE_NOTES:
+# 						self._mode_zoom_button.turn_on()
+# 					else:
+# 						self._mode_zoom_button.turn_off()
+# 				else:
+# 					self._mode_zoom_button.set_on_off_values("DefaultButton.Disabled", "DefaultButton.Disabled")
+# 					self._mode_zoom_button.turn_off()
+#
+# 	def set_mode_zoom_button(self, button):
+# 		assert (isinstance(button, (ButtonElement, type(None))))
+# 		if (self._mode_zoom_button != button):
+# 			if (self._mode_zoom_button != None):
+# 				self._mode_zoom_button.remove_value_listener(self._mode_button_zoom_value)
+# 			self._mode_zoom_button = button
+# 			if (self._mode_zoom_button != None):
+# 				assert isinstance(button, ButtonElement)
+# 				self._mode_zoom_button.add_value_listener(self._mode_button_zoom_value, identify_sender=True)
+#
+# 	def _mode_button_zoom_value(self, value, sender):
+# 		assert (self._mode_zoom_button != None)
+# 		assert (value in range(128))
+# 		if self.is_enabled() and self._clip != None:
+# 			if ((value ==0) and (sender.is_momentary())):
+# 				self._is_zoom_shifted = False
+# 				self._is_mute_shifted = False
+# 				self._is_velocity_shifted = False
+# 				self.update()
+# 			else:
+# 				self._is_zoom_shifted = True
+# 				self._is_mute_shifted = True
+# 				self._is_velocity_shifted = True
+# 				self._is_zoom_shifted = True
+
+
 # PITCHES
 	def _update_mode_notes_pitches_button(self):
 		if self.is_enabled():
@@ -863,7 +1050,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		assert (value in range(128))
 		if self.is_enabled() and self._clip != None:
 			if ((value ==0) and (sender.is_momentary())):
-				self._is_notes_pitches_shifted = False
+				#self._is_notes_pitches_shifted = False
 				self._is_mute_shifted = False
 				self._is_velocity_shifted = False
 				if time.time() - self._last_notes_pitches_button_press < 0.500:
@@ -877,10 +1064,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._step_sequencer._update_OSD()
 				self._last_notes_pitches_button_press = time.time()
 			else:
-				self._is_notes_pitches_shifted = True
+				#self._is_notes_pitches_shifted = True
 				self._is_mute_shifted = True
 				self._is_velocity_shifted = True
-				self._is_notes_pitches_shifted = True
+
 
 # OCTAVES
 	def _update_mode_notes_octaves_button(self):
@@ -1013,6 +1200,55 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_notes_lengths_shifted = True
 
 
+
+
+	# COPY / PASTE
+	def _update_mode_copy_paste_button(self):
+		if self.is_enabled():
+			if (self._mode_copy_paste_button != None):
+				if self._clip != None:
+					self._mode_copy_paste_button.set_on_off_values("StepSequencer2.CopyPaste.On",
+					                                                  "StepSequencer2.CopyPaste.Dim")
+					if self._mode == STEPSEQ_MODE_COPY_PASTE:
+						self._mode_copy_paste_button.turn_on()
+					else:
+						self._mode_copy_paste_button.turn_off()
+				else:
+					self._mode_copy_paste_button.set_light("DefaultButton.Disabled")
+
+	def set_mode_copy_paste_button(self, button):
+		assert (isinstance(button, (ButtonElement, type(None))))
+		if (self._mode_copy_paste_button != button):
+			if (self._mode_copy_paste_button != None):
+				self._mode_copy_paste_button.remove_value_listener(self._mode_button_copy_paste_value)
+			self._mode_copy_paste_button = button
+			if (self._mode_copy_paste_button != None):
+				assert isinstance(button, ButtonElement)
+				self._mode_copy_paste_button.add_value_listener(self._mode_button_copy_paste_value,
+				                                                   identify_sender=True)
+
+	def _mode_button_copy_paste_value(self, value, sender):
+		assert (self._mode_copy_paste_button != None)
+		assert (value in range(128))
+
+		if self.is_enabled() and self._clip != None:
+
+			if ((value == 0) and (sender.is_momentary())):
+
+				self._is_copy_paste_shifted = False
+				if self._mode == STEPSEQ_MODE_COPY_PASTE:
+					self._control_surface.show_message("Page pasted")
+				else:
+					self.set_mode(STEPSEQ_MODE_COPY_PASTE)
+					self._control_surface.show_message("Page Copied")
+
+				self.update()
+				self._step_sequencer._update_OSD()
+
+			else:
+				self._is_copy_paste_shifted = True
+
+
 class StepSequencerComponent2(StepSequencerComponent):
 
 	def __init__(self, matrix, side_buttons, top_buttons, control_surface):
@@ -1056,7 +1292,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 		#self.set_right_button(self._top_buttons[3])
 
 	def _update_buttons(self):
-		self._update_quantization_button()
+		self._update_resolution_button()
+		#self._update_quantization_button()
 		#self._update_lock_button()
 		self._update_clip_toggle_button()
 		#self._update_cycle_button()
@@ -1078,7 +1315,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 				self._osd.attribute_names[1] = "Root Note"
 				self._osd.attributes[2] = self._scale_selector._octave
 				self._osd.attribute_names[2] = "Octave"
-				self._osd.attributes[3] = QUANTIZATION_NAMES[self._quantization_index]
+				self._osd.attributes[3] = RESOLUTION_NAMES[self._resolution_index]
+				#self._osd.attributes[3] = QUANTIZATION_NAMES[self._quantization_index]
 				self._osd.attribute_names[3] = "Quantisation"
 				if self._note_editor._is_monophonic:
 					self._osd.attributes[4] = "Mono"
