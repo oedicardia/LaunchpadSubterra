@@ -920,7 +920,8 @@ class StepSequencerComponent(CompoundComponent):
 
                 self._update_resolution_button()
         # debug
-        self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -self_note_cache ="+ str(self._note_cache))
+        #self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -self_note_cache ="+ str(self._note_cache))
+
 
     def updateQuantizationButton(self):
         if self.is_enabled() and self._resolution_button != None and self._playhead != None:
