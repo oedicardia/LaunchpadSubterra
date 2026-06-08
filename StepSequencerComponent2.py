@@ -213,6 +213,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._length_wait_animation = False
 		self._length_wait_start_times = [0] * 8
 		self._is_velocity_editor_vertical = False  # To track if we are in vertical mode
+		self._last_velocity_press_time = 0  # Track time of last button press
+		self._last_velocity_press_pos = None # Track {x, y} of last button press
+		self._double_click_window = 0.25  # 250ms window
+		# Track state to revert if double click occurs:
+		self._pending_revert_data = None  # Stores the original note list or change log
+		self._revert_timer_id = None
 		self._is_length_editor_vertical = False    # To track if we are in vertical mode
 		self._notes_pitches = [0] * (7 * pages)
 		self._notes_velocities = [4] * pages
@@ -543,14 +549,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			for x in range(len(self._notes_velocities)):
 				for note_index in range(7):
 					if self._notes_pitches[x * 7 + note_index] == 1:
-						time = x * self._resolution
+						note_time = x * self._resolution
 						#time = x * self._quantization
 						velocity = self._velocity_map[self._notes_velocities[x]]
 						length = self._length_map[self._notes_lengths[x]] * self._resolution / 4.0
 						#length = self._length_map[self._notes_lengths[x]] * self._quantization / 4.0
 						pitch = self._key_indexes[note_index] + 12 * (self._notes_octaves[x] - 2)
 						if(pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0):
-							note_cache.append([pitch, time, length, velocity, False])
+							note_cache.append([pitch, note_time, length, velocity, False])
 			self._clip.select_all_notes()
 			# debug
 			# self._control_surface.log_message(
@@ -803,17 +809,54 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 							elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
 								self._control_surface.log_message("DRAWING VELOCITY EDITOR")
+
+								# Safety check
 								if self._editing_step is None:
 									return
-								# notes = self._get_notes_at_step(self._editing_step)
+
+								idx = self._editing_step
+
+								# --- PRE-CALCULATE MIXED VELOCITIES PER PITCH ---
+								# Dictionary: { pitch_code : True/False }
+								mixed_velocity_pitches = {}
+
+								# Get all notes for the current step
+								step_notes = self._get_notes_at_step(idx)
+
+								# Group by pitch and check for velocity conflicts
+								pitch_velocities = {} # { pitch_code : [vel1, vel2, ...] }
+
+								for note in step_notes:
+									note_pitch = note[0]
+									note_vel = note[3]
+
+									if note_pitch not in pitch_velocities:
+										pitch_velocities[note_pitch] = []
+									pitch_velocities[note_pitch].append(note_vel)
+
+								# Identify pitches with mixed velocities
+								for pitch, vels in pitch_velocities.items():
+									if len(vels) > 1:
+										# Check if any two velocities differ
+										if len(set(vels)) > 1:
+											mixed_velocity_pitches[pitch] = True
+										else:
+											mixed_velocity_pitches[pitch] = False
+									else:
+										mixed_velocity_pitches[pitch] = False
+
+								# --- DRAW THE GRID ---
 								for y in range(7):
 									pitch = self._pitch_for_row(y)
 									note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
 
+									# Check if THIS specific pitch has mixed velocities
+									is_conflict = mixed_velocity_pitches.get(pitch, False)
+
 									if note is None:
+										# No note here: draw dim grid background
 										default_velocity = 90
 										bucket = 0
-
 										for i, v in enumerate(self._velocity_map):
 											if default_velocity >= v:
 												bucket = i
@@ -825,33 +868,41 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 											else:
 												self._grid_back_buffer[col][y] = \
 													"StepSequencer2.Velocity.Off"
-
 										continue
-									velocity = note[3]
-									bucket = 0
 
+									# There is a note (or notes) at this pitch
+									velocity = note[3] # Note: If mixed, 'note' usually returns the first one found.
+													   # But the color logic relies on 'is_conflict', not the specific value here.
+
+									bucket = 0
 									for i, v in enumerate(self._velocity_map):
 										if velocity >= v:
 											bucket = i
 
 									for col in range(8):
 										if col <= bucket:
-											self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.On"
+											if is_conflict:
+												# USE RED COLOR FOR CONFLICTS
+												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Mixed"
+											else:
+												# Normal On Color
+												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.On"
 										else:
+											# Normal Off/Dim Color
 											self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Off"
 
 							elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 								# VERTICAL VELOCITY DISPLAY
 								# Each column shows the MAX velocity of any note in that step as a vertical bar.
 								# RED COLOR if notes in the step have DIFFERENT velocities
-
+								
 								for col_x in range(8):
 									idx = self._get_step_index(col_x)
 									step_notes = self._get_notes_at_step(idx)
-
-									max_vel_idx = 0  # Default: Bottom-most (lowest velocity)
+									
+									max_vel_idx = -1 # -1 indicates NO notes found
 									has_mixed_velocities = False
-
+									
 									if step_notes:
 										# Collect all velocity buckets for this step
 										velocity_buckets = []
@@ -862,14 +913,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 												if note_vel >= v:
 													bucket = i
 											velocity_buckets.append(bucket)
-
+											
 											# Track max velocity for the bar height
 											if bucket > max_vel_idx:
 												max_vel_idx = bucket
-
+										
 										# Clamp to grid height (7 rows = indices 0-6)
 										if max_vel_idx > 6: max_vel_idx = 6
-
+										
 										# CHECK IF VELOCITIES ARE MIXED
 										if len(velocity_buckets) > 1:
 											# Multiple velocity buckets found in this step
@@ -882,16 +933,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									# Draw the vertical bar with appropriate color
 									for row_y in range(7):
 										row_bucket = 6 - row_y
-
-										if has_mixed_velocities and row_bucket <= max_vel_idx:
-											# USE RED COLOR FOR MIXED VELOCITIES
-											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
-										elif row_bucket <= max_vel_idx:
-											# Normal ON color
-											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
+										
+										if max_vel_idx == -1:
+											# CASE: NO NOTES IN THIS STEP
+											if row_y <= 1:
+												# Rows 0 and 1: BLACK
+												self._grid_back_buffer[col_x][row_y] = 0
+											else:
+												# Rows 2 to 6: DIMMED
+												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
 										else:
-											# Normal DIM color
-											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
+											# CASE: HAS NOTES
+											if has_mixed_velocities and row_bucket <= max_vel_idx:
+												# RED for mixed
+												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
+											elif row_bucket <= max_vel_idx:
+												# BRIGHT bar
+												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
+											else:
+												# Above the bar: BLACK
+												self._grid_back_buffer[col_x][row_y] = 0
 
 							elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
 								# VERTICAL VELOCITY MODE: Each column has ONE length value
@@ -1089,18 +1150,67 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._notes_octaves[idx] = 6 - y
 
 					elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
-						# HORIZONTAL VELOCITY MODE
+						# HORIZONTAL VELOCITY MODE WITH DOUBLE-CLICK DELETE
+
+						# Use a timestamp variable name to avoid conflict if 'time' is used locally
+						current_ts = time.time()
 						pitch = self._pitch_for_row(y)
-						velocity = self._velocity_map[x]
-						note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
+						step_idx = self._editing_step
 
-						if note is None:
-							self._add_note_at_step(self._editing_step, pitch, velocity)
+						# Check for Double Click
+						is_double_click = False
+						if (self._last_velocity_press_pos is not None and
+						    self._last_velocity_press_pos['x'] == x and
+						    self._last_velocity_press_pos['y'] == y and
+						    (current_ts - self._last_velocity_press_time) < self._double_click_window):
+							is_double_click = True
+
+						# Update tracking state for next press
+						self._last_velocity_press_time = current_ts
+						self._last_velocity_press_pos = {'x': x, 'y': y}
+
+						if is_double_click:
+							# --- DELETE OPERATION (DELETE LAST NOTE IN STEP) ---
+							step_idx = self._editing_step
+							start_time = step_idx * self._resolution
+							end_time = start_time + self._resolution
+
+							notes = list(self._note_cache)
+
+							# Find the note with the HIGHEST time value matching the pitch and step
+							target_index = -1
+							max_note_time = -1.0
+
+							for i, note in enumerate(notes):
+								note_p, note_t, note_l, note_v, note_m = note
+
+								if (note_p == pitch and
+										start_time <= note_t < end_time):
+
+									# Keep track of the note with the latest time
+									if note_t > max_note_time:
+										max_note_time = note_t
+										target_index = i
+
+							if target_index != -1:
+								notes.pop(target_index)
+								self._write_note_cache_to_clip(notes)
+								self._update_matrix()
+								self._control_surface.show_message("Note deleted")
+							return
+
 						else:
-							self._set_velocity_for_pitch_at_step(self._editing_step, pitch, velocity)
+							# --- SET VELOCITY OPERATION ---
+							velocity = self._velocity_map[x]
+							note = self._get_note_for_pitch_at_step(step_idx, pitch)
 
-						self._update_matrix()
-						return
+							if note is None:
+								self._add_note_at_step(step_idx, pitch, velocity)
+							else:
+								self._set_velocity_for_pitch_at_step(step_idx, pitch, velocity)
+
+							self._update_matrix()
+							return
 
 					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
 						# LENGTH MODE
@@ -1117,31 +1227,90 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						return
 
 					elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
-						# VERTICAL VELOCITY MODE
-						# Set velocity for ALL notes in column x based on pressed row y
+						# VERTICAL VELOCITY MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
+
+						current_ts = time.time()
+						step_idx = idx
 						vel_bucket = 6 - y
 						if vel_bucket < 0: vel_bucket = 0
 						if vel_bucket > 7: vel_bucket = 7
-
 						target_velocity = self._velocity_map[vel_bucket]
 
-						step_notes = list(self._note_cache)
-						start_time = idx * self._resolution
+						start_time = step_idx * self._resolution
 						end_time = start_time + self._resolution
-						changed = False
 
-						for i, note in enumerate(step_notes):
-							pitch, time, length, old_vel, muted = note
-							if start_time <= time < end_time:
-								if old_vel != target_velocity:
-									step_notes[i] = (pitch, time, length, target_velocity, muted)
-									changed = True
+						# --- DETECT DOUBLE CLICK ---
+						is_double_click = False
+						if (self._last_velocity_press_pos is not None and
+						    self._last_velocity_press_pos['x'] == x and
+						    self._last_velocity_press_pos['y'] == y and
+						    (current_ts - self._last_velocity_press_time) < self._double_click_window):
+							is_double_click = True
 
-						if changed:
-							self._write_note_cache_to_clip(step_notes)
-							self._update_matrix()
+						# Update tracking
+						self._last_velocity_press_time = current_ts
+						self._last_velocity_press_pos = {'x': x, 'y': y}
 
-						return
+						if is_double_click:
+							# --- HANDLE DOUBLE CLICK ---
+
+							# 1. REVERT to the saved OLD state
+							if self._pending_revert_data is not None:
+								self._write_note_cache_to_clip(self._pending_revert_data)
+								self._note_cache = tuple(self._pending_revert_data)
+								# CRITICAL: Refresh display data from cache
+								self._parse_notes()
+
+								self._pending_revert_data = None
+
+							# 2. PERFORM DELETE on the NOW-CORRECTED cache
+							current_notes = list(self._note_cache)
+							target_index = -1
+							max_note_time = -1.0
+
+							for i, note in enumerate(current_notes):
+								note_p, note_t, note_l, note_v, note_m = note
+								if (start_time <= note_t < end_time and note_v == target_velocity):
+									if note_t > max_note_time:
+										max_note_time = note_t
+										target_index = i
+
+							if target_index != -1:
+								current_notes.pop(target_index)
+								self._write_note_cache_to_clip(current_notes)
+								self._note_cache = tuple(current_notes)
+								# CRITICAL: Refresh display data from cache
+								self._parse_notes()
+
+								self._update_matrix()
+								self._control_surface.show_message("Note deleted")
+
+							return
+
+						else:
+							# --- HANDLE SINGLE CLICK ---
+
+							# 1. SAVE CURRENT STATE for potential revert
+							self._pending_revert_data = list(self._note_cache)
+
+							# 2. IMMEDIATELY APPLY THE CHANGE
+							notes = list(self._note_cache)
+							changed = False
+							for i, note in enumerate(notes):
+								note_p, note_t, note_l, old_vel, muted = note
+								if start_time <= note_t < end_time:
+									if old_vel != target_velocity:
+										notes[i] = (note_p, note_t, note_l, target_velocity, muted)
+										changed = True
+
+							if changed:
+								self._write_note_cache_to_clip(notes)
+								self._note_cache = tuple(notes)
+								# CRITICAL: Refresh display data from cache
+								self._parse_notes()
+								self._update_matrix()
+
+							return
 
 					# Default handling for other modes (Copy/Paste, etc.)
 					self._update_matrix()
@@ -1186,10 +1355,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		for i, note in enumerate(notes):
 
-			note_pitch, time, length, old_velocity, muted = note
+			note_pitch, note_time, length, old_velocity, muted = note
 
-			if (note_pitch == pitch and start_time <= time < end_time):
-				notes[i] = (note_pitch, time, length, velocity, muted)
+			if (note_pitch == pitch and start_time <= note_time < end_time):
+				notes[i] = (note_pitch, note_time, length, velocity, muted)
 				changed = True
 
 		if changed:
@@ -1206,10 +1375,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		for i, note in enumerate(notes):
 
-			note_pitch, time, length, old_length, muted = note
+			note_pitch, note_time, length, old_length, muted = note
 
-			if (note_pitch == pitch and start_time <= time < end_time):
-				notes[i] = (note_pitch, time, length, length, muted)
+			if (note_pitch == pitch and start_time <= note_time < end_time):
+				notes[i] = (note_pitch, note_time, length, length, muted)
 				changed = True
 
 		if changed:
@@ -1585,12 +1754,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		for i, note in enumerate(notes):
 
-			pitch, time, length, old_velocity, muted = note
+			pitch, note_time, length, old_velocity, muted = note
 
-			if start_time <= time < end_time:
+			if start_time <= note_time < end_time:
 				notes[i] = (
 					pitch,
-					time,
+					note_time,
 					length,
 					velocity,
 					muted
@@ -1650,11 +1819,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					return
 
 				# STATE 2: Currently in Vertical Velocity Editor -> Exit to Notes
+				# STATE 2: Currently in Vertical Velocity Editor -> Exit to Notes
 				elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 					self._velocity_wait_animation = False
 					self._pending_velocity_editor = False
 					self._editing_step = None
 					self._is_velocity_editor_vertical = False
+					# FORCE UPDATE TO REFRESH DISPLAY AFTER EXITING
+					self._force_update = True
 					self.set_mode(STEPSEQ_MODE_NOTES)
 					self._control_surface.show_message("pitch")
 					return
@@ -1731,12 +1903,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		for i, note in enumerate(notes):
 
-			pitch, time, old_length, velocity, muted = note
+			pitch, note_time, old_length, velocity, muted = note
 
-			if start_time <= time < end_time:
+			if start_time <= note_time < end_time:
 				notes[i] = (
 					pitch,
-					time,
+					note_time,
 					length,
 					velocity,
 					muted
