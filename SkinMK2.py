@@ -455,6 +455,7 @@ class Colors:
             On = Rgb.LIGHT_BLUE
             Dim = Rgb.LIGHT_BLUE_THIRD
             Off = Rgb.BLACK
+            Mixed = Rgb.RED
 
         class Length:
             On = Rgb.MINT

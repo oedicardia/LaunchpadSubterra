@@ -840,40 +840,57 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										else:
 											self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Off"
 
-
 							elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 								# VERTICAL VELOCITY DISPLAY
 								# Each column shows the MAX velocity of any note in that step as a vertical bar.
+								# RED COLOR if notes in the step have DIFFERENT velocities
+
 								for col_x in range(8):
 									idx = self._get_step_index(col_x)
 									step_notes = self._get_notes_at_step(idx)
+
 									max_vel_idx = 0  # Default: Bottom-most (lowest velocity)
+									has_mixed_velocities = False
+
 									if step_notes:
-										# Find the HIGHEST velocity among all notes in this step
+										# Collect all velocity buckets for this step
+										velocity_buckets = []
 										for note in step_notes:
 											note_vel = note[3]  # Index 3 is Velocity!
-											# Convert velocity value to bucket index (0-7)
 											bucket = 0
 											for i, v in enumerate(self._velocity_map):
 												if note_vel >= v:
 													bucket = i
+											velocity_buckets.append(bucket)
+
+											# Track max velocity for the bar height
 											if bucket > max_vel_idx:
 												max_vel_idx = bucket
 
 										# Clamp to grid height (7 rows = indices 0-6)
 										if max_vel_idx > 6: max_vel_idx = 6
 
-									# Draw the vertical bar
+										# CHECK IF VELOCITIES ARE MIXED
+										if len(velocity_buckets) > 1:
+											# Multiple velocity buckets found in this step
+											first_bucket = velocity_buckets[0]
+											for b in velocity_buckets[1:]:
+												if b != first_bucket:
+													has_mixed_velocities = True
+													break
+
+									# Draw the vertical bar with appropriate color
 									for row_y in range(7):
-										# Calculate what bucket this row represents
-										# Row 6 (Bottom) represents Bucket 0
-										# Row 5 represents Bucket 1
-										# ...
-										# Row 0 (Top) represents Bucket 6
 										row_bucket = 6 - row_y
-										if row_bucket <= max_vel_idx:
+
+										if has_mixed_velocities and row_bucket <= max_vel_idx:
+											# USE RED COLOR FOR MIXED VELOCITIES
+											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
+										elif row_bucket <= max_vel_idx:
+											# Normal ON color
 											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
 										else:
+											# Normal DIM color
 											self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
 
 							elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
