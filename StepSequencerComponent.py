@@ -456,8 +456,64 @@ class StepSequencerComponent(CompoundComponent):
         self._scale_selector.update()
 
     def _update_loop_selector(self):
-        self._loop_selector.set_enabled(self._mode == STEPSEQ_MODE_NORMAL)
-        self._loop_selector.update()
+        is_normal = True
+
+        # Check if our note editor has a _mode attribute (Melodic Note Editor)
+        if hasattr(self._note_editor, '_mode'):
+            editor_mode = self._note_editor._mode
+
+            # List of sub-modes to disable
+            modes_to_disable_loop = [
+                6,  # STEPSEQ_MODE_STEP_VELOCITY_EDITOR
+                7,  # STEPSEQ_MODE_STEP_LENGTH_EDITOR
+                8,  # STEPSEQ_MODE_VERTICAL_VELOCITY
+                9,  # STEPSEQ_MODE_VERTICAL_LENGTH
+                5,  # STEPSEQ_MODE_COPY_PASTE
+            ]
+
+            if editor_mode in modes_to_disable_loop:
+                is_normal = False
+
+            # --- CRITICAL FIX: ALSO CHECK ANIMATION FLAGS ---
+            # Animations run while _mode is still NORMAL, but these flags are True
+            if hasattr(self._note_editor, '_velocity_wait_animation') and self._note_editor._velocity_wait_animation:
+                is_normal = False
+            if hasattr(self._note_editor, '_length_wait_animation') and self._note_editor._length_wait_animation:
+                is_normal = False
+        else:
+            # Standard Drum Editor -> Always Normal
+            is_normal = True
+
+        if is_normal:
+            # ENABLE AND ATTACH LISTENERS
+            if not self._loop_selector.is_enabled():
+                self._loop_selector.set_enabled(True)
+
+                # Re-attach listeners
+                for button in self._loop_selector._buttons:
+                    if button:
+                        try:
+                            button.add_value_listener(self._loop_selector._loop_button_value, identify_sender=True)
+                        except RuntimeError:
+                            pass
+
+            self._loop_selector.update()
+        else:
+            # Disable/Detach
+            if self._loop_selector.is_enabled():
+                self._loop_selector.set_enabled(False)
+                for button in self._loop_selector._buttons:
+                    if button:
+                        try:
+                            button.remove_value_listener(self._loop_selector._loop_button_value)
+                        except:
+                            pass
+            # Visual cleanup
+            for button in self._loop_selector._buttons:
+                if button:
+                    button.turn_off()
+                    button.set_light("DefaultButton.Disabled")
+
 
     def _update_note_selector(self):
         self._note_selector._enable_offset_button = self._mode == STEPSEQ_MODE_NORMAL

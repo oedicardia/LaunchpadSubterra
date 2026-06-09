@@ -102,7 +102,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self.set_clip_toggle_button(self._side_buttons[2])
 
 		self._mode_copy_paste_button = None
-		self.set_mode_copy_paste_button(self._side_buttons[4])
+		self.set_mode_copy_paste_button(self._side_buttons[3])
 		self._is_copy_paste_shifted = False
 		self._last_copy_paste_button_press = time.time()
 
@@ -146,6 +146,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._remove_highlighted_clip_slot_listener()
 		self._remove_clip_slot_listener()
 		self._step_sequencer = None
+		# If you manually remove listeners here, ensure you loop to 8
+		if self._matrix != None:
+			for x in range(8):
+				for y in range(8): # Ensure this matches set_matrix
+					button = self._matrix.get_button(x, y)
+					try:
+						button.remove_value_listener(self._matrix_value)
+					except RuntimeError:
+						pass
 		self._matrix = None
 		self._mode_notes_lengths_button = None
 		self._mode_notes_octaves_button = None
@@ -219,6 +228,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Track state to revert if double click occurs:
 		self._pending_revert_data = None  # Stores the original note list or change log
 		self._revert_timer_id = None
+		self._last_length_press_time = 0
+		self._last_length_press_pos = None
 		self._is_length_editor_vertical = False    # To track if we are in vertical mode
 		self._notes_pitches = [0] * (7 * pages)
 		self._notes_velocities = [4] * pages
@@ -230,11 +241,33 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._control_surface.log_message(
 			"SET_MODE old=%s new=%s" % (self._mode, mode)
 		)
+
+		old_mode = self._mode
 		self._mode = mode
 		self._force_update = True
-		self._control_surface.log_message(
-			"CALLING UPDATE FROM SET_MODE"
-		)
+
+		# Notify parent
+		if hasattr(self, '_step_sequencer') and self._step_sequencer:
+			self._step_sequencer.update()
+
+		# --- CRITICAL FIX: CLEAR LOOP SELECTOR VISUALS WHEN EXITING EDITORS ---
+		# If we are moving FROM an editor TO normal mode, force the Loop Selector
+		# to reset its visual cache so it doesn't show stale "selected" blocks.
+		if (old_mode in [
+			STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+			STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
+			STEPSEQ_MODE_COPY_PASTE
+		]) and (mode == STEPSEQ_MODE_NOTES):
+
+			# Access the loop selector via the parent
+			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+				l_loop = self._step_sequencer._loop_selector
+				# Force a reset of the loop selector's internal cache and turn off lights
+				l_loop._cache = [-1] * len(l_loop._buttons)  # Reset cache
+				l_loop._force = True  # Force next update to re-evaluate
+				l_loop.update()  # Immediately redraw (should be empty/dim in normal mode)
+
+		self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
 		self.update()
 
 	def set_clip(self, clip):
@@ -651,7 +684,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# add listeners to NEW matrix
 		if self._matrix != None:
 			for x in range(8):
-				for y in range(7):
+				for y in range(8):
 					button = self._matrix.get_button(x, y)
 					button.add_value_listener(
 						self._matrix_value,
@@ -692,7 +725,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# If this is the very first run or timer is in future, force "Waiting" state
 				if elapsed_col <= 0.0:
 					# Clear column only
-					for y in range(7):
+					for y in range(8):
 						self._grid_back_buffer[x][y] = 0
 					continue
 
@@ -700,7 +733,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				SPAWN_COEFFICIENT = 2.5  # Tune this: Lower = faster spawns
 				FALL_SPEED = 12.0
 
-				time_to_fall = 7.0 / FALL_SPEED
+				time_to_fall = 8.0 / FALL_SPEED
 				base_wait = (x * 0.37) % 1.0  # 0 to 1 second base randomness
 				random_wait = base_wait * SPAWN_COEFFICIENT  # Scale by coefficient
 
@@ -715,10 +748,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if time_in_cycle < time_to_fall:
 					pos_float = (time_in_cycle / time_to_fall) * 7.0
 					head_pos = int(pos_float)
-					if head_pos > 6: head_pos = 6
+					if head_pos > 7: head_pos = 7
 
 				# Clear Column (Always Black first)
-				for y in range(7):
+				for y in range(8):
 					self._grid_back_buffer[x][y] = 0
 
 				if head_pos != -1:
@@ -738,14 +771,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				elapsed_col = now - delay
 
 				if elapsed_col <= 0.0:
-					for y in range(7):
+					for y in range(8):
 						self._grid_back_buffer[x][y] = 0
 					continue
 
 				# Configuration
 				SPAWN_COEFFICIENT = 2.0
 				FALL_SPEED = 12.0
-				time_to_fall = 7.0 / FALL_SPEED
+				time_to_fall = 8.0 / FALL_SPEED
 				base_wait = ((x + 1) * 0.43) % 1.0
 				random_wait = base_wait * SPAWN_COEFFICIENT  # Scaled by coefficient
 
@@ -756,9 +789,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if time_in_cycle < time_to_fall:
 					pos_float = (time_in_cycle / time_to_fall) * 7.0
 					head_pos = int(pos_float)
-					if head_pos > 6: head_pos = 6
+					if head_pos > 7: head_pos = 7
 
-				for y in range(7):
+				for y in range(8):
 					self._grid_back_buffer[x][y] = 0
 
 				if head_pos != -1:
@@ -787,233 +820,312 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
 								has_note = True
 
-						for y in range(7):
-
-							if self._mode == STEPSEQ_MODE_NOTES:
-								if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
-									self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.On"
-								else:
-									self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
-
-							elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-								if has_note:
-									if self._notes_octaves[idx] == 6 - y:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.On"
+						if self._mode == STEPSEQ_MODE_NOTES or self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+							for y in range(7):
+								if self._mode == STEPSEQ_MODE_NOTES:
+									if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
+										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.On"
 									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
-								else:
-									if self._notes_octaves[idx] == 6 - y:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Dim"
+										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
+
+								else:#elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+									if has_note:
+										if self._notes_octaves[idx] == 6 - y:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.On"
+										else:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
 									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+										if self._notes_octaves[idx] == 6 - y:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Dim"
+										else:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+						else:
+							for y in range(8):
+								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
+									self._control_surface.log_message("DRAWING VELOCITY EDITOR")
 
-							elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
-								self._control_surface.log_message("DRAWING VELOCITY EDITOR")
+									# Safety check
+									if self._editing_step is None:
+										return
 
-								# Safety check
-								if self._editing_step is None:
-									return
+									idx = self._editing_step
 
-								idx = self._editing_step
+									# --- PRE-CALCULATE MIXED VELOCITIES PER PITCH ---
+									# Dictionary: { pitch_code : True/False }
+									mixed_velocity_pitches = {}
 
-								# --- PRE-CALCULATE MIXED VELOCITIES PER PITCH ---
-								# Dictionary: { pitch_code : True/False }
-								mixed_velocity_pitches = {}
+									# Get all notes for the current step
+									step_notes = self._get_notes_at_step(idx)
 
-								# Get all notes for the current step
-								step_notes = self._get_notes_at_step(idx)
+									# Group by pitch and check for velocity conflicts
+									pitch_velocities = {} # { pitch_code : [vel1, vel2, ...] }
 
-								# Group by pitch and check for velocity conflicts
-								pitch_velocities = {} # { pitch_code : [vel1, vel2, ...] }
+									for note in step_notes:
+										note_pitch = note[0]
+										note_vel = note[3]
 
-								for note in step_notes:
-									note_pitch = note[0]
-									note_vel = note[3]
+										if note_pitch not in pitch_velocities:
+											pitch_velocities[note_pitch] = []
+										pitch_velocities[note_pitch].append(note_vel)
 
-									if note_pitch not in pitch_velocities:
-										pitch_velocities[note_pitch] = []
-									pitch_velocities[note_pitch].append(note_vel)
-
-								# Identify pitches with mixed velocities
-								for pitch, vels in pitch_velocities.items():
-									if len(vels) > 1:
-										# Check if any two velocities differ
-										if len(set(vels)) > 1:
-											mixed_velocity_pitches[pitch] = True
+									# Identify pitches with mixed velocities
+									for pitch, vels in pitch_velocities.items():
+										if len(vels) > 1:
+											# Check if any two velocities differ
+											if len(set(vels)) > 1:
+												mixed_velocity_pitches[pitch] = True
+											else:
+												mixed_velocity_pitches[pitch] = False
 										else:
 											mixed_velocity_pitches[pitch] = False
-									else:
-										mixed_velocity_pitches[pitch] = False
 
-								# --- DRAW THE GRID ---
-								for y in range(7):
-									pitch = self._pitch_for_row(y)
-									note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
+									# --- DRAW THE GRID ---
+									for y in range(7):
+										pitch = self._pitch_for_row(y)
+										note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
 
-									# Check if THIS specific pitch has mixed velocities
-									is_conflict = mixed_velocity_pitches.get(pitch, False)
+										# Check if THIS specific pitch has mixed velocities
+										is_conflict = mixed_velocity_pitches.get(pitch, False)
 
-									if note is None:
-										# No note here: draw dim grid background
-										default_velocity = 90
+										if note is None:
+											# No note here: draw dim grid background
+											default_velocity = 90
+											bucket = 0
+											for i, v in enumerate(self._velocity_map):
+												if default_velocity >= v:
+													bucket = i
+
+											for col in range(8):
+												if col <= bucket:
+													self._grid_back_buffer[col][y] = \
+														"StepSequencer2.Velocity.Dim"
+												else:
+													self._grid_back_buffer[col][y] = \
+														"StepSequencer2.Velocity.Off"
+											continue
+
+										# There is a note (or notes) at this pitch
+										velocity = note[3] # Note: If mixed, 'note' usually returns the first one found.
+														   # But the color logic relies on 'is_conflict', not the specific value here.
+
 										bucket = 0
 										for i, v in enumerate(self._velocity_map):
-											if default_velocity >= v:
+											if velocity >= v:
 												bucket = i
 
 										for col in range(8):
 											if col <= bucket:
-												self._grid_back_buffer[col][y] = \
-													"StepSequencer2.Velocity.Dim"
+												if is_conflict:
+													# USE RED COLOR FOR CONFLICTS
+													self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Mixed"
+												else:
+													# Normal On Color
+													self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.On"
 											else:
-												self._grid_back_buffer[col][y] = \
-													"StepSequencer2.Velocity.Off"
-										continue
+												# Normal Off/Dim Color
+												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Off"
 
-									# There is a note (or notes) at this pitch
-									velocity = note[3] # Note: If mixed, 'note' usually returns the first one found.
-													   # But the color logic relies on 'is_conflict', not the specific value here.
+								elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
+									# VERTICAL VELOCITY DISPLAY
+									# Each column shows the MAX velocity of any note in that step as a vertical bar.
+									# RED COLOR if notes in the step have DIFFERENT velocities
 
-									bucket = 0
-									for i, v in enumerate(self._velocity_map):
-										if velocity >= v:
-											bucket = i
+									for col_x in range(8):
+										idx = self._get_step_index(col_x)
+										step_notes = self._get_notes_at_step(idx)
 
-									for col in range(8):
-										if col <= bucket:
-											if is_conflict:
-												# USE RED COLOR FOR CONFLICTS
-												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Mixed"
+										max_vel_idx = -1 # -1 indicates NO notes found
+										has_mixed_velocities = False
+
+										if step_notes:
+											# Collect all velocity buckets for this step
+											velocity_buckets = []
+											for note in step_notes:
+												note_vel = note[3]  # Index 3 is Velocity!
+												bucket = 0
+												for i, v in enumerate(self._velocity_map):
+													if note_vel >= v:
+														bucket = i
+												velocity_buckets.append(bucket)
+
+												# Track max velocity for the bar height
+												if bucket > max_vel_idx:
+													max_vel_idx = bucket
+
+											# Clamp to grid height (8 rows = indices 0-7)
+											if max_vel_idx > 7: max_vel_idx = 7
+
+											# CHECK IF VELOCITIES ARE MIXED
+											if len(velocity_buckets) > 1:
+												# Multiple velocity buckets found in this step
+												first_bucket = velocity_buckets[0]
+												for b in velocity_buckets[1:]:
+													if b != first_bucket:
+														has_mixed_velocities = True
+														break
+
+										# Draw the vertical bar with appropriate color
+										for row_y in range(8):
+											row_bucket = 7 - row_y
+
+											if max_vel_idx == -1:
+												# CASE: NO NOTES IN THIS STEP
+												if row_y <= 1:
+													# Rows 0 and 1: BLACK
+													self._grid_back_buffer[col_x][row_y] = 0
+												else:
+													# Rows 2 to 7: DIMMED
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
 											else:
-												# Normal On Color
-												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.On"
+												# CASE: HAS NOTES
+												if has_mixed_velocities and row_bucket <= max_vel_idx:
+													# RED for mixed
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
+												elif row_bucket <= max_vel_idx:
+													# BRIGHT bar
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
+												else:
+													# Above the bar: BLACK
+													self._grid_back_buffer[col_x][row_y] = 0
+
+								elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
+									# VERTICAL LENGTH DISPLAY
+
+									for col_x in range(8):
+										idx = self._get_step_index(col_x)
+										step_notes = self._get_notes_at_step(idx)
+
+										max_len_idx = -1
+										has_mixed_lengths = False
+
+										if step_notes:
+											length_buckets = []
+											for note in step_notes:
+												note_len = note[2]
+												bucket = 0
+												# Find bucket: compare note_len against length_map * resolution/4.0
+												for i, v in enumerate(self._length_map):
+													if note_len >= v * self._resolution / 4.0:
+														bucket = i
+												length_buckets.append(bucket)
+
+												if bucket > max_len_idx:
+													max_len_idx = bucket
+
+											if max_len_idx > 7: max_len_idx = 7
+
+											# CHECK IF MIXED
+											if len(length_buckets) > 1:
+												if len(set(length_buckets)) > 1:
+													has_mixed_lengths = True
+
+										# Draw bar
+										for row_y in range(8):
+											# FIXED: Row 0 (Top) should represent highest bucket, Row 7 (Bottom) lowest
+											row_bucket = 7 - row_y
+
+											if max_len_idx == -1:
+												# NO NOTES
+												if row_y <= 1:
+													self._grid_back_buffer[col_x][row_y] = 0
+												else:
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Length.Dim"
+											else:
+												# HAS NOTES
+												if has_mixed_lengths and row_bucket <= max_len_idx:
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
+												elif row_bucket <= max_len_idx:
+													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Length.On"
+												else:
+													self._grid_back_buffer[col_x][row_y] = 0
+
+								elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+									if self._editing_step is None:
+										return
+
+									# --- PRE-CALCULATE MIXED LENGTHS PER PITCH ---
+									# Dictionary: { pitch_code : True/False }
+									mixed_length_pitches = {}
+									step_notes = self._get_notes_at_step(self._editing_step)
+
+									# Group by pitch and check for length conflicts
+									pitch_lengths = {}  # { pitch_code : [length1, length2, ...] }
+
+									for note in step_notes:
+										note_pitch = note[0]
+										note_len = note[2]  # Index 2 is Duration
+
+										if note_pitch not in pitch_lengths:
+											pitch_lengths[note_pitch] = []
+										pitch_lengths[note_pitch].append(note_len)
+
+									# Identify pitches with mixed lengths
+									for pitch, lengths in pitch_lengths.items():
+										if len(lengths) > 1:
+											# Check if any two lengths differ
+											if len(set(lengths)) > 1:
+												mixed_length_pitches[pitch] = True
+											else:
+												mixed_length_pitches[pitch] = False
 										else:
-											# Normal Off/Dim Color
-											self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Off"
+											mixed_length_pitches[pitch] = False
 
-							elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
-								# VERTICAL VELOCITY DISPLAY
-								# Each column shows the MAX velocity of any note in that step as a vertical bar.
-								# RED COLOR if notes in the step have DIFFERENT velocities
-								
-								for col_x in range(8):
-									idx = self._get_step_index(col_x)
-									step_notes = self._get_notes_at_step(idx)
-									
-									max_vel_idx = -1 # -1 indicates NO notes found
-									has_mixed_velocities = False
-									
-									if step_notes:
-										# Collect all velocity buckets for this step
-										velocity_buckets = []
-										for note in step_notes:
-											note_vel = note[3]  # Index 3 is Velocity!
-											bucket = 0
-											for i, v in enumerate(self._velocity_map):
-												if note_vel >= v:
-													bucket = i
-											velocity_buckets.append(bucket)
-											
-											# Track max velocity for the bar height
-											if bucket > max_vel_idx:
-												max_vel_idx = bucket
-										
-										# Clamp to grid height (7 rows = indices 0-6)
-										if max_vel_idx > 6: max_vel_idx = 6
-										
-										# CHECK IF VELOCITIES ARE MIXED
-										if len(velocity_buckets) > 1:
-											# Multiple velocity buckets found in this step
-											first_bucket = velocity_buckets[0]
-											for b in velocity_buckets[1:]:
-												if b != first_bucket:
-													has_mixed_velocities = True
-													break
-
-									# Draw the vertical bar with appropriate color
-									for row_y in range(7):
-										row_bucket = 6 - row_y
-										
-										if max_vel_idx == -1:
-											# CASE: NO NOTES IN THIS STEP
-											if row_y <= 1:
-												# Rows 0 and 1: BLACK
-												self._grid_back_buffer[col_x][row_y] = 0
-											else:
-												# Rows 2 to 6: DIMMED
-												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
-										else:
-											# CASE: HAS NOTES
-											if has_mixed_velocities and row_bucket <= max_vel_idx:
-												# RED for mixed
-												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
-											elif row_bucket <= max_vel_idx:
-												# BRIGHT bar
-												self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
-											else:
-												# Above the bar: BLACK
-												self._grid_back_buffer[col_x][row_y] = 0
-
-							elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
-								# VERTICAL VELOCITY MODE: Each column has ONE length value
-								# Displayed as a vertical bar in that column
-
-								for x in range(8):
-									idx = self._get_step_index(x)
-
-									# Get the average/max length for this step/column
-									# We'll use the first note found in this step as representative
-									step_notes = self._get_notes_at_step(idx)
-									max_vel_idx = 0  # Default low length bucket
-
-									if step_notes:
-										# Find highest length in this step
-										for note in step_notes:
-											note_vel = note[3]
-											vel_bucket = 0
-											for i, v in enumerate(self._length_map):
-												if note_vel >= v:
-													vel_bucket = i
-											if vel_bucket > max_vel_idx:
-												max_vel_idx = vel_bucket
-
-									# OR use average length logic if preferred
-									# avg_vel = sum(n[3] for n in step_notes) / len(step_notes)
-									# ... convert to bucket ...
-
-									# Draw vertical bar: rows from bottom (6) up to max_vel_idx
+									# --- DRAW THE GRID ---
 									for y in range(7):
-										# Row 0 = Top (High Pitch), Row 6 = Bottom (Low Pitch)
-										# We want the bar to grow from bottom up
-										grid_row = 6 - y  # Invert: 6=bottom, 0=top
+										pitch = self._pitch_for_row(y)
 
-										if grid_row <= max_vel_idx:
-											self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.On"
-										else:
-											self._grid_back_buffer[x][y] = "StepSequencer2.Velocity.Dim"
+										# We don't just get ONE note anymore; we might have multiple,
+										# but we draw based on the *max* length or a representative one,
+										# while using 'is_conflict' for color.
+										# Let's find the max length bucket for this pitch to draw the bar height.
 
-							elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
-								if self._editing_step is None:
-									return
-								# notes = self._get_notes_at_step(self._editing_step)
-								for y in range(7):
-									pitch = self._pitch_for_row(y)
-									note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
+										current_note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
 
-									if note is None:
-										continue
-									length = note[2]  # Note: length is index 2, not 3
-									bucket = 0
+										# Check if THIS specific pitch has mixed lengths
+										is_mixed = mixed_length_pitches.get(pitch, False)
 
-									for i, v in enumerate(self._length_map):
-										if length >= v:
-											bucket = i
+										if current_note is None:
+											# No note here: draw dim grid background
+											default_length_idx = 3
+											for col in range(8):
+												if col <= default_length_idx:
+													self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
+												else:
+													self._grid_back_buffer[col][
+														y] = "StepSequencer2.Length.Off"
+											continue
 
-									for col in range(8):
-										if col <= bucket:
-											self._grid_back_buffer[col][y] = "StepSequencer2.Length.On"
-										else:
-											self._grid_back_buffer[col][y] = "StepSequencer2.Length.Off"
+										# There is a note (or notes) at this pitch
+										# If mixed, we usually draw the MAXIMUM length to show the full extent,
+										# or the first one found. Let's use the max length for visual clarity.
+										pitch_max_length = 0
+										for note in step_notes:
+											if note[0] == pitch:
+												if note[2] > pitch_max_length:
+													pitch_max_length = note[2]
+
+										# Calculate bucket for the max length
+										length_bucket = 0
+										for i, v in enumerate(self._length_map):
+											if pitch_max_length >= v * self._resolution / 4.0:
+												length_bucket = i
+
+										if length_bucket > 7: length_bucket = 7
+
+										# Draw the "Bar" across the columns for this row
+										for col in range(8):
+											if col <= length_bucket:
+												if is_mixed:
+													# USE RED COLOR FOR CONFLICTS
+													# Note: Ensure you have defined "StepSequencer2.Length.Mixed" in your resources
+													# If not, you might need to reuse Velocity.Mixed or create a new string
+													self._grid_back_buffer[col][y] = "StepSequencer2.Length.Mixed"
+												else:
+													# Normal On Color
+													self._grid_back_buffer[col][y] = "StepSequencer2.Length.On"
+											else:
+												# Normal Off/Dim Color
+												self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
 
 				# --- METRONOME ---
 				if self._playhead != None:
@@ -1044,7 +1156,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# This block runs regardless of whether we are animating or doing normal rendering
 		if self._matrix != None:
 			for x in range(8):
-				for y in range(7):
+				for y in range(8):
 					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
 						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
 						self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
@@ -1056,15 +1168,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		x = -1
 		y = -1
 		for xx in range(8):
-			for yy in range(7):
+			for yy in range(8):
 				if self._matrix.get_button(xx, yy) == sender:
 					x = xx
 					y = yy
 
-		# Skip if we're in velocity/length editor but pressed row 7 (reserved for loop controls)
-		if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR or self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+		# DEBUG: Verify we are receiving the click on row 7
+		self._control_surface.log_message(f"_matrix_value received: x={x}, y={y}")
+
+		# --- BLOCK ROW 7 ONLY IN HORIZONTAL EDITORS ---
+		if (self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR or
+				self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR):
 			if y == 7:
-				return
+				return  # Silently ignore Row 7 press in Horizontal modes
+
 
 		effective_page = self._get_effective_page()
 
@@ -1083,7 +1200,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# --- CRITICAL FIX: HANDLE ANIMATION INTERRUPTION ---
 				# If we are currently animating (waiting for user selection),
 				# pressing a grid button stops the animation and enters Horizontal Editor immediately.
-				if self._velocity_wait_animation and ((value != 0) or (not sender.is_momentary())) and y < 7:
+				if self._velocity_wait_animation and ((value != 0) or (not sender.is_momentary())):
 					idx = self._get_step_index(x)
 
 					# Stop Animation
@@ -1095,7 +1212,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._editing_step = idx
 					self.set_mode(STEPSEQ_MODE_STEP_VELOCITY_EDITOR)
 
-					self._control_surface.show_message("Horz Vel Step %d" % idx)
+					self._control_surface.show_message("Horizontal Velocity Step %d" % idx)
 					self._update_matrix()
 					return  # Exit function to prevent further processing
 
@@ -1105,23 +1222,46 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					idx = self._get_step_index(x)
 					self._editing_step = idx
 
-					self._control_surface.log_message(
-						"ENTERING VELOCITY EDITOR step=%s" % idx
-					)
+					# self._control_surface.log_message(
+					# 	"ENTERING VELOCITY EDITOR step=%s" % idx
+					# )
 					self._velocity_wait_animation = False
 					self._pending_velocity_editor = False
 					self.set_mode(STEPSEQ_MODE_STEP_VELOCITY_EDITOR)
 					return
 
+				# If we are currently animating (waiting for user selection),
+				# pressing a grid button stops the animation and enters Horizontal Editor immediately.
+				if self._length_wait_animation and ((value != 0) or (not sender.is_momentary())) and y < 7:
+					idx = self._get_step_index(x)
+
+					# Stop Animation
+					self._length_wait_animation = False
+					self._mode_notes_velocities_button.turn_off()  # Ensure button LED turns off
+
+					# Set up Horizontal Editor state
+					self._pending_length_editor = False
+					self._editing_step = idx
+					self.set_mode(STEPSEQ_MODE_STEP_LENGTH_EDITOR)
+
+					self._control_surface.show_message("Horizontal Length Step %d" % idx)
+					self._update_matrix()
+					return  # Exit function to prevent further processing
+
 				if self._pending_length_editor:
 					idx = self._get_step_index(x)
 					self._editing_step = idx
 					self._pending_length_editor = False
+					self._length_wait_animation = False
 					self.set_mode(STEPSEQ_MODE_STEP_LENGTH_EDITOR)
 					return
 
 				# --- MAIN BUTTON PRESS HANDLING ---
-				if ((value != 0) or (not sender.is_momentary())) and y < 7:
+				allow_row7 = (self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY,STEPSEQ_MODE_VERTICAL_LENGTH))
+
+				if ((value != 0) or (not sender.is_momentary())):
+					if y == 7 and not allow_row7:
+						return
 					idx = self._get_step_index(x)
 
 					if self._mode == STEPSEQ_MODE_NOTES:
@@ -1213,25 +1353,92 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							return
 
 					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
-						# LENGTH MODE
+						# HORIZONTAL LENGTH MODE WITH DOUBLE-CLICK DELETE
+
+						current_ts = time.time()
 						pitch = self._pitch_for_row(y)
-						length = self._length_map[x]
-						note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
+						step_idx = self._editing_step
 
-						if note is None:
-							self._add_note_at_step(self._editing_step, pitch, length)
+						# Check for Double Click
+						is_double_click = False
+						if (self._last_length_press_pos is not None and
+						    self._last_length_press_pos['x'] == x and
+						    self._last_length_press_pos['y'] == y and
+						    (current_ts - self._last_length_press_time) < self._double_click_window):
+							is_double_click = True
+
+						# Update tracking
+						self._last_length_press_time = current_ts
+						self._last_length_press_pos = {'x': x, 'y': y}
+
+						if is_double_click:
+							# --- DELETE OPERATION ---
+							step_idx = self._editing_step
+							start_time = step_idx * self._resolution
+							end_time = start_time + self._resolution
+
+							notes = list(self._note_cache)
+							target_index = -1
+							max_note_time = -1.0
+
+							for i, note in enumerate(notes):
+								note_p, note_t, note_l, note_v, note_m = note
+								if (note_p == pitch and start_time <= note_t < end_time):
+									if note_t > max_note_time:
+										max_note_time = note_t
+										target_index = i
+
+							if target_index != -1:
+								notes.pop(target_index)
+								self._write_note_cache_to_clip(notes)
+								self._parse_notes()
+								self._update_matrix()
+								self._control_surface.show_message("Note deleted")
+							return
+
 						else:
-							self._set_length_for_pitch_at_step(self._editing_step, pitch, length)
+							# --- SET LENGTH OPERATION ---
+							# Calculate target length based on column X
+							len_bucket = x
+							if len_bucket > 7: len_bucket = 7
+							target_length = self._length_map[len_bucket] * self._resolution / 4.0
 
-						self._update_matrix()
-						return
+							start_time = step_idx * self._resolution
+							end_time = start_time + self._resolution
+
+							# Double Click Check (Delete Logic) - Keep your existing double click logic here
+
+							# Single Click Logic:
+							note = self._get_note_for_pitch_at_step(step_idx, pitch)
+
+							if note is None:
+								# CREATE NEW NOTE WITH DEFAULT VELOCITY 90 AND TARGET LENGTH
+								new_note = (pitch, start_time, target_length, 90, False)
+								notes = list(self._note_cache)
+								notes.append(new_note)
+								self._write_note_cache_to_clip(notes)
+								self._note_cache = tuple(notes)
+								self._parse_notes() # Critical: Update the grid buffers
+							else:
+								# UPDATE EXISTING NOTE'S LENGTH ONLY (Preserves velocity)
+								self._set_length_for_pitch_at_step(step_idx, pitch, target_length)
+								# No need to parse_notes here if _set_length_for_pitch_at_step handles cache updates properly,
+								# but calling it ensures safety.
+								self._parse_notes()
+
+							self._update_matrix()
+							return
 
 					elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 						# VERTICAL VELOCITY MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
 
+						# DEBUG: Verify we are receiving the click on row 7
+						self._control_surface.log_message(f"VERT VEL MODE CLICK: x={x}, y={y}")
+
 						current_ts = time.time()
 						step_idx = idx
-						vel_bucket = 6 - y
+
+						vel_bucket = 7 - y
 						if vel_bucket < 0: vel_bucket = 0
 						if vel_bucket > 7: vel_bucket = 7
 						target_velocity = self._velocity_map[vel_bucket]
@@ -1312,6 +1519,183 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 							return
 
+					elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
+						# VERTICAL LENGTH MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
+
+						current_ts = time.time()
+						step_idx = idx
+
+						# Map Row Y (0-7) to Length Bucket
+						# Row 0 (Top) = High Index (Long), Row 7 (Bottom) = Low Index (Short)
+						len_bucket = 7 - y
+						if len_bucket < 0: len_bucket = 0
+						if len_bucket > 7: len_bucket = 7
+
+						target_length = self._length_map[len_bucket] * self._resolution / 4.0
+
+						start_time = step_idx * self._resolution
+						end_time = start_time + self._resolution
+
+						# --- DETECT DOUBLE CLICK ---
+						is_double_click = False
+						if (self._last_length_press_pos is not None and
+								self._last_length_press_pos['x'] == x and
+								self._last_length_press_pos['y'] == y and
+								(current_ts - self._last_length_press_time) < self._double_click_window):
+							is_double_click = True
+
+						# Update tracking
+						self._last_length_press_time = current_ts
+						self._last_length_press_pos = {'x': x, 'y': y}
+
+						if is_double_click:
+							# --- HANDLE DOUBLE CLICK (DELETE SINGLE NOTE) ---
+
+							# 1. Revert state if needed (optional safety)
+							if self._pending_revert_data is not None:
+								self._write_note_cache_to_clip(self._pending_revert_data)
+								self._note_cache = tuple(self._pending_revert_data)
+								self._parse_notes()
+								self._pending_revert_data = None
+
+							# 2. Find the target note to delete
+							# Logic: Delete the note in this step that matches the target length bucket
+							#        AND has the HIGHEST time value (latest creation order).
+
+							current_notes = list(self._note_cache)
+							target_index = -1
+							max_note_time = -1.0
+
+							for i, note in enumerate(current_notes):
+								note_p, note_t, note_l, note_v, note_m = note
+
+								# Check if note is in this step
+								if start_time <= note_t < end_time:
+									# Calculate the bucket of this existing note
+									existing_len_bucket = 0
+									for i_map, v in enumerate(self._length_map):
+										if note_l >= v * self._resolution / 4.0:
+											existing_len_bucket = i_map
+
+									# Check if it matches the clicked row's bucket
+									if existing_len_bucket == len_bucket:
+										# Keep track of the note with the LATEST time
+										if note_t > max_note_time:
+											max_note_time = note_t
+											target_index = i
+
+							# 3. Perform deletion on exactly ONE note
+							if target_index != -1:
+								current_notes.pop(target_index)
+								self._write_note_cache_to_clip(current_notes)
+								self._note_cache = tuple(current_notes)
+								self._parse_notes()
+								self._update_matrix()
+								self._control_surface.show_message("Note deleted")
+							else:
+								self._control_surface.show_message("No matching note found")
+
+							return
+
+						else:
+							# --- HANDLE SINGLE CLICK (SET LENGTH FOR ALL IN STEP) ---
+
+							# 1. SAVE CURRENT STATE
+							self._pending_revert_data = list(self._note_cache)
+
+							# 2. APPLY CHANGE TO ALL NOTES IN THIS STEP
+							notes = list(self._note_cache)
+							changed = False
+
+							for i, note in enumerate(notes):
+								note_p, note_t, note_l, note_v, note_m = note
+
+								if start_time <= note_t < end_time:
+									# Only change if different
+									if abs(note_l - target_length) > 0.001:
+										notes[i] = (note_p, note_t, target_length, note_v, note_m)
+										changed = True
+
+							if changed:
+								self._write_note_cache_to_clip(notes)
+								self._note_cache = tuple(notes)
+								self._parse_notes()
+								self._update_matrix()
+
+							return
+
+					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+						current_ts = time.time()
+						pitch = self._pitch_for_row(y)
+						step_idx = self._editing_step
+
+						# Calculate target length from column X (mirroring velocity's use of x)
+						len_bucket = x  # Column 0-7 maps directly to length_map index
+						if len_bucket > 7: len_bucket = 7
+
+						target_length = self._length_map[len_bucket] * self._resolution / 4.0
+
+						start_time = step_idx * self._resolution
+						end_time = start_time + self._resolution
+
+						# --- DOUBLE CLICK DELETE ---
+						is_double_click = False
+						if (self._last_length_press_pos is not None and
+							self._last_length_press_pos['x'] == x and
+							self._last_length_press_pos['y'] == y and
+							(current_ts - self._last_length_press_time) < self._double_click_window):
+							is_double_click = True
+
+						self._last_length_press_time = current_ts
+						self._last_length_press_pos = {'x': x, 'y': y}
+
+						if is_double_click:
+							# Delete all notes in this step (simpler than velocity which deletes by pitch)
+							# Or delete by matching length like velocity matches velocity?
+							# Let's mirror velocity: Delete the specific note at this pitch/step
+							notes = list(self._note_cache)
+							target_index = -1
+							max_note_time = -1.0
+
+							for i, note in enumerate(notes):
+								n_p, n_t, n_l, n_v, n_m = note
+								if (n_p == pitch and start_time <= n_t < end_time):
+									if n_t > max_note_time:
+										max_note_time = n_t
+										target_index = i
+
+							if target_index != -1:
+								notes.pop(target_index)
+								self._write_note_cache_to_clip(notes)
+								self._note_cache = tuple(notes)
+								self._parse_notes()  # CRITICAL: Refresh internal buffers
+								self._update_matrix()
+								self._control_surface.show_message("Note deleted")
+							return
+
+						else:
+							# --- SET LENGTH ---
+							# Mirror velocity: Save pending, then apply change
+
+							self._pending_revert_data = list(self._note_cache)
+
+							note = self._get_note_for_pitch_at_step(step_idx, pitch)
+
+							if note is None:
+								# CREATE NEW NOTE WITH DEFAULT VELOCITY 90 AND TARGET LENGTH
+								new_note = (pitch, start_time, target_length, 90, False)
+								notes = list(self._note_cache)
+								notes.append(new_note)
+								self._write_note_cache_to_clip(notes)
+								self._note_cache = tuple(notes)
+							else:
+								# UPDATE EXISTING NOTE'S LENGTH ONLY
+								self._set_length_for_pitch_at_step(step_idx, pitch, target_length)
+
+							self._parse_notes()  # CRITICAL: Refresh after modifications
+							self._update_matrix()
+							return
+
 					# Default handling for other modes (Copy/Paste, etc.)
 					self._update_matrix()
 
@@ -1364,25 +1748,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if changed:
 			self._write_note_cache_to_clip(notes)
 
-
-	def _set_length_for_pitch_at_step(self, idx, pitch, length):
+	def _set_length_for_pitch_at_step(self, idx, pitch, target_length):
 		start_time = idx * self._resolution
 		end_time = start_time + self._resolution
 
 		notes = list(self._note_cache)
-
 		changed = False
 
 		for i, note in enumerate(notes):
-
-			note_pitch, note_time, length, old_length, muted = note
+			# Unpack: (Pitch, Time, Duration, Velocity, Muted)
+			note_pitch, note_time, note_duration, note_velocity, muted = note
 
 			if (note_pitch == pitch and start_time <= note_time < end_time):
-				notes[i] = (note_pitch, note_time, length, length, muted)
+				# Only change Duration (index 2). Preserve Velocity (index 3).
+				notes[i] = (note_pitch, note_time, target_length, note_velocity, muted)
 				changed = True
 
 		if changed:
 			self._write_note_cache_to_clip(notes)
+			# Don't forget to update cache reference too
+			self._note_cache = tuple(notes)
 
 	def _velocity_wait_tick(self):
 		self._control_surface.log_message(
@@ -1819,7 +2204,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					return
 
 				# STATE 2: Currently in Vertical Velocity Editor -> Exit to Notes
-				# STATE 2: Currently in Vertical Velocity Editor -> Exit to Notes
 				elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 					self._velocity_wait_animation = False
 					self._pending_velocity_editor = False
@@ -1839,7 +2223,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._pending_velocity_editor = False
 					# Switch to Vertical Mode
 					self.set_mode(STEPSEQ_MODE_VERTICAL_VELOCITY)
-					self._control_surface.show_message("vert vel")
+					self._control_surface.show_message("vertical velocty editing")
 					self.update()
 					self._step_sequencer._update_OSD()
 					return
@@ -1867,7 +2251,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# Schedule the animation loop
 					self._control_surface.schedule_message(1, self._velocity_wait_tick)
 
-					self._control_surface.show_message("Select step or press Vel again")
+					self._control_surface.show_message("Select step or press Velocity button again")
 
 				# Update button LED state
 				if self._velocity_wait_animation:
@@ -1920,19 +2304,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._write_note_cache_to_clip(notes)
 
 	def _update_mode_notes_lengths_button(self):
-
 		if not self.is_enabled():
 			return
-
-		if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
-			self._mode_notes_velocities_button.turn_on()
-		else:
-			self._mode_notes_velocities_button.turn_off()
 
 		if self.is_enabled():
 			if (self._mode_notes_lengths_button != None):
 				if self._clip != None:
 					self._mode_notes_lengths_button.set_on_off_values("StepSequencer2.Length.On", "StepSequencer2.Length.Dim")
+					# Only turn ON if currently ANIMATING.
+					# In Horizontal/Vertical modes, it should be OFF (acting as an exit button).
 					if self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:#STEPSEQ_MODE_NOTES_LENGTHS:
 						self._mode_notes_lengths_button.turn_on()
 					else:
@@ -1951,43 +2331,99 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				assert isinstance(button, ButtonElement)
 				self._mode_notes_lengths_button.add_value_listener(self._mode_button_notes_lengths_value, identify_sender=True)
 
+
 	def _mode_button_notes_lengths_value(self, value, sender):
 		assert (self._mode_notes_lengths_button != None)
 		assert (value in range(128))
-		if not self._pending_length_editor:
-			self._pending_length_editor = True
-			self._control_surface.show_message("Select step for length edit")
-			return
 
 		if self.is_enabled() and self._clip != None:
-
+			# Handle Button Release (Momentary) -> Main Logic
 			if ((value == 0) and (sender.is_momentary())):
-
 				self._is_notes_lengths_shifted = False
 
-				# TOGGLE BETWEEN LENGTHS <-> NOTES
-				if self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:#STEPSEQ_MODE_NOTES_LENGTHS:
+				# --- STATE 1: Currently in Horizontal Length Editor -> Exit to Notes ---
+				if self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+					self._length_wait_animation = False
+					self._pending_length_editor = False
 					self._editing_step = None
+					self._is_length_editor_vertical = False
 					self.set_mode(STEPSEQ_MODE_NOTES)
 					self._control_surface.show_message("pitch")
-					return
-				else:
-					self._pending_length_editor = True
-					self._length_wait_animation = True
-					self._length_wait_tick()
+					# Update button LED immediately
+					self._mode_notes_lengths_button.turn_off()
+
+				# --- STATE 2: Currently in Vertical Length Editor -> Exit to Notes ---
+				elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
+					self._length_wait_animation = False
+					self._pending_length_editor = False
+					self._editing_step = None
+					self._is_length_editor_vertical = False
 					self._force_update = True
+					self.set_mode(STEPSEQ_MODE_NOTES)
+					self._control_surface.show_message("pitch")
+					self._mode_notes_lengths_button.turn_off()
+
+				# --- STATE 3: Currently in Animation Mode -> Enter Vertical Length Mode ---
+				# This is the missing piece from my previous attempt!
+				elif self._length_wait_animation:
+					# Stop animation immediately
+					self._length_wait_animation = False
+					# Cancel any pending horizontal entry
+					self._pending_length_editor = False
+					# Switch to Vertical Mode
+					self.set_mode(STEPSEQ_MODE_VERTICAL_LENGTH)
+					self._control_surface.show_message("Vertical Length editing")
+					self.update()
+					self._step_sequencer._update_OSD()
+					# Keep LED ON because we are in a special mode?
+					# Actually, in Velocity mode, the button stays ON during animation,
+					# but turns OFF when entering Horizontal/Vertical editors usually,
+					# unless the Vertical mode acts like a toggle.
+					# Let's follow Velocity: Turn OFF for Vertical/Horizontal editors.
+					self._mode_notes_lengths_button.turn_off()
+
+				# --- STATE 4: In Normal Notes Mode -> Enter Animation Mode ---
+				else:
+					# Reset any previous editor states
+					self._pending_length_editor = True
+					self._editing_step = None
+					self._is_length_editor_vertical = False
+
+					# Start Animation
+					self._length_wait_animation = True
 					now = time.time()
-
+					self._length_wait_start_times[0] = now
 					for x in range(8):
-						self._length_wait_start_times[x] = now + uniform(0, 2.5)
-					self._control_surface.show_message("Select step for length edit")
+						self._length_wait_start_times[x] = now + uniform(0.0, 0.3)
 
-				self.update()
-				self._step_sequencer._update_OSD()
+					# Force update to show animation immediately
+					self._force_update = True
+					# Schedule the animation loop
+					self._control_surface.schedule_message(1, self._length_wait_tick)
 
+					self._control_surface.show_message("Select step or press Length button again")
+
+					# CRITICAL FIX: Update LED state based on animation status (The code you found)
+					if self._length_wait_animation:
+						self._mode_notes_lengths_button.turn_on()
+					else:
+						self._mode_notes_lengths_button.turn_off()
+
+			# Handle Button Hold (Non-Momentary) -> Shift Logic
 			else:
 				self._is_notes_lengths_shifted = True
+				self._is_mute_shifted = True
+				# Sync global mute shift if applicable
+				self._step_sequencer._is_mute_shifted = self._is_mute_shifted
 
+			# Always refresh matrix and OSD
+			self.update()
+			self._step_sequencer._update_OSD()
+
+		else:
+			# Clip not selected, turn off button
+			if self._mode_notes_lengths_button:
+				self._mode_notes_lengths_button.set_light("DefaultButton.Disabled")
 
 
 

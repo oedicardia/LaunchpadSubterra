@@ -461,6 +461,7 @@ class Colors:
             On = Rgb.MINT
             Dim = Rgb.MINT_THIRD
             Off = Rgb.BLACK
+            Mixed = Rgb.RED
 
         class Random:
             On = Rgb.RED
