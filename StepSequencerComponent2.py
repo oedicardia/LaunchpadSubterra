@@ -1,7 +1,15 @@
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement
-from .SequencerConstants import RESOLUTION_NAMES
+from .SequencerConstants import (RESOLUTION_NAMES,
+    STEPSEQ_MODE_NOTES,
+    STEPSEQ_MODE_NOTES_OCTAVES,
+    STEPSEQ_MODE_COPY_PASTE,
+    STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+    STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+    STEPSEQ_MODE_VERTICAL_VELOCITY,
+    STEPSEQ_MODE_VERTICAL_LENGTH,
+)
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
@@ -10,15 +18,6 @@ from random import randrange
 import time
 from random import uniform
 
-STEPSEQ_MODE_NOTES = 1
-STEPSEQ_MODE_NOTES_OCTAVES = 2
-# STEPSEQ_MODE_NOTES_VELOCITIES = 3
-# STEPSEQ_MODE_NOTES_LENGTHS = 4
-STEPSEQ_MODE_COPY_PASTE = 5
-STEPSEQ_MODE_STEP_VELOCITY_EDITOR = 6 	# Horizontal, step Velocity Mode
-STEPSEQ_MODE_STEP_LENGTH_EDITOR = 7
-STEPSEQ_MODE_VERTICAL_VELOCITY = 8     # Vertical Column Velocity Mode
-STEPSEQ_MODE_VERTICAL_LENGTH = 9     # Vertical Column length Mode
 
 LONG_BUTTON_PRESS = 1.0
 
@@ -167,36 +166,44 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._clip = None
 	
 	
-	def _remove_scale_listeners(self):
-		try:
-			self.song().remove_root_note_listener(self.handle_root_note_changed)
-		except RuntimeError:
-			pass
-		try:
-			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
-		except RuntimeError:
-			pass
-		
+	# def _remove_scale_listeners(self):
+	# 	try:
+	# 		if self.song():
+	# 			self.song().remove_root_note_listener(self.handle_root_note_changed)
+	# 			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
+	# 	except RuntimeError:
+	# 		pass
 	
-	def _register_scale_listeners(self):
-		try:
-			self.song().add_root_note_listener(self.handle_root_note_changed)
-		except RuntimeError:
-			pass
-		try:
-			self.song().add_scale_name_listener(self.handle_scale_name_changed)
-		except RuntimeError:
-			pass
+	# def _register_scale_listeners(self):
+	# 	try:
+	# 		# Only register if we have access to the song object
+	# 		if self.song():
+	# 			self.song().add_root_note_listener(self.handle_root_note_changed)
+	# 			self.song().add_scale_name_listener(self.handle_scale_name_changed)
+	# 	except RuntimeError:
+	# 		pass
 
-	def handle_root_note_changed(self):
-		self._scale_selector.set_key(self.song().root_note, False, True)
-		self.update()
+	# def handle_root_note_changed(self):
+	# 	# Ensure we update the key indexes when root note changes
+	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+	# 	                                                                         '_scale_selector'):
+	# 		self._step_sequencer._scale_selector.set_key(self.song().root_note, False, True)
+	# 		self._scale_updated()  # This updates _key_indexes
+	# 		self.update()  # Redraw matrix
 
-
-	def handle_scale_name_changed(self):
-		self._scale_selector.set_modus(self._scale_selector._modus_names.index(self.song().scale_name), False, True)
-		self.update()
-		
+	# def handle_scale_name_changed(self):
+	# 	# Ensure we update keys when scale mode changes
+	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+	# 	                                                                         '_scale_selector'):
+	# 		try:
+	# 			song_scale = str(self.song().scale_name)
+	# 			if song_scale in self._step_sequencer._scale_selector._modus_names:
+	# 				mode_idx = self._step_sequencer._scale_selector._modus_names.index(song_scale)
+	# 				self._step_sequencer._scale_selector.set_modus(mode_idx, False, True)
+	# 				self._scale_updated()
+	# 				self.update()
+	# 		except (ValueError, AttributeError):
+	# 			pass
 		
 
 	def set_enabled(self, enabled):
@@ -206,10 +213,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# 	f"{self.__class__.__name__} enabled={enabled}"
 		# )
 
-		if not enabled:
-			self._remove_scale_listeners()
-		else:
-			self._register_scale_listeners()
 
 	def _init_data(self):
 		pages = 1024
@@ -283,7 +286,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def set_playhead(self, playhead):
 		self._playhead = playhead
-		self._update_matrix()
+
+		# Only repaint when this editor is currently visible.
+		if self.is_enabled():
+			self._update_matrix()
 
 	def set_multinote(self, x=0, y=0):
 		pass
@@ -625,10 +631,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				clip.replace_selected_notes(note_cache)
 				
 	def update(self, force=False):
-		if not self._initializing:
-			self._control_surface.log_message(
-				"UPDATE CALLED mode=%s" % self._mode
-			)
+		# if not self._initializing:
+		# 	self._control_surface.log_message(
+		# 		"UPDATE CALLED mode=%s" % self._mode
+		# 	)
 		if force:
 			self._force_update = True
 		if self.is_enabled():
@@ -690,22 +696,34 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._matrix_value,
 						identify_sender=True
 					)
-
+		# Log to confirm scale selector exists on parent
+		if hasattr(self, '_step_sequencer') and self._step_sequencer:
+			self._control_surface.log_message(f"PARENT HAS SCALE SELECTOR: {hasattr(self._step_sequencer, '_scale_selector')}")
+		else:
+			self._control_surface.log_message("NO PARENT COMPONENT!")
 		self._force_update = True
 
 		# debug
 		# self._control_surface.log_message("MATRIX ASSIGNED")
 
 	def _update_matrix(self):  # step grid LEDs are updated here
-		# self._control_surface.log_message(
-		# 	"UPDATE MATRIX mode=%s vel_wait=%s len_wait=%s edit=%s"
-		# 	% (
-		# 		self._mode,
-		# 		self._velocity_wait_animation,
-		# 		self._length_wait_animation,
-		# 		self._editing_step
-		# 	)
-		# )
+		self._control_surface.log_message(
+			"UPDATE mode=%d playhead=%s"
+			% (self._mode, self._playhead)
+		)
+		self._control_surface.log_message(
+			f"[_update_matrix] MODE={self._mode}, ENABLED={self.is_enabled()}, FORCE={self._force_update}")
+
+		# Check scale selector availability
+		if hasattr(self, '_step_sequencer') and self._step_sequencer:
+			has_scale = hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector
+			self._control_surface.log_message(f"[UPDATE_MATRIX] SCALE_SELECTOR AVAILABLE: {has_scale}")
+			if has_scale:
+				try:
+					root_key = self._step_sequencer._scale_selector._key
+					self._control_surface.log_message(f"[UPDATE_MATRIX] ROOT_KEY={root_key}")
+				except AttributeError as e:
+					self._control_surface.log_message(f"[UPDATE_MATRIX] ERROR ACCESSING ROOT_KEY: {e}")
 
 		# Check if we are in an animation state to prevent buffer clearing
 		in_animation = self._velocity_wait_animation or self._length_wait_animation
@@ -805,8 +823,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if not in_animation:
 			if self.is_enabled() and self._matrix != None:
 				# clear back buffer
+				self._control_surface.log_message("CLEAR BUFFER")
 				for x in range(8):
-					for y in range(7):
+					for y in range(8):
 						self._grid_back_buffer[x][y] = 0
 
 				# update back buffer
@@ -820,25 +839,78 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
 								has_note = True
 
-						if self._mode == STEPSEQ_MODE_NOTES or self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-							for y in range(7):
-								if self._mode == STEPSEQ_MODE_NOTES:
-									if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.On"
-									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
+						if self._mode in (STEPSEQ_MODE_NOTES, STEPSEQ_MODE_NOTES_OCTAVES):
 
-								else:#elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+							# -------------------------------------------------
+							# Current scale information
+							# -------------------------------------------------
+
+							scale_root_key = 0
+							scale_notes = [0, 2, 4, 5, 7, 9, 11]
+
+							if (hasattr(self, "_step_sequencer") and
+								self._step_sequencer and
+								hasattr(self._step_sequencer, "_scale_selector") and
+								self._step_sequencer._scale_selector):
+
+								selector = self._step_sequencer._scale_selector
+
+								scale_root_key = selector._key
+								scale_notes = [n % 12 for n in selector.notes]
+
+							# 3rd and 5th of the CURRENT SCALE
+							third_degree = scale_notes[2] % 12
+							fifth_degree = scale_notes[4] % 12
+
+							for y in range(7):
+
+								row_idx = 6 - y
+
+								current_pitch = (self._key_indexes[row_idx]	+ 12 * (self._display_octave - 2))
+
+								has_note = (self._notes_pitches[(idx * 7) + row_idx] == 1)
+
+								interval = (current_pitch - scale_root_key) % 12
+
+								is_root = (interval == 0)
+								is_chord_tone = (
+										interval == third_degree or
+										interval == fifth_degree
+								)
+
+								# -------------------------------------------------
+								# NOTE MODE
+								# -------------------------------------------------
+
+								if self._mode == STEPSEQ_MODE_NOTES:
 									if has_note:
-										if self._notes_octaves[idx] == 6 - y:
+										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.On"
+
+									else:
+										if is_root:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.RootNote"
+										elif is_chord_tone:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.ChordTone"
+										else:
+											self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
+
+								# -------------------------------------------------
+								# OCTAVE MODE
+								# -------------------------------------------------
+
+								else:
+									if has_note:
+										if self._notes_octaves[idx] == (6 - y):
 											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.On"
 										else:
 											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+
 									else:
-										if self._notes_octaves[idx] == 6 - y:
+										if self._notes_octaves[idx] == (6 - y):
 											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Dim"
 										else:
 											self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+
 						else:
 							for y in range(8):
 								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
@@ -1128,38 +1200,51 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 												self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
 
 				# --- METRONOME ---
-				if self._playhead != None:
-					play_position = int(self._playhead / self.quantization)
+				# playing notes (ONLY current visible page and Normal Mode)
+				if self._playhead != None and self._mode == STEPSEQ_MODE_NOTES:
+					if hasattr(self, '_resolution'):
+						res = self._resolution
+					elif hasattr(self._step_sequencer, '_resolution'):
+						res = self._step_sequencer._resolution
+					else:
+						res = 0.25  # Default fallback
+
+					play_position = int(self._playhead / res)
 					play_x_position = play_position % 8
 					page = int(play_position / 8)
 
 					if page == effective_page:
-
 						metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
 
 						# full column metronome
 						for y in range(7):
 							self._grid_back_buffer[play_x_position][y] = metronome_color
 
-						# playing notes (ONLY current visible page)
-						if self._mode == STEPSEQ_MODE_NOTES:
-							for y in range(7):
-								if self._notes_pitches[play_position * 7 + 6 - y] == 1:
-									self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInPage"
+						for y in range(7):
+							if self._notes_pitches[play_position * 7 + 6 - y] == 1:
+								self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInPage"
 
 			else:
 				for x in range(8):
 					for y in range(7):
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
+		self._control_surface.log_message(
+			"PUSH mode=%d" % self._mode
+		)
 		# --- PUSH TO HARDWARE (cache optimization) ---
-		# This block runs regardless of whether we are animating or doing normal rendering
 		if self._matrix != None:
+			push_count = 0
 			for x in range(8):
 				for y in range(8):
 					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
 						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
 						self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
+						push_count += 1
+
+			if push_count > 0 or self._force_update:
+				self._control_surface.log_message(
+					f"[PUSH_TO_HW] Updated {push_count} lights, force={self._force_update}")
 
 			self._force_update = False
 
@@ -1174,7 +1259,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					y = yy
 
 		# DEBUG: Verify we are receiving the click on row 7
-		self._control_surface.log_message(f"_matrix_value received: x={x}, y={y}")
+		#self._control_surface.log_message(f"_matrix_value received: x={x}, y={y}")
 
 		# --- BLOCK ROW 7 ONLY IN HORIZONTAL EDITORS ---
 		if (self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR or
@@ -2473,6 +2558,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			else:
 				self._is_copy_paste_shifted = True
 
+	# UTILS
+	def uses_bottom_row(self):
+		return self._mode in (
+			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+			STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+			STEPSEQ_MODE_VERTICAL_VELOCITY,
+			STEPSEQ_MODE_VERTICAL_LENGTH,
+			STEPSEQ_MODE_COPY_PASTE,
+		)
 
 class StepSequencerComponent2(StepSequencerComponent):
 

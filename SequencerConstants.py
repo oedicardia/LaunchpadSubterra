@@ -1,3 +1,32 @@
+
+# ==========================================================
+# Step Sequencer Modes
+# ==========================================================
+
+STEPSEQ_MODE_NORMAL = 1
+STEPSEQ_MODE_MULTINOTE = 2
+
+# ==========================================================
+# Melodic Note Editor Modes
+# ==========================================================
+
+STEPSEQ_MODE_NOTES = 1
+STEPSEQ_MODE_NOTES_OCTAVES = 2
+
+STEPSEQ_MODE_COPY_PASTE = 5
+
+STEPSEQ_MODE_STEP_VELOCITY_EDITOR = 6
+STEPSEQ_MODE_STEP_LENGTH_EDITOR = 7
+
+STEPSEQ_MODE_VERTICAL_VELOCITY = 8
+STEPSEQ_MODE_VERTICAL_LENGTH = 9
+
+STEPSEQ_MODE_SCALE_EDIT = 10
+
+# ==========================================================
+# Resolutions
+# ==========================================================
+
 RESOLUTION_MAP = [
     0.015625,   # 1/256
     0.03125,    # 1/128

@@ -2,7 +2,15 @@ import Live
 
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
-from .SequencerConstants import RESOLUTION_MAP, RESOLUTION_NAMES
+from .SequencerConstants import (STEPSEQ_MODE_NORMAL, STEPSEQ_MODE_MULTINOTE,
+    RESOLUTION_MAP, RESOLUTION_NAMES,
+    STEPSEQ_MODE_COPY_PASTE,
+    STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+    STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+    STEPSEQ_MODE_VERTICAL_VELOCITY,
+    STEPSEQ_MODE_VERTICAL_LENGTH,
+    STEPSEQ_MODE_SCALE_EDIT,
+)
 from _Framework.CompoundComponent import CompoundComponent
 from _Framework.ButtonElement import ButtonElement
 from _Framework.Util import find_if
@@ -19,16 +27,15 @@ try:
     from .Settings import Settings
 except ImportError:
     from .Settings import *
+
 # quantization button colours. this must remain of length 4.
-QUANTIZATION_MAP = [1, 0.5, 0.25, 0.125]  # 1/4 1/8 1/16 1/32
-QUANTIZATION_NAMES = ["1/4", "1/8", "1/16", "1/32"]
+#QUANTIZATION_MAP = [1, 0.5, 0.25, 0.125]  # 1/4 1/8 1/16 1/32
+#QUANTIZATION_NAMES = ["1/4", "1/8", "1/16", "1/32"]
 # resolution levels (formerly quantization)
 # RESOLUTION_MAP = [1, 0.5, 0.25, 0.125]
 # RESOLUTION_NAMES = ["1/4", "1/8", "1/16", "1/32"]
 
-STEPSEQ_MODE_NORMAL = 1
-STEPSEQ_MODE_MULTINOTE = 2
-STEPSEQ_MODE_SCALE_EDIT = 10
+
 
 LONG_BUTTON_PRESS = 1.0
 
@@ -287,16 +294,14 @@ class StepSequencerComponent(CompoundComponent):
         return(-1)
 
     def _remove_scale_listeners(self):
-        try:
-            self.song().remove_root_note_listener(self.handle_root_note_changed)
-        except RuntimeError:
-            pass
-        try:
-            self.song().remove_scale_name_listener(self.handle_scale_name_changed)
-        except RuntimeError:
-            pass
-        
-    
+    	try:
+    		if self.song():
+    			self.song().remove_root_note_listener(self.handle_root_note_changed)
+    			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
+    	except RuntimeError:
+    		pass
+
+
     def _register_scale_listeners(self):
         try:
             self.song().add_root_note_listener(self.handle_root_note_changed)
@@ -308,14 +313,22 @@ class StepSequencerComponent(CompoundComponent):
             pass
 
     def handle_root_note_changed(self):
-        self._scale_selector.set_key(self.song().root_note, False, True)
-        self.update()
-
+        if hasattr(self, '_scale_selector') and self._scale_selector:
+            self._scale_selector.set_key(self.song().root_note, False, True)
+            self._scale_updated()  # Calls the single source of truth
+            self.update()
 
     def handle_scale_name_changed(self):
-        self._scale_selector.set_modus(self._scale_selector._modus_names.index(self.song().scale_name), False, True)
-        self.update()
-        
+        if hasattr(self, '_scale_selector') and self._scale_selector:
+            try:
+                song_scale = str(self.song().scale_name)
+                if song_scale in self._scale_selector._modus_names:
+                    mode_idx = self._scale_selector._modus_names.index(song_scale)
+                    self._scale_selector.set_modus(mode_idx, False, True)
+                    self._scale_updated() # Calls the single source of truth
+                    self.update()
+            except (ValueError, AttributeError):
+                pass
 
 
 # enabled
@@ -361,10 +374,12 @@ class StepSequencerComponent(CompoundComponent):
             self._note_selector.set_enabled(enabled)
             self._note_editor.set_enabled(enabled)
             CompoundComponent.set_enabled(self, enabled)
+
         if not enabled:
             self._remove_scale_listeners()
         else:
             self._register_scale_listeners()
+
 
     def set_mode(self, mode, number_of_lines_per_note=1):
         if self._mode != mode or number_of_lines_per_note != self._number_of_lines_per_note:
@@ -386,6 +401,11 @@ class StepSequencerComponent(CompoundComponent):
                 self._track_controller.set_next_track_button(None)
                 self.set_left_button(self._top_buttons[2])
                 self.set_right_button(self._top_buttons[3])
+            self._control_surface.log_message(
+                "[SET_MODE] old=%d new=%d" % (self._mode, mode)
+            )
+
+            self._mode = mode
             self._mode = mode
             self._note_editor._force_update = True
             self.update()
@@ -456,64 +476,36 @@ class StepSequencerComponent(CompoundComponent):
         self._scale_selector.update()
 
     def _update_loop_selector(self):
-        is_normal = True
+        """
+        Enable the Loop Selector only in normal note editing.
+        In all editor sub-modes (velocity, length, copy/paste, scale, etc.)
+        the last row belongs to another component.
+        """
+        enable = self._loop_selector_should_be_enabled()
 
-        # Check if our note editor has a _mode attribute (Melodic Note Editor)
-        if hasattr(self._note_editor, '_mode'):
-            editor_mode = self._note_editor._mode
-
-            # List of sub-modes to disable
-            modes_to_disable_loop = [
-                6,  # STEPSEQ_MODE_STEP_VELOCITY_EDITOR
-                7,  # STEPSEQ_MODE_STEP_LENGTH_EDITOR
-                8,  # STEPSEQ_MODE_VERTICAL_VELOCITY
-                9,  # STEPSEQ_MODE_VERTICAL_LENGTH
-                5,  # STEPSEQ_MODE_COPY_PASTE
-            ]
-
-            if editor_mode in modes_to_disable_loop:
-                is_normal = False
-
-            # --- CRITICAL FIX: ALSO CHECK ANIMATION FLAGS ---
-            # Animations run while _mode is still NORMAL, but these flags are True
-            if hasattr(self._note_editor, '_velocity_wait_animation') and self._note_editor._velocity_wait_animation:
-                is_normal = False
-            if hasattr(self._note_editor, '_length_wait_animation') and self._note_editor._length_wait_animation:
-                is_normal = False
-        else:
-            # Standard Drum Editor -> Always Normal
-            is_normal = True
-
-        if is_normal:
-            # ENABLE AND ATTACH LISTENERS
+        if enable:
             if not self._loop_selector.is_enabled():
                 self._loop_selector.set_enabled(True)
-
-                # Re-attach listeners
-                for button in self._loop_selector._buttons:
-                    if button:
-                        try:
-                            button.add_value_listener(self._loop_selector._loop_button_value, identify_sender=True)
-                        except RuntimeError:
-                            pass
-
             self._loop_selector.update()
         else:
-            # Disable/Detach
             if self._loop_selector.is_enabled():
                 self._loop_selector.set_enabled(False)
-                for button in self._loop_selector._buttons:
-                    if button:
-                        try:
-                            button.remove_value_listener(self._loop_selector._loop_button_value)
-                        except:
-                            pass
-            # Visual cleanup
-            for button in self._loop_selector._buttons:
-                if button:
-                    button.turn_off()
-                    button.set_light("DefaultButton.Disabled")
 
+    def _loop_selector_should_be_enabled(self):
+
+        if self._mode == STEPSEQ_MODE_SCALE_EDIT:
+            return False
+
+        if hasattr(self._note_editor, "_mode"):
+            return self._note_editor._mode not in (
+                STEPSEQ_MODE_COPY_PASTE,
+                STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+                STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+                STEPSEQ_MODE_VERTICAL_VELOCITY,
+                STEPSEQ_MODE_VERTICAL_LENGTH,
+            )
+
+        return True
 
     def _update_note_selector(self):
         self._note_selector._enable_offset_button = self._mode == STEPSEQ_MODE_NORMAL
@@ -759,16 +751,48 @@ class StepSequencerComponent(CompoundComponent):
             self.update() # added to allow the LED feedback off when first clip is switched off beore navigating to/selecting another clip
             #self._update_clip_toggle_button()
 
-    def _on_playing_position_changed(self):  # playing position changed listener
+    def _on_playing_position_changed(self):
         if self.is_enabled():
+            # Get the current playing position from the clip (in beats/seconds)
             if self._clip != None and self._clip.is_playing and self.song().is_playing:
                 self._playhead = self._clip.playing_position
             else:
                 self._playhead = None
-            self._loop_selector.set_playhead(self._playhead, Settings.STEPSEQ__AUTO_SCROLL)
-            self._note_selector.set_playhead(self._playhead)
-            self._note_editor.set_playhead(self._playhead)
-            self.updateQuantizationButton()
+
+            # CRITICAL: Use self._resolution (time per step in beats)
+            if hasattr(self, '_resolution') and isinstance(self._resolution, (int, float)) and self._resolution > 0:
+                resolution = self._resolution
+            else:
+                resolution = 0.0625  # Fallback to default (index 2)
+
+            if self._playhead is not None:
+                # Calculate the total step index from the playhead
+                # Formula: Step Index = Playhead Time / Time Per Step
+                total_steps = int(self._playhead / resolution)
+
+                # Calculate X position on grid (0-7)
+                play_x_position = total_steps % 8
+
+                # Calculate Page (Block of 8 steps)
+                page = int(total_steps / 8)
+
+                # Debug logging (remove after verifying)
+                # self._control_surface.log_message(
+                #     f"PH={self._playhead:.3f} Res={resolution:.5f} Steps={total_steps} X={play_x_position} Pg={page}"
+                # )
+
+                # Propagate playhead to child components
+                self._loop_selector.set_playhead(self._playhead, Settings.STEPSEQ__AUTO_SCROLL)
+                self._note_selector.set_playhead(self._playhead)
+                self._note_editor.set_playhead(self._playhead)
+
+                # Update button visual feedback
+                self.updateResolutionButton()
+            else:
+                # No active playhead
+                self._loop_selector.set_playhead(None, False)
+                self._note_selector.set_playhead(None)
+                self._note_editor.set_playhead(None)
 
 # DRUM_GROUP_DEVICE
     def _update_drum_group_device(self):
@@ -979,7 +1003,7 @@ class StepSequencerComponent(CompoundComponent):
         #self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -self_note_cache ="+ str(self._note_cache))
 
 
-    def updateQuantizationButton(self):
+    def updateResolutionButton(self):
         if self.is_enabled() and self._resolution_button != None and self._playhead != None:
             if(self._beat == int(self._playhead)):
                 self._resolution_button.set_light(self.RESOLUTION_COLOR_MAP_LOW[self._resolution_index])
@@ -991,7 +1015,13 @@ class StepSequencerComponent(CompoundComponent):
         self._resolution = resolution
         if self._note_editor != None:
             self._note_editor.set_resolution(self._resolution)
-            #self._note_editor.set_quantization(self._quantization)
+
+        # CRITICAL: Force Loop Selector to recalculate its block boundaries
+        if self._loop_selector != None:
+            #self._loop_selector.set_clip_loop(self._clip.loop_start, self._clip.loop_end)  # Triggers re-calc
+            # OR simply update it
+            self._loop_selector.update()
+
         if self._loop_selector != None:
             self._update_loop_selector()
         if self._note_selector != None:

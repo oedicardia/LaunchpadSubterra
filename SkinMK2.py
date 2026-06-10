@@ -434,6 +434,8 @@ class Colors:
             On = Rgb.BLUE
             Dim = Rgb.BLUE_THIRD
             Off = Rgb.BLACK
+            RootNote = Rgb.PURPLE
+            ChordTone = Rgb.LIGHT_BLUE_THIRD
 
         class Zoom:
             On = Rgb.BLUE

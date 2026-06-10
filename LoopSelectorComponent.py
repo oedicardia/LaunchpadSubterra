@@ -68,8 +68,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     def set_playhead(self, playhead, updateBlock=False):
         self._playhead = playhead
-        # NEVER modify self._block from playhead updates
-        # self._block represents USER selection only
+
+        if not self.is_enabled():
+            return
+
         self.update()
 
     @property
@@ -179,7 +181,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._loop_page_offset = offset
 
     def _loop_button_value(self, value, sender):
-
+        self._control_surface.log_message(
+            "[LOOP BUTTON] enabled=%s value=%d"
+            % (self.is_enabled(), value)
+        )
         if self.is_enabled():
 
             idx = self._buttons.index(sender)
@@ -321,7 +326,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                             (self._loop_page_offset * 8)
                     )
 
-                    #self._step_sequencer.set_page(absolute_block)
+                    # Move the Sequencer Page to match the selection
+                    self._step_sequencer.set_page(absolute_block)
 
                     self._loop_point1 = -1
                     self._loop_point2 = -1
@@ -423,10 +429,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                     # ABSOLUTE BLOCK INDEX
                     # -------------------------------------------------
 
-                    absolute_block = (
-                            i +
-                            (self._loop_page_offset * 8)
-                    )
+                    absolute_block = (i + (self._loop_page_offset * 8))
 
                     block_start = (
                             absolute_block *
