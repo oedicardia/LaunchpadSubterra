@@ -432,10 +432,15 @@ class Colors:
     class StepSequencer2:
         class Pitch:
             On = Rgb.BLUE
+            OnOffStep = Rgb.PINK_HALF
+            OnMixedStep = Rgb.PURPLE_THIRD
             Dim = Rgb.BLUE_THIRD
             Off = Rgb.BLACK
             RootNote = Rgb.PURPLE
             ChordTone = Rgb.LIGHT_BLUE_THIRD
+            OnOutScale = Rgb.GREEN_THIRD
+            OnMixedScale = Rgb.MINT
+            OnMixedStepScale = Rgb.WHITE
 
         class Zoom:
             On = Rgb.BLUE

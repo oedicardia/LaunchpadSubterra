@@ -3,7 +3,7 @@ import Live
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .SequencerConstants import (STEPSEQ_MODE_NORMAL, STEPSEQ_MODE_MULTINOTE,
-    RESOLUTION_MAP, RESOLUTION_NAMES,
+    RESOLUTION_MAP, RESOLUTION_NAMES, RESOLUTION_INIT,
     STEPSEQ_MODE_COPY_PASTE,
     STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
     STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -52,7 +52,7 @@ class StepSequencerComponent(CompoundComponent):
         # self._quantization_button = None
         # self._quantization_index = 2
         self._resolution_button = None
-        self._resolution_index = 2
+        self._resolution_index = RESOLUTION_INIT
         self._control_surface = control_surface
         self._number_of_lines_per_note = 1
         #self.QUANTIZATION_COLOR_MAP = ["StepSequencer.Quantization.One", "StepSequencer.Quantization.Two", "StepSequencer.Quantization.Three", "StepSequencer.Quantization.Four"]
@@ -154,7 +154,7 @@ class StepSequencerComponent(CompoundComponent):
         # debug
         #self._control_surface.log_message(" >>>>>>>>>> _set_resolution_function")
 
-        self._resolution_index = 2
+        self._resolution_index = RESOLUTION_INIT
         self.set_resolution(RESOLUTION_MAP[self._resolution_index])
         self._resolution_button = None
         #self._last_quantize_button_press = time.time()
@@ -985,16 +985,12 @@ class StepSequencerComponent(CompoundComponent):
         if self.is_enabled() and self._clip != None:
             now = time.time()
             if ((value != 0) or (not sender.is_momentary())):
-                pass#self._last_res_button_press = now
+                self._last_res_button_press = now
             else:
-                # if now - self._last_res_button_press > 0.5:
-                #     self._control_surface.show_message("Step Sequencer: duplicate clip")
-                #     self.duplicate_clip()
-                # else:
-                if(self._mode == STEPSEQ_MODE_SCALE_EDIT):
-                    self._resolution_index = (self._resolution_index - 1+len(RESOLUTION_MAP)) % len(RESOLUTION_MAP)
+                if now - self._last_res_button_press > 0.5:
+                    self._resolution_index = len(RESOLUTION_MAP)-1
                 else:
-                    self._resolution_index = (self._resolution_index + 1) % len(RESOLUTION_MAP)
+                    self._resolution_index = (self._resolution_index - 1) % len(RESOLUTION_MAP)
                 self.set_resolution(RESOLUTION_MAP[self._resolution_index])
                 self._control_surface.show_message("RESOLUTION : "+RESOLUTION_NAMES[self._resolution_index])
 

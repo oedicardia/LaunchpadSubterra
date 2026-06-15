@@ -181,10 +181,10 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._loop_page_offset = offset
 
     def _loop_button_value(self, value, sender):
-        self._control_surface.log_message(
-            "[LOOP BUTTON] enabled=%s value=%d"
-            % (self.is_enabled(), value)
-        )
+        # self._control_surface.log_message(
+        #     "[LOOP BUTTON] enabled=%s value=%d"
+        #     % (self.is_enabled(), value)
+        # )
         if self.is_enabled():
 
             idx = self._buttons.index(sender)
