@@ -462,7 +462,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				pitch,
 				grid_time,
 				self._resolution,
-				100,
+				self._velocity_map[5],
 				False
 			)
 		)
@@ -757,12 +757,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								row_idx = 6 - y
 								current_pitch = (self._key_indexes[row_idx] + 12 * (self._display_octave - 2))
 
-								notes_at_this_pitch = []
-								for n in step_notes_list:
-									if n[0] == current_pitch and start_time <= n[1] < end_time:
-										notes_at_this_pitch.append(n)
+								# --- NEW LOGIC: Find notes that map to THIS row ---
+								notes_mapped_to_this_row = []
 
-								has_note_here = len(notes_at_this_pitch) > 0
+								for n in step_notes_list:
+									note_midi = n[0]
+									mapped_row = self._get_row_for_pitch(note_midi)
+
+									# This note belongs to this row if it's close enough AND in this time step
+									if mapped_row == row_idx and start_time <= n[1] < end_time:
+										notes_mapped_to_this_row.append(n)
+
+								has_note_here = len(notes_mapped_to_this_row) > 0
 
 								if not has_note_here:
 									interval = (current_pitch - scale_root_key) % 12
@@ -783,14 +789,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								has_in_scale = False
 								has_out_scale = False
 
-								for n in notes_at_this_pitch:
+								for n in notes_mapped_to_this_row:
 									note_midi = n[0]
 									note_time = n[1]
 									note_deg = note_midi % 12
-									# Add right after calculating note_deg
-									self._control_surface.log_message(
-										f"PITCH:{current_pitch} DEGREE:{note_deg} IN_SCALE:{note_deg in scale_notes} SCALE_NOTES:{scale_notes}"
-									)
+
 									if self._is_note_on_grid(note_time, self._resolution):
 										has_on_step = True
 									else:
@@ -801,37 +804,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									else:
 										has_out_scale = True
 
+								# --- COLOR DETERMINATION ---
+								color_key = "StepSequencer2.Pitch.On"
 
-								# --- COLOR DETERMINATION (All 6 Cases) ---
-								color_key = "StepSequencer2.Pitch.On"  # Default Blue
-
-								# CASE 6: Has Out-of-Scale AND Off-Step (Mixed errors)
 								if has_out_scale and has_off_step:
 									color_key = "StepSequencer2.Pitch.OnMixedStepScale"
-
-								# CASE 5: Has Mixed Scale (in+out) but ALL On-Step
 								elif has_in_scale and has_out_scale and not has_off_step:
 									color_key = "StepSequencer2.Pitch.OnMixedScale"
-
-								# CASE 4: Has Mixed Step (on+off) but ALL In-Scale
 								elif has_on_step and has_off_step and not has_out_scale:
 									color_key = "StepSequencer2.Pitch.OnMixedStep"
-
-								# CASE 3: Only Out-of-Scale (no in-scale, no off-step)
 								elif has_out_scale and not has_in_scale and not has_off_step:
-									color_key = "StepSequencer2.Pitch.OnOutScale"
-
-								# CASE 2: Only Off-Step (no off-scale, no mixed step)
+									color_key = "StepSequencer2.Pitch.OnOutScale"  # GREEN
 								elif has_off_step and not has_on_step and not has_out_scale:
-									color_key = "StepSequencer2.Pitch.OnOffStep"
-
-								# CASE 1: Perfect (only on-step, only in-scale)
+									color_key = "StepSequencer2.Pitch.OnOffStep"  # RED
 								else:
-									color_key = "StepSequencer2.Pitch.On"
+									color_key = "StepSequencer2.Pitch.On"  # BLUE
 
 								self._grid_back_buffer[x][y] = color_key
 
-								self._grid_back_buffer[x][y] = color_key
 						elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
 							# OCTAVE MODE LOGIC
 							for y in range(7):
@@ -1726,6 +1716,29 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						return
 					else:
 						self._update_clip_notes()
+
+	def _get_row_for_pitch(self, midi_note):
+		"""
+        Find which grid row (0-6) corresponds closest to this MIDI note.
+        Returns -1 if no reasonable mapping exists.
+        """
+		# Get all possible pitches on the grid
+		grid_pitches = []
+		for row_idx in range(7):
+			pitch = self._key_indexes[row_idx] + 12 * (self._display_octave - 2)
+			grid_pitches.append((pitch, row_idx))
+
+		# Find closest pitch
+		min_distance = float('inf')
+		closest_row = -1
+
+		for grid_pitch, row_idx in grid_pitches:
+			distance = abs(midi_note - grid_pitch)
+			if distance < min_distance:
+				min_distance = distance
+				closest_row = row_idx
+
+		return closest_row
 
 	def _is_note_on_grid(self, note_time, resolution):
 		# Tolerance for floating point inaccuracies (e.g., 0.0001)
