@@ -19,6 +19,7 @@ class ConfigurableButtonElement(ButtonElement):
 		if default_states is not None:
 			self.default_states = default_states
 		self.states = dict(self.default_states)
+		self.identifier = identifier
 
 	@property
 	def _on_value(self):
@@ -70,6 +71,13 @@ class ConfigurableButtonElement(ButtonElement):
 		try:
 			self._draw_skin(value)
 		except SkinColorMissingError:
+			# if self._control_surface != None:
+			# 	self._control_surface.log_message(
+			# 		"SET_LIGHT id=%d value=%r type=%s"
+			# 		% (self._original_identifier,
+			# 	   value,
+			# 	   type(value).__name__)
+			# 		)
 			super(ButtonElement, self).set_light(value)
 
 	def send_value(self, value, **k):
@@ -104,7 +112,20 @@ class ConfigurableButtonElement(ButtonElement):
 			self._draw_skin(self._off_value)
 
 	def _draw_skin(self, value):
-		self._skin[value].draw(self)
+		# if self._control_surface != None:
+		# 	self._control_surface.log_message(
+		# 	"DRAW_SKIN id=%d value=%r"
+		# 	% (self.identifier, value)
+		# 	)
+
+		color = self._skin[value]
+		# if self._control_surface != None:
+		# 	self._control_surface.log_message(
+		# 		"COLOR=%r CLASS=%s"
+		# 		% (color, color.__class__.__name__)
+		# 	)
+
+		color.draw(self)
 		
 	def script_wants_forwarding(self):
 		return not self.suppress_script_forwarding

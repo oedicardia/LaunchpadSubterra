@@ -4,6 +4,7 @@ from .StepSequencerComponent import StepSequencerComponent, ButtonElement
 from .SequencerConstants import (RESOLUTION_NAMES,
     STEPSEQ_MODE_NOTES,
     STEPSEQ_MODE_NOTES_OCTAVES,
+	STEPSEQ_MODE_OCTAVE_OVERVIEW,
     STEPSEQ_MODE_COPY_PASTE,
     STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
     STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -105,21 +106,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_copy_paste_shifted = False
 		self._last_copy_paste_button_press = time.time()
 
-
 		self._mode_notes_lengths_button = None
 		self.set_mode_notes_lengths_button(self._side_buttons[4])
 		self._is_notes_lengths_shifted = False
 		self._last_notes_lengths_button_press = time.time()
+		self._mode_notes_velocities_button = None
 
+		self.set_mode_notes_velocities_button(self._side_buttons[5])
+		self._is_notes_velocity_shifted = False
+		self._last_notes_velocity_button_press = time.time()
 		self._mode_notes_octaves_button = None
+
 		self.set_mode_notes_octaves_button(self._side_buttons[6])
 		self._is_octave_shifted = False
 		self._last_notes_octaves_button_press = time.time()
 
-		self._mode_notes_velocities_button = None
-		self.set_mode_notes_velocities_button(self._side_buttons[5])
-		self._is_notes_velocity_shifted = False
-		self._last_notes_velocity_button_press = time.time()
+
 
 		# self._mode_notes_pitches_button = None
 		# self.set_mode_notes_pitches_button(self._side_buttons[7])
@@ -246,6 +248,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		)
 
 		old_mode = self._mode
+		self._control_surface.log_message(
+			"MODE -> %s from set_mode()" % mode
+		)
 		self._mode = mode
 		self._force_update = True
 
@@ -253,25 +258,182 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if hasattr(self, '_step_sequencer') and self._step_sequencer:
 			self._step_sequencer.update()
 
-		# --- CRITICAL FIX: CLEAR LOOP SELECTOR VISUALS WHEN EXITING EDITORS ---
-		# If we are moving FROM an editor TO normal mode, force the Loop Selector
-		# to reset its visual cache so it doesn't show stale "selected" blocks.
+		# --- ACCESS LOOP SELECTOR SAFELY ---
+		loop_selector = None
+		if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+			loop_selector = self._step_sequencer._loop_selector
+
+		# --- 1: DISABLE LOOP SELECTOR WHEN ENTERING OCTAVE OVERVIEW ---
+		if old_mode != STEPSEQ_MODE_OCTAVE_OVERVIEW and mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+			if loop_selector:
+				# 1. Reset internal logic cache to -1 (The component's true "off" state)
+				loop_selector.set_enabled(False)
+				for i in range(len(loop_selector._buttons)):
+					loop_selector._cache[i] = -1  # <--- CHANGE THIS FROM 0 TO -1
+
+				# 2. Clear loop selector button lights explicitly
+				for button in loop_selector._buttons:
+					if button:
+						try:
+							button.turn_off()
+						except RuntimeError:
+							pass
+
+				# 3. Force immediate hardware push
+				self._push_to_hardware()
+
+				# 4. Mark for force update on next render
+				if hasattr(loop_selector, '_force'):
+					loop_selector._force = True
+
+			# Also force force_update flag
+			self._force_update = True
+
+
+		# --- 2: RE-ENABLE LOOP SELECTOR WHEN LEAVING OCTAVE OVERVIEW ---
+		elif old_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW and mode != STEPSEQ_MODE_OCTAVE_OVERVIEW:
+			if loop_selector:
+				if hasattr(self._step_sequencer, '_loop_selector_should_be_enabled'):
+					should_enable = self._step_sequencer._loop_selector_should_be_enabled()
+				else:
+					should_enable = (mode == STEPSEQ_MODE_NOTES)
+
+				if should_enable:
+					loop_selector.set_enabled(True)
+					if hasattr(loop_selector, '_get_clip_loop'):
+						loop_selector._get_clip_loop()
+					loop_selector.update()
+				else:
+					loop_selector.set_enabled(False)
+					loop_selector.update()
+
+		# --- 3: CLEAR LOOP SELECTOR VISUALS WHEN EXITING EDITORS TO NORMAL MODE ---
 		if (old_mode in [
-			STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR,
-			STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
-			STEPSEQ_MODE_COPY_PASTE
+			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+			STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+			STEPSEQ_MODE_VERTICAL_VELOCITY,
+			STEPSEQ_MODE_VERTICAL_LENGTH,
+			STEPSEQ_MODE_COPY_PASTE,
+			STEPSEQ_MODE_OCTAVE_OVERVIEW
 		]) and (mode == STEPSEQ_MODE_NOTES):
 
-			# Access the loop selector via the parent
-			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-				l_loop = self._step_sequencer._loop_selector
-				# Force a reset of the loop selector's internal cache and turn off lights
-				l_loop._cache = [-1] * len(l_loop._buttons)  # Reset cache
-				l_loop._force = True  # Force next update to re-evaluate
-				l_loop.update()  # Immediately redraw (should be empty/dim in normal mode)
+			if loop_selector:
+				# Clear cache and force update
+				loop_selector._cache = [-1] * len(loop_selector._buttons)
+				if hasattr(loop_selector, '_force'):
+					loop_selector._force = True
+				if hasattr(loop_selector, '_get_clip_loop'):
+					loop_selector._get_clip_loop()
+
+				# CRITICAL: Force Loop Selector to re-enable immediately if it should own Row 7
+				if self._step_sequencer._loop_selector_should_be_enabled():
+					loop_selector.set_enabled(True)
+					loop_selector._force = True
+
+				# Force a full update cycle
+				loop_selector.update()
+
+		# --- 4: NEW - FORCE LOOP SELECTOR REFRESH WHEN ENTERING NOTES MODE ---
+		# This ensures Loop Selector LEDs update correctly after velocity/length animations
+		elif (mode == STEPSEQ_MODE_NOTES) and (old_mode in [
+			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+			STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+			STEPSEQ_MODE_VERTICAL_VELOCITY,
+			STEPSEQ_MODE_VERTICAL_LENGTH,
+			STEPSEQ_MODE_COPY_PASTE
+		]):
+			# Entering Notes mode from an editor that temporarily owned Row 7
+			if loop_selector:
+				if self._step_sequencer._loop_selector_should_be_enabled():
+					# Ensure Loop Selector is enabled and refreshed
+					if not loop_selector.is_enabled():
+						loop_selector.set_enabled(True)
+
+					# Force recalculation of clip loop bounds
+					if hasattr(loop_selector, '_get_clip_loop'):
+						loop_selector._get_clip_loop()
+
+					# Force immediate update
+					if hasattr(loop_selector, '_force'):
+						loop_selector._force = True
+					loop_selector.update()
+
+		# --- 5: LOGIC FOR ALL OTHER MODE TRANSITIONS ---
+		# If entering any mode that owns bottom_row() via uses_bottom_row(), ensure Loop Selector knows
+		elif mode in [STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+		              STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
+		              STEPSEQ_MODE_COPY_PASTE, STEPSEQ_MODE_OCTAVE_OVERVIEW]:
+			if loop_selector and self.uses_bottom_row():
+				# We now own Row 7, so tell Loop Selector to let go
+				if loop_selector.is_enabled():
+					loop_selector.set_enabled(False)
+					loop_selector._cache = [-1] * len(loop_selector._buttons)
+					loop_selector._force = True
+
+		# --- 6: CRITICAL FIX FOR ANIMATION -> EDITOR TRANSITION ---
+		# If we are entering an editor mode, ensure ANY active animations are killed
+		# and the Loop Selector is fully disabled so it doesn't conflict with the new editor draw.
+		if mode in [STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR]:
+			if loop_selector:
+				# Force disable Loop Selector immediately
+				loop_selector.set_enabled(False)
+				for i in range(len(loop_selector._buttons)):
+					loop_selector._cache[i] = -1
+
+				# Physically turn off buttons to clear any "falling head" residue
+				for button in loop_selector._buttons:
+					if button:
+						try:
+							button.turn_off()
+						except RuntimeError:
+							pass
+
+				# Ensure animation flags are definitely false (safety check)
+				self._velocity_wait_animation = False
+				self._length_wait_animation = False
+				self._pending_velocity_editor = False
+				self._pending_length_editor = False
+
+				# Force hardware push to update the board instantly
+				self._push_to_hardware()
+
+				self._control_surface.log_message(f"[ANIM->EDIT] Killed anim, disabled LS for {mode}")
+
+		# DEBUG LOGGING FOR ROW 7 OWNERSHIP
+		self._control_surface.log_message(
+			"[set_mode] Row 7 Ownership: %s (mode=%s)" %
+			("EDITOR" if self.uses_bottom_row() else "LOOP_SELECTOR", mode)
+		)
 
 		self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
 		self.update()
+
+	def _push_to_hardware(self):
+		"""Force ALL buffered LED values to hardware immediately, ignoring cache."""
+		if self._matrix != None:
+			for x in range(8):
+				for y in range(8):
+					# Always compare back_buffer vs grid_buffer
+					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y]:
+						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
+						#debug
+						button = self._matrix.get_button(x, y)
+						if y == 7:
+							self._control_surface.log_message(
+								"PUSH ROW7 (%d) value=%r type=%s" %
+								(
+									x,
+									self._grid_back_buffer[x][7],
+									type(self._grid_back_buffer[x][7]).__name__,
+								)
+							)
+						if button:
+							try:
+								button.set_light(self._grid_buffer[x][y])
+							except RuntimeError:
+								pass # Ignore errors if matrix is gone
+			# Force the main loop to skip its own update check next time
+			self._force_update = False
 
 	def set_clip(self, clip):
 		if self._clip != clip:
@@ -605,6 +767,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# self._control_surface.log_message("MATRIX ASSIGNED")
 
 	def _update_matrix(self):  # step grid LEDs are updated here
+		self._control_surface.log_message(
+			"UPDATE_MATRIX mode=%d" % self._mode
+		)
 		# self._control_surface.log_message(
 		# 	"UPDATE mode=%d playhead=%s"
 		# 	% (self._mode, self._playhead)
@@ -641,8 +806,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# If this is the very first run or timer is in future, force "Waiting" state
 				if elapsed_col <= 0.0:
 					# Clear column only
-					for y in range(8):
-						self._grid_back_buffer[x][y] = 0
+					for y in range(7):
+						self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
 				# --- CONFIGURATION ---
@@ -667,8 +833,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if head_pos > 7: head_pos = 7
 
 				# Clear Column (Always Black first)
-				for y in range(8):
-					self._grid_back_buffer[x][y] = 0
+				for y in range(7):
+					self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 				if head_pos != -1:
 					# Draw Bright Head
@@ -687,8 +854,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				elapsed_col = now - delay
 
 				if elapsed_col <= 0.0:
-					for y in range(8):
-						self._grid_back_buffer[x][y] = 0
+					for y in range(7):
+						self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
 				# Configuration
@@ -707,8 +875,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					head_pos = int(pos_float)
 					if head_pos > 7: head_pos = 7
 
-				for y in range(8):
-					self._grid_back_buffer[x][y] = 0
+				for y in range(7):
+					self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 				if head_pos != -1:
 					self._grid_back_buffer[x][head_pos] = "StepSequencer2.Length.On"
@@ -723,8 +892,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# clear back buffer
 				#self._control_surface.log_message("CLEAR BUFFER")
 				for x in range(8):
-					for y in range(8):
-						self._grid_back_buffer[x][y] = 0
+					for y in range(7):
+						#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 				# update back buffer
 				if self._clip != None:
@@ -737,6 +907,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
 								has_note = True
 						if self._mode == STEPSEQ_MODE_NOTES:
+							# debug
+							#self._control_surface.log_message("DRAW NOTES")
 							# --- SCALE CONFIGURATION ---
 							scale_root_key = 0
 							scale_notes = [0, 2, 4, 5, 7, 9, 11]
@@ -820,6 +992,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								else:
 									color_key = "StepSequencer2.Pitch.On"  # BLUE
 
+								#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_key))
 								self._grid_back_buffer[x][y] = color_key
 
 						elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
@@ -829,19 +1002,51 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 								if has_note_in_row:
 									if self._notes_octaves[idx] == (6 - y):
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.On"
+										color_octave = "StepSequencer2.Octave.On"
 									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+										color_octave = "StepSequencer2.Octave.Off"
 								else:
 									if self._notes_octaves[idx] == (6 - y):
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Dim"
+										color_octave = "StepSequencer2.Octave.Dim"
 									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Octave.Off"
+										color_octave = "StepSequencer2.Octave.Off"
+
+								#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_octave))
+								self._grid_back_buffer[x][y] = color_octave
+
+
+						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+							#self._control_surface.log_message("DRAW OCTAVE OVERVIEW")
+							for x in range(8):
+								idx = self._get_step_index(x)
+								step_notes_list = self._get_notes_at_step(idx)
+								# for y in range(8):
+								# 	self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
+
+								BASE_OCTAVE = 8
+
+								for y in range(8):
+									target_octave = BASE_OCTAVE - y
+									has_note_in_octave = False
+
+									# Check all notes in this step
+									for n in step_notes_list:
+										note_octave = int(n[0] / 12)
+										if note_octave == target_octave:
+											has_note_in_octave = True
+											break
+
+									# Determine Target Color
+									target_color = "StepSequencer2.Octave.On" if has_note_in_octave else 0
+
+									# 1. Update Back Buffer
+									#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, target_color))
+									self._grid_back_buffer[x][y] = target_color
 
 						else:
 							for y in range(8):
 								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
-									self._control_surface.log_message("DRAWING VELOCITY EDITOR")
+									#self._control_surface.log_message("DRAWING VELOCITY EDITOR")
 
 									# Safety check
 									if self._editing_step is None:
@@ -1154,6 +1359,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			else:
 				for x in range(8):
 					for y in range(7):
+						#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 		# self._control_surface.log_message(
@@ -1161,19 +1367,64 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# )
 		# --- PUSH TO HARDWARE (cache optimization) ---
 		if self._matrix != None:
-			push_count = 0
+			#push_count = 0
 			for x in range(8):
 				for y in range(8):
-					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
-						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
-						self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
-						push_count += 1
+					if y == 7 and not self.uses_bottom_row():
+						continue  # Skip Row 7 - let Loop Selector handle it
+					button = self._matrix.get_button(x, y)
+
+					# self._control_surface.log_message(
+					# 	"PUSH (%d,%d) -> %s" % (
+					# 		x,
+					# 		y,
+					# 		str(self._grid_back_buffer[x][y])
+					# 	)
+					# )
+					# # debug
+					#
+					# if y == 7:
+					# 	self._control_surface.log_message(
+					# 		"PUSH ROW7 (%d) value=%r type=%s" %
+					# 		(
+					# 			x,
+					# 			self._grid_back_buffer[x][7],
+					# 			type(self._grid_back_buffer[x][7]).__name__,
+					# 		)
+					# 	)
+					# self._control_surface.log_message(
+					# 	"BUTTON (%d,%d): id=%s obj=%s"
+					# 	% (
+					# 		x,
+					# 		y,
+					# 		button.identifier,
+					# 		hex(id(button))
+					# 	)
+					# )
+					# self._control_surface.log_message(
+					# 	"BUTTON CLASS=%s" % button.__class__.__name__
+					# )
+					#
+					# self._control_surface.log_message(
+					# 	"BUTTON MODULE=%s" % button.__class__.__module__
+					# )
+
+					button.set_light(self._grid_back_buffer[x][y])
+
+					# if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
+					# 	self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
+					# 	self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
+					# 	push_count += 1
 
 			# if push_count > 0 or self._force_update:
 			# 	self._control_surface.log_message(
 			# 		f"[PUSH_TO_HW] Updated {push_count} lights, force={self._force_update}")
 
 			self._force_update = False
+
+		# for x in range(8): # when this is on the whole grid is black, no matter the mode
+		# 	for y in range(8):
+		# 		self._matrix.get_button(x, y).set_light("DefaultButton.Disabled")
 
 	def _matrix_value(self, value, sender):  # matrix buttons listener
 		# Identify x and y coordinates from the sender
@@ -1445,7 +1696,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						# VERTICAL VELOCITY MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
 
 						# DEBUG: Verify we are receiving the click on row 7
-						self._control_surface.log_message(f"VERT VEL MODE CLICK: x={x}, y={y}")
+						#self._control_surface.log_message(f"VERT VEL MODE CLICK: x={x}, y={y}")
 
 						current_ts = time.time()
 						step_idx = idx
@@ -1811,14 +2062,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._note_cache = tuple(notes)
 
 	def _velocity_wait_tick(self):
-		self._control_surface.log_message(
-			"VELOCITY TICK anim=%s" %
-			self._velocity_wait_animation
-		)
+		#self._control_surface.log_message(	"VELOCITY TICK anim=%s" % self._velocity_wait_animation)
 		if not self._velocity_wait_animation:
-			self._control_surface.log_message(
-				"VELOCITY ANIMATION FINISHED"
-			)
+			#self._control_surface.log_message("VELOCITY ANIMATION FINISHED")
 			return
 		self._update_matrix()
 		self._control_surface.schedule_message(1,self._velocity_wait_tick)
@@ -2119,13 +2365,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 # OCTAVES
-	# debug
 	def set_display_octave(self, octave):
 		self._display_octave = max(0, min(6, octave))
-
-		self._control_surface.log_message(
-			"DISPLAY OCTAVE = %s" % self._display_octave
-		)
+		# debug
+		self._control_surface.log_message("DISPLAY OCTAVE = %s" % self._display_octave)
 
 		self._parse_notes()
 		self._force_update = True
@@ -2136,7 +2379,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if (self._mode_notes_octaves_button != None):
 				if self._clip != None:
 					self._mode_notes_octaves_button.set_on_off_values("StepSequencer2.Octave.On", "StepSequencer2.Octave.Dim")
-					if self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+					if self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
 						self._mode_notes_octaves_button.turn_on()
 					else:
 						self._mode_notes_octaves_button.turn_off()
@@ -2156,16 +2399,52 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _mode_button_notes_octaves_value(self, value, sender):
 		assert (self._mode_notes_octaves_button != None)
 		assert (value in range(128))
-		if self.is_enabled() and self._clip != None:
-			if ((value ==0) and (sender.is_momentary())):
-				self._is_notes_octaves_shifted = False
-				self.set_mode(STEPSEQ_MODE_NOTES_OCTAVES)
-				self._control_surface.show_message("octave")
-				self.update()
-				self._step_sequencer._update_OSD()
-			else:
-				self._is_notes_octaves_shifted = True
 
+		if self.is_enabled() and self._clip != None:
+			# Check for Release Event (Momentary Button Release)
+			if ((value == 0) and (sender.is_momentary())):
+				self._is_octave_shifted = False  # Reset shift flag
+
+				# CYCLE LOGIC
+				current_mode = self._mode
+
+				if current_mode == STEPSEQ_MODE_NOTES:
+					# Transition: Notes -> Octave Edit
+					new_mode = STEPSEQ_MODE_OCTAVE_OVERVIEW
+					msg = "Octave Overview"
+				elif current_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+					# Transition: Overview -> Notes (Loop back to start)
+					new_mode = STEPSEQ_MODE_NOTES
+					msg = "Notes Mode"
+				else:
+					# Fallback if we are in some other weird state (e.g., velocity editor)
+					new_mode = STEPSEQ_MODE_NOTES
+					msg = "Notes Mode"
+
+				# Only change mode if different
+				if new_mode != current_mode:
+					self.set_mode(new_mode)
+					self._control_surface.show_message(msg)
+
+				# CRITICAL: Update the parent OSD and force a matrix refresh
+				if hasattr(self._step_sequencer, '_update_OSD'):
+					self._step_sequencer._update_OSD()
+				self.update()
+
+			else:
+				# Handle Button Hold (Shift Logic)
+				# Keep existing behavior for holding the button
+				self._is_octave_shifted = True
+			# You might want to show a message here if needed
+			# self._control_surface.show_message("Holding Octave Shift")
+
+			# Always update the button LED state based on current mode
+			self._update_mode_notes_octaves_button()
+
+		else:
+			# No clip selected
+			if self._mode_notes_octaves_button:
+				self._mode_notes_octaves_button.set_light("DefaultButton.Disabled")
 # VELOCITIES
 	def _set_velocity_at_step(self, idx, velocity_index):
 
@@ -2522,6 +2801,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			STEPSEQ_MODE_VERTICAL_VELOCITY,
 			STEPSEQ_MODE_VERTICAL_LENGTH,
 			STEPSEQ_MODE_COPY_PASTE,
+			STEPSEQ_MODE_OCTAVE_OVERVIEW,
 		)
 
 class StepSequencerComponent2(StepSequencerComponent):

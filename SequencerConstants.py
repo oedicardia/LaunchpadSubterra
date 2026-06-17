@@ -23,6 +23,7 @@ STEPSEQ_MODE_VERTICAL_LENGTH = 9
 
 STEPSEQ_MODE_SCALE_EDIT = 10
 
+STEPSEQ_MODE_OCTAVE_OVERVIEW = 11  # Choose a unique ID not used by other modes
 # ==========================================================
 # Resolutions
 # ==========================================================

@@ -4,6 +4,7 @@ from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .SequencerConstants import (STEPSEQ_MODE_NORMAL, STEPSEQ_MODE_MULTINOTE,
     RESOLUTION_MAP, RESOLUTION_NAMES, RESOLUTION_INIT,
+    STEPSEQ_MODE_OCTAVE_OVERVIEW,
     STEPSEQ_MODE_COPY_PASTE,
     STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
     STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -92,7 +93,7 @@ class StepSequencerComponent(CompoundComponent):
         self._set_scale_selector()
         self._set_resolution_function()
         #self._set_quantization_function()
-        self._set_mute_shift_function()
+        #self._set_mute_shift_function()
         self._set_cycle_function()
         #self._set_lock_function()
         self._set_mode_function()
@@ -344,6 +345,9 @@ class StepSequencerComponent(CompoundComponent):
 
             # todo: find a better way to init?
             if self._mode == -1:
+                self._control_surface.log_message(
+                    "MODE -> STEPSEQ_MODE_NORMAL from StepSequencerComponent.set_enable()>"
+                )
                 self._mode = STEPSEQ_MODE_NORMAL
                 self._detect_scale_mode()
 
@@ -402,10 +406,8 @@ class StepSequencerComponent(CompoundComponent):
                 self.set_left_button(self._top_buttons[2])
                 self.set_right_button(self._top_buttons[3])
             self._control_surface.log_message(
-                "[SET_MODE] old=%d new=%d" % (self._mode, mode)
+                "[SET_MODE] old=%d new=%d from StepSequencerComponent.set_mode()>" % (self._mode, mode)
             )
-
-            self._mode = mode
             self._mode = mode
             self._note_editor._force_update = True
             self.update()
@@ -478,9 +480,17 @@ class StepSequencerComponent(CompoundComponent):
     def _update_loop_selector(self):
         """
         Enable the Loop Selector only in normal note editing.
-        In all editor sub-modes (velocity, length, copy/paste, scale, etc.)
+        In all editor sub-modes (velocity, length, copy/paste, scale, Octave Overview, etc.)
         the last row belongs to another component.
         """
+
+        # CRITICAL FIX: Check if we're in Octave Overview mode FIRST
+        if hasattr(self._note_editor, '_mode') and self._note_editor._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+            # DO NOT UPDATE LOOP SELECTOR AT ALL in this mode
+            # It will steal Row 7 from the Note Editor
+            self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - OCTAVE OVERVIEW MODE")
+            return
+
         enable = self._loop_selector_should_be_enabled()
 
         if enable:
@@ -490,6 +500,13 @@ class StepSequencerComponent(CompoundComponent):
         else:
             if self._loop_selector.is_enabled():
                 self._loop_selector.set_enabled(False)
+            # Also clear the loop selector button lights to prevent stale visuals
+            for button in self._loop_selector._buttons:
+                if button:
+                    try:
+                        button.turn_off()
+                    except RuntimeError:
+                        pass
 
     def _loop_selector_should_be_enabled(self):
 
@@ -503,6 +520,7 @@ class StepSequencerComponent(CompoundComponent):
                 STEPSEQ_MODE_STEP_LENGTH_EDITOR,
                 STEPSEQ_MODE_VERTICAL_VELOCITY,
                 STEPSEQ_MODE_VERTICAL_LENGTH,
+                STEPSEQ_MODE_OCTAVE_OVERVIEW,
             )
 
         return True
@@ -527,7 +545,7 @@ class StepSequencerComponent(CompoundComponent):
         self._update_lock_button()
         self._update_cycle_button()
         self._update_mode_button()
-        self._update_mute_shift_button()
+        #self._update_mute_shift_button()
         self._update_scale_selector_button()
         self._update_left_button()
         self._update_right_button()
@@ -868,41 +886,41 @@ class StepSequencerComponent(CompoundComponent):
 
 
 # MUTE SHIFT Button
-    def set_mute_shift_button(self, button):
-        assert (isinstance(button, (ButtonElement, type(None))))
-        if (self._mute_shift_button != button):
-            if (self._mute_shift_button != None):
-                self._mute_shift_button.remove_value_listener(self._mute_shift_button_value)
-            self._mute_shift_button = button
-            if (self._mute_shift_button != None):
-                assert isinstance(button, ButtonElement)
-                self._mute_shift_button.add_value_listener(self._mute_shift_button_value, identify_sender=True)
-
-    def _update_mute_shift_button(self):
-        if self.is_enabled() and self._mute_shift_button != None:
-            if self._clip != None and self._clip.is_midi_clip:
-                self._mute_shift_button.set_on_off_values("StepSequencer.Mute")
-                if self._is_mute_shifted:
-                    self._mute_shift_button.turn_on()
-                else:
-                    self._mute_shift_button.turn_off()
-            else:
-                self._mute_shift_button.set_light("DefaultButton.Disabled")
-    
-    def _mute_shift_button_value(self, value, sender):
-        assert (self._mute_shift_button != None)
-        assert (value in range(128))
-        if self.is_enabled() and self._clip != None:
-            now = time.time()
-            if ((value != 0) or (not sender.is_momentary())):
-                self._is_mute_shifted = not self._is_mute_shifted
-            else:
-                if now - self._last_mute_shift_button_press> 0.25:
-                    self._is_mute_shifted = not self._is_mute_shifted
-                self._last_mute_shift_button_press = now
-                
-            self._note_editor._is_mute_shifted = self._is_mute_shifted
-            self._update_mute_shift_button()
+#     def set_mute_shift_button(self, button):
+#         assert (isinstance(button, (ButtonElement, type(None))))
+#         if (self._mute_shift_button != button):
+#             if (self._mute_shift_button != None):
+#                 self._mute_shift_button.remove_value_listener(self._mute_shift_button_value)
+#             self._mute_shift_button = button
+#             if (self._mute_shift_button != None):
+#                 assert isinstance(button, ButtonElement)
+#                 self._mute_shift_button.add_value_listener(self._mute_shift_button_value, identify_sender=True)
+#
+#     def _update_mute_shift_button(self):
+#         if self.is_enabled() and self._mute_shift_button != None:
+#             if self._clip != None and self._clip.is_midi_clip:
+#                 self._mute_shift_button.set_on_off_values("StepSequencer.Mute")
+#                 if self._is_mute_shifted:
+#                     self._mute_shift_button.turn_on()
+#                 else:
+#                     self._mute_shift_button.turn_off()
+#             else:
+#                 self._mute_shift_button.set_light("DefaultButton.Disabled")
+#
+#     def _mute_shift_button_value(self, value, sender):
+#         assert (self._mute_shift_button != None)
+#         assert (value in range(128))
+#         if self.is_enabled() and self._clip != None:
+#             now = time.time()
+#             if ((value != 0) or (not sender.is_momentary())):
+#                 self._is_mute_shifted = not self._is_mute_shifted
+#             else:
+#                 if now - self._last_mute_shift_button_press> 0.25:
+#                     self._is_mute_shifted = not self._is_mute_shifted
+#                 self._last_mute_shift_button_press = now
+#
+#             self._note_editor._is_mute_shifted = self._is_mute_shifted
+#             self._update_mute_shift_button()
             
 # MODE
     def _update_mode_button(self):

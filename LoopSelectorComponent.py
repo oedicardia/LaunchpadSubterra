@@ -222,7 +222,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                             (time.time() - self._last_button_time) < 0.25
                     ):
                         # debug
-                        #self._debug("DOUBLE TAP DETECTED")
+                        # self._debug("DOUBLE TAP DETECTED")
                         setloop = True
                         self._last_button_time = time.time()
                         self._last_button_idx = -1
@@ -250,75 +250,57 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                         new_start = (
                                 absolute_start *
                                 self._blocksize *
-                                #self._quantization
+                                # self._quantization
                                 self._resolution
                         )
 
                         new_end = (
                                 absolute_end *
                                 self._blocksize *
-                                #self._quantization
+                                # self._quantization
                                 self._resolution
                         )
 
                         # -----------------------------------------
-                        # MUTE / DELETE MODES
+                        # SAFETY FIX: DISABLED MUTE / DELETE MODES
                         # -----------------------------------------
-                        if self._is_mute_shifted:
+                        # Previously checked: if self._is_mute_shifted:
+                        # Since we removed the Shift/Mute buttons, we force NORMAL behavior always.
+                        # This prevents accidental deletion of notes when pressing loop buttons.
 
-                            if self._is_velocity_shifted:
+                        # --- NORMAL LOOP SELECTION (ALWAYS EXECUTED) ---
 
-                                self._mute_notes_in_range(
-                                    new_start,
-                                    new_end
-                                )
+                        # SAME LOOP SELECTED AGAIN
+                        # -> restore full clip
+                        if self._is_selecting_current_loop(absolute_start, absolute_end):
 
-                            else:
-
-                                self._delete_notes_in_range(
-                                    new_start,
-                                    new_end
-                                )
-
-                        # -----------------------------------------
-                        # NORMAL LOOP SELECTION
-                        # -----------------------------------------
-                        else:
-
-                            # SAME LOOP SELECTED AGAIN
-                            # -> restore full clip
-                            if self._is_selecting_current_loop(absolute_start, absolute_end):
-
-                                self._control_surface.log_message(
-                                    "[LoopSelector] RESTORING FULL LOOP "
-                                    "stored=(%s,%s)" % (
-                                        self._full_loop_start,
-                                        self._full_loop_end
-                                    )
-                                )
-
-                                self.set_clip_loop(
+                            self._control_surface.log_message(
+                                "[LoopSelector] RESTORING FULL LOOP "
+                                "stored=(%s,%s)" % (
                                     self._full_loop_start,
                                     self._full_loop_end
                                 )
+                            )
 
-                            else:
+                            self.set_clip_loop(
+                                self._full_loop_start,
+                                self._full_loop_end
+                            )
 
-                                if self._is_velocity_shifted:
-                                    self._extend_clip_content(
-                                        new_start,
-                                        self._loop_end,
-                                        new_end
-                                    )
+                        else:
 
-                                # self._debug(
-                                #     f"SETTING LOOP "
-                                #     f"{new_start} -> {new_end}"
-                                # )
-                                self.set_clip_loop(
-                                    new_start,
-                                    new_end
-                                )
+                            # NOTE: Removed 'if self._is_velocity_shifted' check here too.
+                            # We no longer support extending clip content via velocity shift.
+                            # Just set the loop normally.
+
+                            # self._debug(
+                            #     f"SETTING LOOP "
+                            #     f"{new_start} -> {new_end}"
+                            # )
+                            self.set_clip_loop(
+                                new_start,
+                                new_end
+                            )
 
                     # sequencer page follows selection
                     absolute_block = (
@@ -394,9 +376,21 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
     def update(self):
+        # --- SAFE INITIALIZATION CHECKS ---
+        step_seq = getattr(self, '_step_sequencer', None)
+
+        if step_seq is None:
+            return
+
+        note_editor = getattr(step_seq, '_note_editor', None)
+        is_animating = False
+
+        if note_editor is not None:
+            vel_anim = getattr(note_editor, '_velocity_wait_animation', False)
+            len_anim = getattr(note_editor, '_length_wait_animation', False)
+            is_animating = (vel_anim or len_anim)
 
         if self.is_enabled():
-
             self._get_clip_loop()
 
             clip_is_playing = (
@@ -407,168 +401,69 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             i = 0
 
             for button in self._buttons:
+                # Determine if THIS button is Row 7 (the last one)
+                # Assuming buttons are ordered 0-15, Row 7 corresponds to indices 8-15?
+                # Wait, LoopSelector usually controls 8 buttons (Row 7 only).
+                # Let's check your _set_loop_selector logic:
+                # "self._matrix.get_button(x, 7)" -> This means the Loop Selector has 8 buttons (x=0..7), all on Row 7.
 
-                # -------------------------------------------------
-                # NO CLIP
-                # -------------------------------------------------
+                # In your code: self._buttons is a list of 8 buttons (one for each column x, row y=7).
+                # So 'i' here IS the column index (0-7) corresponding to Row 7 buttons.
+
+                # CRITICAL FIX: If animating, SKIP drawing ANY Loop Selector buttons (all 8 are Row 7).
+                if is_animating:
+                    # Do not update these buttons; let the Note Editor handle them via _update_matrix
+                    i += 1
+                    continue
 
                 if self._clip is None:
-
-                    button.set_on_off_values(
-                        "DefaultButton.Disabled",
-                        "DefaultButton.Disabled"
-                    )
-
+                    button.set_light("DefaultButton.Disabled")
                     if self._cache[i] != button._off_value:
                         button.turn_off()
                         self._cache[i] = button._off_value
-
                 else:
-
-                    # -------------------------------------------------
-                    # ABSOLUTE BLOCK INDEX
-                    # -------------------------------------------------
-
                     absolute_block = (i + (self._loop_page_offset * 8))
+                    block_start = (absolute_block * self._blocksize * self._resolution)
+                    block_end = ((absolute_block + 1) * self._blocksize * self._resolution)
 
-                    block_start = (
-                            absolute_block *
-                            self._blocksize *
-                            # self._quantization
-                            self._resolution
-                    )
-
-                    block_end = (
-                            (absolute_block + 1) *
-                            self._blocksize *
-                            # self._quantization
-                            self._resolution
-                    )
-
-                    # -------------------------------------------------
-                    # STATE CHECKS
-                    # -------------------------------------------------
-
-                    in_loop = (
-                            block_start < self._loop_end and
-                            block_start >= self._loop_start
-                    )
-
+                    in_loop = (block_start < self._loop_end and block_start >= self._loop_start)
                     playing = (
-                            self._playhead is not None and
-                            self._playhead >= block_start and
-                            self._playhead < block_end
-                    )
-
+                                self._playhead is not None and self._playhead >= block_start and self._playhead < block_end)
                     selected = (i == self._block)
 
-                    # -------------------------------------------------
-                    # CLIP STOPPED
-                    # -------------------------------------------------
-
                     if not clip_is_playing:
-
                         if in_loop:
-
-                            # blocks inside the loop become dark grey
-                            self._cache[i] = (
-                                "StepSequencer.LoopSelector.Stopped"
-                            )
-
+                            self._cache[i] = "StepSequencer.LoopSelector.Stopped"
                         else:
-
-                            # blocks outside the loop stay off
-                            self._cache[i] = (
-                                "DefaultButton.Disabled"
-                            )
-
-                        # selected block keeps its selected colour
+                            self._cache[i] = "DefaultButton.Disabled"
                         if selected:
-                            self._cache[i] = (
-                                "StepSequencer.LoopSelector.StoppedSelected"
-                            )
-
-                    # -------------------------------------------------
-                    # CLIP PLAYING
-                    # -------------------------------------------------
-
+                            self._cache[i] = "StepSequencer.LoopSelector.StoppedSelected"
                     else:
-
                         if in_loop:
-
                             if playing:
-
                                 if selected:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.SelectedPlaying"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.SelectedPlaying"
                                 else:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.Playing"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.Playing"
                             else:
-
                                 if selected:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.Selected"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.Selected"
                                 else:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.InLoop"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.InLoop"
                         else:
-
                             if playing:
-
                                 if selected:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.SelectedPlaying"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.SelectedPlaying"
                                 else:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.Playing"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.Playing"
                             else:
-
                                 if selected:
-
-                                    self._cache[i] = (
-                                        "StepSequencer.LoopSelector.Selected"
-                                    )
-
+                                    self._cache[i] = "StepSequencer.LoopSelector.Selected"
                                 else:
+                                    self._cache[i] = "DefaultButton.Disabled"
 
-                                    self._cache[i] = (
-                                        "DefaultButton.Disabled"
-                                    )
-
-                    # -------------------------------------------------
-                    # APPLY COLOR
-                    # -------------------------------------------------
-
-                    if (
-                            self._cache[i] != button._on_value or
-                            self._force
-                    ):
-                        button.set_on_off_values(
-                            self._cache[i],
-                            self._cache[i]
-                        )
-
-                        button.turn_on()
-
+                    if (self._cache[i] != button._on_value or self._force):
+                        button.set_light(self._cache[i])
                 i += 1
 
             self._force = False
