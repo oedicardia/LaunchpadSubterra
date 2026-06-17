@@ -21,12 +21,7 @@ from random import uniform
 
 
 LONG_BUTTON_PRESS = 1.0
-
-# TODO :
-# extend / clear region (possible via drum step seq for now)
-# not even clip lengths (using shift notes ?)
-# store scale settings per clip or track ?
-# display current scale mode in osd
+BASE_OCTAVE = 8
 
 
 class MelodicNoteEditorComponent(ControlSurfaceComponent):
@@ -87,6 +82,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._key_index_is_in_scale = [True, False, True, True, False, True, False, True]
 		self._key_index_is_root_note = [True, False, False, False, False, False, False, False]
 		self._is_monophonic = False
+
+		self._display_octave = 2
+		self._overview_start_octave = 2  # Default start: Rows 7-0 will show 2-9
+		self._scroll_pending_action = False
 
 		# quantization
 		self._quantization = 16
@@ -1016,31 +1015,25 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
-							#self._control_surface.log_message("DRAW OCTAVE OVERVIEW")
 							for x in range(8):
 								idx = self._get_step_index(x)
 								step_notes_list = self._get_notes_at_step(idx)
-								# for y in range(8):
-								# 	self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
-
-								BASE_OCTAVE = 8
 
 								for y in range(8):
-									target_octave = BASE_OCTAVE - y
-									has_note_in_octave = False
+									# NEW LOGIC:
+									# Row 0 (Top) = Start + 7
+									# Row 7 (Bottom) = Start
+									# Formula: target = Start + (7 - y)
+									target_octave = self._overview_start_octave + (7 - y)
 
-									# Check all notes in this step
+									has_note_in_octave = False
 									for n in step_notes_list:
 										note_octave = int(n[0] / 12)
 										if note_octave == target_octave:
 											has_note_in_octave = True
 											break
 
-									# Determine Target Color
-									target_color = "StepSequencer2.Octave.On" if has_note_in_octave else 0
-
-									# 1. Update Back Buffer
-									#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, target_color))
+									target_color = "StepSequencer2.Octave.On" if has_note_in_octave else "DefaultButton.Disabled"
 									self._grid_back_buffer[x][y] = target_color
 
 						else:
@@ -1520,7 +1513,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					return
 
 				# --- MAIN BUTTON PRESS HANDLING ---
-				allow_row7 = (self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY,STEPSEQ_MODE_VERTICAL_LENGTH))
+				allow_row7 = (self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY,STEPSEQ_MODE_VERTICAL_LENGTH, STEPSEQ_MODE_OCTAVE_OVERVIEW))
 
 				if ((value != 0) or (not sender.is_momentary())):
 					if y == 7 and not allow_row7:
@@ -1551,6 +1544,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										self._notes_octaves[x1] = self._notes_octaves[x1] - 1
 						else:
 							self._notes_octaves[idx] = 6 - y
+
+					# --- OCTAVE OVERVIEW MODE: Click selects octave and returns to Notes ---
+					elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+						# Calculate the absolute octave based on the clicked row and the current start offset
+						# Row 0 (Top) -> Start + 7
+						# Row 7 (Bottom) -> Start
+						selected_octave = self._overview_start_octave + (6 - y)
+
+						self.set_display_octave(selected_octave)
+						self._control_surface.show_message("Selected Octave %d" % (selected_octave - 1))
+
+						# Return to Normal Notes mode
+						self.set_mode(STEPSEQ_MODE_NOTES)
+						self._force_update = True
+						self.update()
+						return
+
+
 
 					elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
 						# HORIZONTAL VELOCITY MODE WITH DOUBLE-CLICK DELETE
@@ -2366,7 +2377,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 # OCTAVES
 	def set_display_octave(self, octave):
-		self._display_octave = max(0, min(6, octave))
+		self._display_octave = octave
 		# debug
 		self._control_surface.log_message("DISPLAY OCTAVE = %s" % self._display_octave)
 
@@ -2401,50 +2412,90 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		assert (value in range(128))
 
 		if self.is_enabled() and self._clip != None:
-			# Check for Release Event (Momentary Button Release)
 			if ((value == 0) and (sender.is_momentary())):
-				self._is_octave_shifted = False  # Reset shift flag
-
-				# CYCLE LOGIC
+				now = time.time()
 				current_mode = self._mode
 
-				if current_mode == STEPSEQ_MODE_NOTES:
-					# Transition: Notes -> Octave Edit
+				if current_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+					time_delta = now - self._last_notes_octaves_button_press
+
+					# --- DOUBLE CLICK ---
+					if time_delta < 0.3:
+						# Clear the pending Up action
+						self._scroll_pending_action = False
+
+						# Execute Down immediately
+						if self._overview_start_octave > 0:
+							self._overview_start_octave -= 1
+							msg = "Octave Range Down"
+						else:
+							msg = "Min Octave Reached"
+
+						self._control_surface.show_message(
+							msg + "  (LP's gid displays [%d , %d])" % (self._overview_start_octave - 2, self._overview_start_octave + 7 - 2))
+						self._force_update = True
+						self.update()
+
+					# --- SINGLE CLICK ---
+					else:
+						# Set flag and schedule Up action
+						self._scroll_pending_action = True
+						self._control_surface.schedule_message(3, self._execute_octave_up_scroll)
+
+					self._last_notes_octaves_button_press = now
+					return
+
+				elif current_mode == STEPSEQ_MODE_NOTES:
+					self._overview_start_octave = 2
+					self._last_notes_octaves_button_press = 0.0
+					self._scroll_pending_action = False  # Clear any pending timers
+
 					new_mode = STEPSEQ_MODE_OCTAVE_OVERVIEW
-					msg = "Octave Overview"
-				elif current_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
-					# Transition: Overview -> Notes (Loop back to start)
-					new_mode = STEPSEQ_MODE_NOTES
-					msg = "Notes Mode"
-				else:
-					# Fallback if we are in some other weird state (e.g., velocity editor)
-					new_mode = STEPSEQ_MODE_NOTES
-					msg = "Notes Mode"
-
-				# Only change mode if different
-				if new_mode != current_mode:
 					self.set_mode(new_mode)
-					self._control_surface.show_message(msg)
-
-				# CRITICAL: Update the parent OSD and force a matrix refresh
-				if hasattr(self._step_sequencer, '_update_OSD'):
+					self._control_surface.show_message("Octave Overview")
 					self._step_sequencer._update_OSD()
-				self.update()
-
-			else:
-				# Handle Button Hold (Shift Logic)
-				# Keep existing behavior for holding the button
-				self._is_octave_shifted = True
-			# You might want to show a message here if needed
-			# self._control_surface.show_message("Holding Octave Shift")
-
-			# Always update the button LED state based on current mode
-			self._update_mode_notes_octaves_button()
-
+					self.update()
+					return
+				else:
+					self.set_mode(STEPSEQ_MODE_NOTES)
+					self._control_surface.show_message("Notes Mode")
+					self._step_sequencer._update_OSD()
+					self.update()
 		else:
-			# No clip selected
 			if self._mode_notes_octaves_button:
 				self._mode_notes_octaves_button.set_light("DefaultButton.Disabled")
+
+	def _execute_octave_up_scroll(self):
+		"""
+		Called 0.3s after a single click.
+	 Checks if a double-click cancelled it.
+		"""
+		# If we are not in overview mode, do nothing
+		if self._mode != STEPSEQ_MODE_OCTAVE_OVERVIEW:
+			self._scroll_pending_action = False
+			return
+
+		# If the flag was cleared (by a double-click), abort
+		if not self._scroll_pending_action:
+			return
+
+		# Otherwise, execute Up
+		if self._overview_start_octave + 8 < 11:
+			self._overview_start_octave += 1
+			msg = "Octave Range Up"
+		else:
+			msg = "Max Octave Reached"
+
+		self._control_surface.show_message(
+			msg + " (LP's gid displays [%d , %d])" % (self._overview_start_octave - 2, self._overview_start_octave + 8 - 2))
+
+		self._force_update = True
+		self.update()
+
+		# Reset flag
+		self._scroll_pending_action = False
+
+
 # VELOCITIES
 	def _set_velocity_at_step(self, idx, velocity_index):
 

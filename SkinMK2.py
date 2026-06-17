@@ -457,6 +457,12 @@ class Colors:
             On = Rgb.PURPLE
             Dim = Rgb.PURPLE_THIRD
             Off = Rgb.BLACK
+            OnAbove1 = Rgb.MINT
+            OnAbove2 = Rgb.BLUE_THIRD
+            OnAbove3 = Rgb.BLUE
+            OnBelow1 = Rgb.YELLOW_THIRD
+            OnBelow2 = Rgb.AMBER
+            OnBelow3 = Rgb.RED
 
         class Velocity:
             On = Rgb.LIGHT_BLUE
