@@ -366,11 +366,11 @@ class Colors:
                 Off = Rgb.PURPLE_THIRD
 
         class LoopSelector:
-            SelectedPlaying = Rgb.PURPLE
-            Playing = Rgb.PURPLE_HALF
-            Selected = Rgb.BLUE
+            SelectedPlaying = Rgb.PINK
+            Playing = Rgb.PINK_HALF
+            Selected = Rgb.PURPLE
             StoppedSelected = Rgb.WHITE
-            InLoop = Rgb.BLUE_THIRD
+            InLoop = Rgb.PINK_THIRD
             Stopped = Rgb.DARK_GREY
 
         class Resolution:
@@ -431,16 +431,19 @@ class Colors:
 
     class StepSequencer2:
         class Pitch:
-            On = Rgb.BLUE
-            OnOffStep = Rgb.PINK_HALF
-            OnMixedStep = Rgb.PURPLE_THIRD
+            On = Rgb.LIGHT_BLUE
+            OnOffStep = Rgb.PURPLE_THIRD
+            OnMixedStep = Rgb.BLUE
             Dim = Rgb.BLUE_THIRD
             Off = Rgb.BLACK
-            RootNote = Rgb.PURPLE
+            RootNote = Rgb.LIGHT_BLUE_THIRD
             ChordTone = Rgb.LIGHT_BLUE_THIRD
             OnOutScale = Rgb.GREEN_THIRD
+            OnOutScaleOffStep = Rgb.AMBER_HALF
+            OnOutScaleOffStep2 = Rgb.YELLOW_THIRD
             OnMixedScale = Rgb.MINT
             OnMixedStepScale = Rgb.WHITE
+            OutOfRange = Rgb.DARK_GREY
 
         class Zoom:
             On = Rgb.BLUE
@@ -460,8 +463,8 @@ class Colors:
             OffDisplay = Rgb.DARK_GREY_PULSE
             OnDisplay = Rgb.PURPLE_PULSE
             OnAbove1 = Rgb.MINT
-            OnAbove2 = Rgb.BLUE
-            OnAbove3 = Rgb.PINK_HALF
+            OnAbove2 = Rgb.LIGHT_BLUE_THIRD
+            OnAbove3 = Rgb.BLUE
             OnBelow1 = Rgb.YELLOW_HALF
             OnBelow2 = Rgb.AMBER
             OnBelow3 = Rgb.RED
@@ -483,9 +486,9 @@ class Colors:
             Off = Rgb.RED
 
         class NoteEditor:
-            MetronomeInPage = Rgb.PINK_HALF
+            MetronomeInPage = Rgb.PURPLE
             MetronomeInOtherPage = Rgb.PURPLE_THIRD
-            PlayInPage = Rgb.PINK
+            PlayInPage = Rgb.PINK_HALF
             PlayInOtherPage = Rgb.RED_THIRD
 
         class Cycle:

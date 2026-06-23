@@ -904,15 +904,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if self._clip != None:
 
 					for x in range(8):
-						has_note = False
 						idx = self._get_step_index(x)
-						# detect if column has any note
-						for y in range(7):
-							if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
-								has_note = True
 						if self._mode == STEPSEQ_MODE_NOTES:
-							# debug
-							#self._control_surface.log_message("DRAW NOTES")
 							# --- SCALE CONFIGURATION ---
 							scale_root_key = 0
 							scale_notes = [0, 2, 4, 5, 7, 9, 11]
@@ -924,7 +917,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								scale_root_key = selector._key
 								scale_notes = [n % 12 for n in selector.notes]
 
-							idx = self._get_step_index(x)
+							#idx = self._get_step_index(x) #already above
 							start_time = idx * self._resolution
 							end_time = start_time + self._resolution
 							step_notes_list = self._get_notes_at_step(idx)
@@ -933,90 +926,119 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								row_idx = 6 - y
 								current_pitch = (self._key_indexes[row_idx] + 12 * (self._display_octave - 2))
 
-								# --- NEW LOGIC: Find notes that map to THIS row ---
-								notes_mapped_to_this_row = []
+								is_midi_valid = (0 <= current_pitch <= 127)
+								target_color = "StepSequencer2.Pitch.Off"
 
-								for n in step_notes_list:
-									note_midi = n[0]
-									mapped_row = self._get_row_for_pitch(note_midi)
+								# --- CHECKERBOARD FOR INVALID PITCHES ---
+								if not is_midi_valid:
+									if (x + y) % 2 == 0:
+										target_color = "StepSequencer2.Pitch.OutOfRange"
+									else:
+										target_color = "StepSequencer2.Pitch.Off"
 
-									# This note belongs to this row if it's close enough AND in this time step
-									if mapped_row == row_idx and start_time <= n[1] < end_time:
+								else:
+									notes_mapped_to_this_row = []
+
+									for n in step_notes_list:
+										note_midi = n[0]
+										note_time = n[1]
+
+										# 1. Time Check
+										if not (start_time <= note_time < end_time):
+											continue
+
+										# 2. Row Mapping Check
+										mapped_row = self._get_row_for_pitch(note_midi)
+										if mapped_row != row_idx:
+											continue
+
+										# 3. STRICT OCTAVE FILTER
+										# Ensure the note's octave matches the row's octave
+										note_octave = int(note_midi / 12)
+										expected_octave = int(current_pitch / 12)
+
+										if note_octave != expected_octave:
+											continue
+
 										notes_mapped_to_this_row.append(n)
 
-								has_note_here = len(notes_mapped_to_this_row) > 0
+									has_note_here = len(notes_mapped_to_this_row) > 0
 
-								if not has_note_here:
-									interval = (current_pitch - scale_root_key) % 12
-									is_root = (interval == 0)
-									is_chord_tone = (interval == scale_notes[2] % 12 or interval == scale_notes[4] % 12)
+									if not has_note_here:
+										# No note here: Draw Scale Colors
+										interval = (current_pitch - scale_root_key) % 12
+										is_root = (interval == 0)
 
-									if is_root:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.RootNote"
-									elif is_chord_tone:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.ChordTone"
+										if is_root:
+											target_color = "StepSequencer2.Pitch.RootNote"
+										# elif is_chord_tone:
+										#	target_colour = "StepSequencer2.Pitch.ChordTone"
+										else:
+											target_color = "StepSequencer2.Pitch.Off"
+									# NO CONTINUE HERE -> ensures buffer update
+
 									else:
-										self._grid_back_buffer[x][y] = "StepSequencer2.Pitch.Off"
-									continue
+										# --- NOTE PRESENT LOGIC ---
+										has_on_step = False
+										has_off_step = False
+										has_in_scale = False
+										has_out_scale = False
 
-								# --- NOTE PRESENT LOGIC ---
-								has_on_step = False
-								has_off_step = False
-								has_in_scale = False
-								has_out_scale = False
+										for n in notes_mapped_to_this_row:
+											note_time = n[1]
+											note_deg = n[0] % 12
 
-								for n in notes_mapped_to_this_row:
-									note_midi = n[0]
-									note_time = n[1]
-									note_deg = note_midi % 12
+											if self._is_note_on_grid(note_time, self._resolution):
+												has_on_step = True
+											else:
+												has_off_step = True
 
-									if self._is_note_on_grid(note_time, self._resolution):
-										has_on_step = True
-									else:
-										has_off_step = True
+											if note_deg in scale_notes:
+												has_in_scale = True
+											else:
+												has_out_scale = True
 
-									if note_deg in scale_notes:
-										has_in_scale = True
-									else:
-										has_out_scale = True
+										# --- COLOR DETERMINATION ---
+										target_color = "StepSequencer2.Pitch.On"
 
-								# --- COLOR DETERMINATION ---
-								color_key = "StepSequencer2.Pitch.On"
+										if has_out_scale and has_off_step and has_in_scale:
+											target_color = "StepSequencer2.Pitch.OnMixedStepScale"
+										elif not has_in_scale and not has_on_step:
+											target_color = "StepSequencer2.Pitch.OnOutScaleOffStep"
+										elif has_out_scale and not has_in_scale and has_off_step:
+											target_color = "StepSequencer2.Pitch.OnOutScaleOffStep2"
+										elif has_in_scale and has_out_scale and not has_off_step:
+											target_color = "StepSequencer2.Pitch.OnMixedScale"
+										elif has_on_step and has_off_step and not has_out_scale:
+											target_color = "StepSequencer2.Pitch.OnMixedStep"
+										elif has_out_scale and not has_in_scale and not has_off_step:
+											target_color = "StepSequencer2.Pitch.OnOutScale"
+										elif has_off_step and not has_on_step and not has_out_scale:
+											target_color = "StepSequencer2.Pitch.OnOffStep"
+										else:
+											target_color = "StepSequencer2.Pitch.On"
 
-								if has_out_scale and has_off_step:
-									color_key = "StepSequencer2.Pitch.OnMixedStepScale"
-								elif has_in_scale and has_out_scale and not has_off_step:
-									color_key = "StepSequencer2.Pitch.OnMixedScale"
-								elif has_on_step and has_off_step and not has_out_scale:
-									color_key = "StepSequencer2.Pitch.OnMixedStep"
-								elif has_out_scale and not has_in_scale and not has_off_step:
-									color_key = "StepSequencer2.Pitch.OnOutScale"  # GREEN
-								elif has_off_step and not has_on_step and not has_out_scale:
-									color_key = "StepSequencer2.Pitch.OnOffStep"  # RED
-								else:
-									color_key = "StepSequencer2.Pitch.On"  # BLUE
+								# Update buffer for ALL cases
+								self._grid_back_buffer[x][y] = target_color
 
-								#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_key))
-								self._grid_back_buffer[x][y] = color_key
-
-						elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-							# OCTAVE MODE LOGIC
-							for y in range(7):
-								has_note_in_row = (self._notes_pitches[(idx * 7) + (6 - y)] == 1)
-
-								if has_note_in_row:
-									if self._notes_octaves[idx] == (6 - y):
-										color_octave = "StepSequencer2.Octave.On"
-									else:
-										color_octave = "StepSequencer2.Octave.Off"
-								else:
-									if self._notes_octaves[idx] == (6 - y):
-										color_octave = "StepSequencer2.Octave.Dim"
-									else:
-										color_octave = "StepSequencer2.Octave.Off"
-
-								#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_octave))
-								self._grid_back_buffer[x][y] = color_octave
+						# elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+						# 	# OCTAVE MODE LOGIC
+						# 	for y in range(7):
+						# 		has_note_in_row = (self._notes_pitches[(idx * 7) + (6 - y)] == 1)
+						#
+						# 		if has_note_in_row:
+						# 			if self._notes_octaves[idx] == (6 - y):
+						# 				color_octave = "StepSequencer2.Octave.On"
+						# 			else:
+						# 				color_octave = "StepSequencer2.Octave.Off"
+						# 		else:
+						# 			if self._notes_octaves[idx] == (6 - y):
+						# 				color_octave = "StepSequencer2.Octave.Dim"
+						# 			else:
+						# 				color_octave = "StepSequencer2.Octave.Off"
+						#
+						# 		#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_octave))
+						# 		self._grid_back_buffer[x][y] = color_octave
 
 
 						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
@@ -1576,19 +1598,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									self._notes_pitches[(idx) * 7 + 6 - yy] = 0
 							self._notes_pitches[(idx) * 7 + 6 - y] = 1
 
-					elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
-						if self._is_notes_octaves_shifted:
-							if x < 4:
-								for x1 in range(start, end):
-									self._notes_octaves[x1] = 6 - y
-							else:
-								for x1 in range(start, end):
-									if y < 3 and self._notes_octaves[x1] < 6:
-										self._notes_octaves[x1] = self._notes_octaves[x1] + 1
-									if y > 3 and self._notes_octaves[x1] > 0:
-										self._notes_octaves[x1] = self._notes_octaves[x1] - 1
-						else:
-							self._notes_octaves[idx] = 6 - y
+					# elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
+					# 	if self._is_notes_octaves_shifted:
+					# 		if x < 4:
+					# 			for x1 in range(start, end):
+					# 				self._notes_octaves[x1] = 6 - y
+					# 		else:
+					# 			for x1 in range(start, end):
+					# 				if y < 3 and self._notes_octaves[x1] < 6:
+					# 					self._notes_octaves[x1] = self._notes_octaves[x1] + 1
+					# 				if y > 3 and self._notes_octaves[x1] > 0:
+					# 					self._notes_octaves[x1] = self._notes_octaves[x1] - 1
+					# 	else:
+					# 		self._notes_octaves[idx] = 6 - y
 
 					# --- OCTAVE OVERVIEW MODE: Click selects octave and returns to Notes ---
 					elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
@@ -2490,13 +2512,35 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._last_notes_octaves_button_press = now
 					return
 
+				# --- ENTRY LOGIC (NOTES -> OVERVIEW) ---
 				elif current_mode == STEPSEQ_MODE_NOTES:
-					self._overview_start_octave = 2
-					self._last_notes_octaves_button_press = 0.0
-					self._scroll_pending_action = False  # Clear any pending timers
+					# 1. Capture the octave we are currently viewing
+					current_octave = self._display_octave
 
+					# 2. Calculate a new start octave to ensure current_octave is visible in an 8-octave window.
+					# We want: start <= current_octave <= start + 7
+					# Let's try to center it: start = current_octave - 3 (puts current at index 3, i.e., 4th row from bottom)
+					new_start = current_octave - 3
+
+					# 3. Clamp to valid MIDI range (0 to 15 approx)
+					# Ensure the whole window [new_start, new_start+7] doesn't go negative
+					if new_start < 0:
+						new_start = 0
+					# Ensure the top of the window doesn't exceed max useful octave
+					if new_start + 7 > 12:
+						new_start = 3
+
+					self._overview_start_octave = new_start
+
+					# Reset the timer for double-click detection
+					self._last_notes_octaves_button_press = 0.0
+					self._scroll_pending_action = False
+
+					# Set Mode
 					self.set_mode(STEPSEQ_MODE_OCTAVE_OVERVIEW)
-					self._control_surface.show_message("Octave Overview")
+
+					# Show message with the calculated range
+					self._control_surface.show_message("Octave Overview ") #% (self._overview_start_octave, self._overview_start_octave + 7)
 					self._step_sequencer._update_OSD()
 					self.update()
 					return

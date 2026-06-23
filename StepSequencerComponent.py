@@ -1062,7 +1062,10 @@ class StepSequencerComponent(CompoundComponent):
         max_pages = max(1, (total_blocks + 7) // 8)  # Number of pages (each page = 8 blocks)
 
         # Increment page offset (do NOT modify _block)
+        old_offset = self._loop_page_offset
         self._loop_page_offset = (self._loop_page_offset + 1) % max_pages
+        self._control_surface.log_message(
+            "[STEP SEQ] CYCLE Click! OldPage=%d NewPage=%d" % (old_offset, self._loop_page_offset))
 
         if self._loop_selector:
             self._loop_selector.set_loop_page_offset(self._loop_page_offset)
