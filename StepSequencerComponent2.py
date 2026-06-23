@@ -83,8 +83,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._key_index_is_root_note = [True, False, False, False, False, False, False, False]
 		self._is_monophonic = False
 
+		# octaves
 		self._display_octave = 2
 		self._overview_start_octave = 2  # Default start: Rows 7-0 will show 2-9
+		self._last_displayed_octave = 2
 		self._scroll_pending_action = False
 
 		# quantization
@@ -368,6 +370,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					loop_selector.set_enabled(False)
 					loop_selector._cache = [-1] * len(loop_selector._buttons)
 					loop_selector._force = True
+			if mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+				# Capture the octave we are currently displaying before switching modes
+				self._last_displayed_octave = self._display_octave
 
 		# --- 6: CRITICAL FIX FOR ANIMATION -> EDITOR TRANSITION ---
 		# If we are entering an editor mode, ensure ANY active animations are killed
@@ -1015,26 +1020,66 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
-							for x in range(8):
-								idx = self._get_step_index(x)
-								step_notes_list = self._get_notes_at_step(idx)
+							start_octave = self._overview_start_octave
+							max_visible_octave = start_octave + 7
+							min_visible_octave = start_octave
 
-								for y in range(8):
-									# NEW LOGIC:
-									# Row 0 (Top) = Start + 7
-									# Row 7 (Bottom) = Start
-									# Formula: target = Start + (7 - y)
-									target_octave = self._overview_start_octave + (7 - y)
+							# Pre-scan notes for this step
+							highest_note_octave = -1
+							lowest_note_octave = 128
+							step_notes = self._get_notes_at_step(self._get_step_index(x))
 
-									has_note_in_octave = False
-									for n in step_notes_list:
-										note_octave = int(n[0] / 12)
-										if note_octave == target_octave:
-											has_note_in_octave = True
-											break
+							for n in step_notes:
+								octave = int(n[0] / 12)
+								if octave > highest_note_octave: highest_note_octave = octave
+								if octave < lowest_note_octave: lowest_note_octave = octave
 
-									target_color = "StepSequencer2.Octave.On" if has_note_in_octave else "DefaultButton.Disabled"
-									self._grid_back_buffer[x][y] = target_color
+							for y in range(8):
+								target_octave = start_octave + (7 - y)
+								has_note_here = False
+
+								# Check if note exists in this exact octave
+								for n in step_notes:
+									if int(n[0] / 12) == target_octave:
+										has_note_here = True
+										break
+
+								target_color = "StepSequencer2.Octave.Off" # Default
+
+								# --- PRIORITY 1: OVERFLOW INDICATORS (Edge Rows) ---
+								# These always take precedence
+								is_top_edge = (y == 0)
+								is_bottom_edge = (y == 7)
+								has_above_overflow = highest_note_octave > max_visible_octave
+								has_below_overflow = lowest_note_octave < min_visible_octave
+
+								if is_top_edge and has_above_overflow:
+									diff = highest_note_octave - max_visible_octave
+									if diff >= 3: target_color = "StepSequencer2.Octave.OnAbove3"
+									elif diff == 2: target_color = "StepSequencer2.Octave.OnAbove2"
+									elif diff == 1: target_color = "StepSequencer2.Octave.OnAbove1"
+
+								elif is_bottom_edge and has_below_overflow:
+									diff = min_visible_octave - lowest_note_octave
+									if diff >= 3: target_color = "StepSequencer2.Octave.OnBelow3"
+									elif diff == 2: target_color = "StepSequencer2.Octave.OnBelow2"
+									elif diff == 1: target_color = "StepSequencer2.Octave.OnBelow1"
+
+								# --- PRIORITY 2: LAST DISPLAYED OCTAVE (Inside Range) ---
+								# Only applies if we are NOT using this row for overflow indication
+								elif target_octave == self._last_displayed_octave + 1: # need the +1 because otherwise we shoo one row lower
+									if has_note_here:
+										target_color = "StepSequencer2.Octave.OnDisplay"
+									else:
+										target_color = "StepSequencer2.Octave.OffDisplay"
+
+								# --- PRIORITY 3: NORMAL VISUALS ---
+								elif has_note_here:
+									target_color = "StepSequencer2.Octave.On"
+
+								# Else: remains "StepSequencer2.Octave.Off"
+
+								self._grid_back_buffer[x][y] = target_color
 
 						else:
 							for y in range(8):
@@ -2450,8 +2495,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._last_notes_octaves_button_press = 0.0
 					self._scroll_pending_action = False  # Clear any pending timers
 
-					new_mode = STEPSEQ_MODE_OCTAVE_OVERVIEW
-					self.set_mode(new_mode)
+					self.set_mode(STEPSEQ_MODE_OCTAVE_OVERVIEW)
 					self._control_surface.show_message("Octave Overview")
 					self._step_sequencer._update_OSD()
 					self.update()

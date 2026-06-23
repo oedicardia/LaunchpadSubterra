@@ -457,10 +457,12 @@ class Colors:
             On = Rgb.PURPLE
             Dim = Rgb.PURPLE_THIRD
             Off = Rgb.BLACK
+            OffDisplay = Rgb.DARK_GREY_PULSE
+            OnDisplay = Rgb.PURPLE_PULSE
             OnAbove1 = Rgb.MINT
-            OnAbove2 = Rgb.BLUE_THIRD
-            OnAbove3 = Rgb.BLUE
-            OnBelow1 = Rgb.YELLOW_THIRD
+            OnAbove2 = Rgb.BLUE
+            OnAbove3 = Rgb.PINK_HALF
+            OnBelow1 = Rgb.YELLOW_HALF
             OnBelow2 = Rgb.AMBER
             OnBelow3 = Rgb.RED
 
