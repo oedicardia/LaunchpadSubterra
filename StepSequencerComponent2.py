@@ -22,7 +22,7 @@ from random import uniform
 
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
-
+DEBUG_LOGGING = True  # Set to False for release
 
 class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
@@ -98,26 +98,36 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# MODE
 		self._mode = STEPSEQ_MODE_NOTES
 
-		# buttons
+		# Clip on/off
 		self._clip_toggle_button = None
 		self.set_clip_toggle_button(self._side_buttons[2])
 
+		# Copy/paste/delete
 		self._mode_copy_paste_button = None
 		self.set_mode_copy_paste_button(self._side_buttons[3])
-		self._is_copy_paste_shifted = False
-		self._last_copy_paste_button_press = time.time()
+		self._copied_grid_data = None  # Stores (Pitch, Time) tuples when armed
+		self._paste_armed = False      # True if waiting for paste command
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[INIT] CopyPaste Component Initialized. Arming=False, Data=None")
+		self._last_press_time = 0.0  # Timestamp for double-click detection
+		self._suppress_toggle_release = False
+		self._delete_action_on_release = False
+		self._update_copy_paste_button_state()
 
+		# Length mode
 		self._mode_notes_lengths_button = None
 		self.set_mode_notes_lengths_button(self._side_buttons[4])
 		self._is_notes_lengths_shifted = False
 		self._last_notes_lengths_button_press = time.time()
 		self._mode_notes_velocities_button = None
 
+		# Velocity mode
 		self.set_mode_notes_velocities_button(self._side_buttons[5])
 		self._is_notes_velocity_shifted = False
 		self._last_notes_velocity_button_press = time.time()
 		self._mode_notes_octaves_button = None
 
+		# Octave mode
 		self.set_mode_notes_octaves_button(self._side_buttons[6])
 		self._is_octave_shifted = False
 		self._last_notes_octaves_button_press = time.time()
@@ -141,8 +151,34 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_locked = False  # Add this line
 		self._lock_to_track = False  # Add this line
 
+		# Final initialization of button state
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[INIT] Completing button setup")
+		self._update_copy_paste_button_state()
+
+		# CRITICAL: Ensure hardware receives the command immediately
+		if hasattr(self, '_force_update'):
+			self._force_update = True
+		# if hasattr(self, 'update'):
+		# 	# Call update to push all lights including the copy button
+		# 	# But avoid recursion if matrix isn't ready
+		# 	if matrix is not None:
+		# 		for x in range(8):
+		# 			for y in range(8):
+		# 				button = self._matrix.get_button(x, y)
+		# 				if button:
+		# 					try:
+		# 						# Force each button to send its current state
+		# 						pass  # _update_matrix will handle this
+		# 					except RuntimeError:
+		# 						pass
+
 		# end init
 		self._initializing = False
+
+		# Final safety push
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[INIT] Initial state complete")
 
 	def disconnect(self):
 		self._remove_highlighted_clip_slot_listener()
@@ -207,14 +243,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	# 				self.update()
 	# 		except (ValueError, AttributeError):
 	# 			pass
-		
 
 	def set_enabled(self, enabled):
 		ControlSurfaceComponent.set_enabled(self, enabled)
-		# debug
-		# self._control_surface.log_message(
-		# 	f"{self.__class__.__name__} enabled={enabled}"
-		# )
+
+		# Avoid redundant updates if already in this state
+		if hasattr(self, '_enabled_state'):
+			if self._enabled_state == enabled:
+				return
+			self._enabled_state = enabled
+		else:
+			self._enabled_state = enabled
+
+		if enabled and hasattr(self, '_mode_copy_paste_button') and self._mode_copy_paste_button:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[ENABLED] Refreshing button state")
+			self._update_copy_paste_button_state()
+			self._force_update = True
+			self.update()
 
 
 	def _init_data(self):
@@ -244,14 +290,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._notes_lengths = [3] * pages
 
 	def set_mode(self, mode):
-		self._control_surface.log_message(
-			"SET_MODE old=%s new=%s" % (self._mode, mode)
-		)
-
 		old_mode = self._mode
-		self._control_surface.log_message(
-			"MODE -> %s from set_mode()" % mode
-		)
 		self._mode = mode
 		self._force_update = True
 
@@ -308,6 +347,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					loop_selector.set_enabled(False)
 					loop_selector.update()
 
+
 		# --- 3: CLEAR LOOP SELECTOR VISUALS WHEN EXITING EDITORS TO NORMAL MODE ---
 		if (old_mode in [
 			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
@@ -317,7 +357,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			STEPSEQ_MODE_COPY_PASTE,
 			STEPSEQ_MODE_OCTAVE_OVERVIEW
 		]) and (mode == STEPSEQ_MODE_NOTES):
-
 			if loop_selector:
 				# Clear cache and force update
 				loop_selector._cache = [-1] * len(loop_selector._buttons)
@@ -401,15 +440,38 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# Force hardware push to update the board instantly
 				self._push_to_hardware()
 
-				self._control_surface.log_message(f"[ANIM->EDIT] Killed anim, disabled LS for {mode}")
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[ANIM->EDIT] Killed anim, disabled LS for {mode}")
+
+		# --- DEBUG: COPY/PASTE STATE MANAGEMENT ---
+		self._control_surface.log_message("[SET MODE] Entering Mode=%s | OldMode=%s" % (mode, old_mode))
+
+		if mode == STEPSEQ_MODE_NOTES:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+				"[SET MODE] In NOTES block. Armed=%s | Data=%s" %
+				(str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
+				)
+			# Force LED update
+			self._update_copy_paste_button_state()
+
+		elif mode != STEPSEQ_MODE_NOTES:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[SET MODE] Leaving NOTES block.")
+			# Leaving Notes mode (e.g., going to Velocity Editor). To clear buffer on exit, uncomment below:
+			# self._copied_grid_data = None
+			# self._paste_armed = False
+			pass
 
 		# DEBUG LOGGING FOR ROW 7 OWNERSHIP
-		self._control_surface.log_message(
-			"[set_mode] Row 7 Ownership: %s (mode=%s)" %
-			("EDITOR" if self.uses_bottom_row() else "LOOP_SELECTOR", mode)
-		)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 	"[set_mode] Row 7 Ownership: %s (mode=%s)" %
+		# 	("EDITOR" if self.uses_bottom_row() else "LOOP_SELECTOR", mode)
+		# )
 
-		self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
 		self.update()
 
 	def _push_to_hardware(self):
@@ -423,14 +485,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						#debug
 						button = self._matrix.get_button(x, y)
 						if y == 7:
-							self._control_surface.log_message(
+							if DEBUG_LOGGING:
+								self._control_surface.log_message(
 								"PUSH ROW7 (%d) value=%r type=%s" %
 								(
 									x,
 									self._grid_back_buffer[x][7],
 									type(self._grid_back_buffer[x][7]).__name__,
 								)
-							)
+								)
 						if button:
 							try:
 								button.set_light(self._grid_buffer[x][y])
@@ -771,9 +834,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# self._control_surface.log_message("MATRIX ASSIGNED")
 
 	def _update_matrix(self):  # step grid LEDs are updated here
-		self._control_surface.log_message(
-			"UPDATE_MATRIX mode=%d" % self._mode
-		)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message("UPDATE_MATRIX mode=%d" % self._mode)
+
 		# self._control_surface.log_message(
 		# 	"UPDATE mode=%d playhead=%s"
 		# 	% (self._mode, self._playhead)
@@ -788,7 +851,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if has_scale:
 				try:
 					root_key = self._step_sequencer._scale_selector._key
-					self._control_surface.log_message(f"[UPDATE_MATRIX] ROOT_KEY={root_key}")
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(f"[UPDATE_MATRIX] ROOT_KEY={root_key}")
 				except AttributeError as e:
 					self._control_surface.log_message(f"[UPDATE_MATRIX] ERROR ACCESSING ROOT_KEY: {e}")
 
@@ -811,7 +875,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if elapsed_col <= 0.0:
 					# Clear column only
 					for y in range(7):
-						self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
@@ -838,7 +903,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				# Clear Column (Always Black first)
 				for y in range(7):
-					self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+					# self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 				if head_pos != -1:
@@ -859,7 +924,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				if elapsed_col <= 0.0:
 					for y in range(7):
-						self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+						# self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
@@ -880,7 +945,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if head_pos > 7: head_pos = 7
 
 				for y in range(7):
-					self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
+					# self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
 				if head_pos != -1:
@@ -2229,31 +2294,39 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					identify_sender=True
 				)
 
-	def _clip_toggle_button_value(self, value, sender):
 
+	def _clip_toggle_button_value(self, value, sender):
 		assert (self._clip_toggle_button != None)
 		assert (value in range(128))
 
-		#if self.is_enabled() and self._clip != None:
 		clip_slot = self.song().view.highlighted_clip_slot
-		#if self.is_enabled() and self._clip != None:
+
 		if (self.is_enabled() and clip_slot is not None and clip_slot.has_clip):
 
-			if ((value != 0) or (not sender.is_momentary())):
+			# Only act on Release
+			if (value == 0 and sender.is_momentary()) or (not sender.is_momentary()):
 
-				clip_slot = self.song().view.highlighted_clip_slot
+				# --- CHECK FOR DUPLICATE SUPPRESSION ---
+				# Check if the parent (StepSequencer) has the flag set
+				if hasattr(self, '_step_sequencer') and self._step_sequencer:
+					if hasattr(self._step_sequencer, '_suppress_toggle_release') and \
+							getattr(self._step_sequencer, '_suppress_toggle_release', False):
+						# A duplicate just happened! Skip the toggle.
+						# Reset the flag so normal toggling works next time
+						self._step_sequencer._suppress_toggle_release = False
+						# Optional: Show a message? "Skipped toggle"
+						return
 
-				if clip_slot != None:
+				# Normal Toggle Logic
+				if clip_slot.is_playing:
+					clip_slot.stop()
+					self._control_surface.show_message("clip stopped")
+				else:
+					clip_slot.fire()
+					self._control_surface.show_message("clip playing")
 
-					# toggle playback
-					if clip_slot.is_playing:
-						clip_slot.stop()
-						self._control_surface.show_message("clip stopped")
-					else:
-						clip_slot.fire()
-						self._control_surface.show_message("clip playing")
+				self._control_surface.schedule_message(1, self._update_clip_toggle_button)
 
-					self._control_surface.schedule_message(1,self._update_clip_toggle_button)
 
 	def _remove_highlighted_clip_slot_listener(self):
 		try:
@@ -2446,7 +2519,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_display_octave(self, octave):
 		self._display_octave = octave
 		# debug
-		self._control_surface.log_message("DISPLAY OCTAVE = %s" % self._display_octave)
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("DISPLAY OCTAVE = %s" % self._display_octave)
 
 		self._parse_notes()
 		self._force_update = True
@@ -2886,20 +2960,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 
-	# COPY / PASTE
-	def _update_mode_copy_paste_button(self):
-		if self.is_enabled():
-			if (self._mode_copy_paste_button != None):
-				if self._clip != None:
-					self._mode_copy_paste_button.set_on_off_values("StepSequencer2.CopyPaste.On",
-					                                                  "StepSequencer2.CopyPaste.Dim")
-					if self._mode == STEPSEQ_MODE_COPY_PASTE:
-						self._mode_copy_paste_button.turn_on()
-					else:
-						self._mode_copy_paste_button.turn_off()
-				else:
-					self._mode_copy_paste_button.set_light("DefaultButton.Disabled")
-
+	# COPY / PASTE / DELETE
 	def set_mode_copy_paste_button(self, button):
 		assert (isinstance(button, (ButtonElement, type(None))))
 		if (self._mode_copy_paste_button != button):
@@ -2911,26 +2972,380 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._mode_copy_paste_button.add_value_listener(self._mode_button_copy_paste_value,
 				                                                   identify_sender=True)
 
+	def _update_copy_paste_button_state(self):
+		if not hasattr(self, '_mode_copy_paste_button') or not self._mode_copy_paste_button:
+			#self._control_surface.log_message("[LED UPD] Button object missing!")
+			return
+
+		state_str = "OFF"
+		if self._paste_armed and self._copied_grid_data:
+			state_str = "ON"
+			self._mode_copy_paste_button.set_light("StepSequencer2.CopyPaste.Copied")
+		else:
+			state_str = "DIM"
+			self._mode_copy_paste_button.set_light("StepSequencer2.CopyPaste.Dim")
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+			"[LED UPD] Setting Light to %s | Armed=%s | DataCount=%s" %
+			(state_str, str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
+			)
+
 	def _mode_button_copy_paste_value(self, value, sender):
 		assert (self._mode_copy_paste_button != None)
 		assert (value in range(128))
 
 		if self.is_enabled() and self._clip != None:
+			current_mode = self._mode
+			now = time.time()
 
-			if ((value == 0) and (sender.is_momentary())):
+			# --- PRESS EVENT (value > 0) ---
+			if value > 0:
+				# Check for Double Click Detection based on PREVIOUS press time
+				is_double_click = (
+					current_mode == STEPSEQ_MODE_NOTES and
+					(now - self._last_press_time) < 0.25
+				)
 
-				self._is_copy_paste_shifted = False
-				if self._mode == STEPSEQ_MODE_COPY_PASTE:
-					self._control_surface.show_message("Page pasted")
+				# Store state for release
+				if is_double_click:
+					self._delete_action_on_release = True
 				else:
-					self.set_mode(STEPSEQ_MODE_COPY_PASTE)
-					self._control_surface.show_message("Page Copied")
+					self._delete_action_on_release = False
 
-				self.update()
-				self._step_sequencer._update_OSD()
+				# Update last press time for next click
+				self._last_press_time = now
+				return
 
+			# --- RELEASE EVENT (value == 0) ---
+
+			# 1. Handle Duplicate (Simultaneous Hold)
+			duplicate_trigger = False
+			if hasattr(self, '_clip_toggle_button') and self._clip_toggle_button:
+				if self._clip_toggle_button.is_pressed():
+					duplicate_trigger = True
+
+			if duplicate_trigger:
+				if current_mode == STEPSEQ_MODE_NOTES:
+					self._duplicate_clip_to_next_slot()
+					if hasattr(self, '_step_sequencer') and self._step_sequencer:
+						if not hasattr(self._step_sequencer, '_suppress_toggle_release'):
+							self._step_sequencer._suppress_toggle_release = False
+						self._step_sequencer._suppress_toggle_release = True
+				return
+
+			# 2. Handle Delete (Double Click Detected on Press)
+			if self._delete_action_on_release:
+				self._paste_armed = False
+				self._copied_grid_data = None
+				self._update_copy_paste_button_state()
+
+				if current_mode == STEPSEQ_MODE_NOTES:
+					self._control_surface.show_message("Erase Page")
+					self._delete_notes_in_current_page()
+					self.update()
+
+				# Reset flag immediately
+				self._delete_action_on_release = False
+				return
+
+			# 3. Handle Copy / Paste (Normal Single Press)
+			if current_mode == STEPSEQ_MODE_NOTES:
+				if self._paste_armed:
+					# PASTE
+					if self._copied_grid_data:
+						self._paste_notes_from_buffer()
+						self._control_surface.show_message("Pasted (%d notes)" % len(self._copied_grid_data))
+
+					self._copied_grid_data = None
+					self._paste_armed = False
+					self._update_copy_paste_button_state()
+				else:
+					# COPY (ARM)
+					self._copy_notes_to_buffer()
+					if self._copied_grid_data:
+						self._paste_armed = True
+						self._control_surface.show_message("Armed (%d notes)" % len(self._copied_grid_data))
+						self._update_copy_paste_button_state()
+					else:
+						self._control_surface.show_message("Nothing to copy")
 			else:
-				self._is_copy_paste_shifted = True
+				if self._paste_armed:
+					self._paste_armed = False
+					self._update_copy_paste_button_state()
+
+		else:
+			if self._mode_copy_paste_button:
+				self._mode_copy_paste_button.set_light("DefaultButton.Disabled")
+
+	def _copy_notes_to_buffer(self):
+		"""Copies ALL notes in current page AND current octave from note_cache."""
+		self._parse_notes()  # Ensure cache is up to date
+
+		page_start_step = self._page * 8
+		page_end_step = (self._page + 1) * 8
+		resolution = self._resolution
+
+		# Calculate target MIDI octave based on current display
+		target_midi_octave = int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
+
+		buffer = []
+
+		for n in self._note_cache:
+			note_pitch = n[0]
+			note_time = n[1]
+			note_length = n[2]
+			note_velocity = n[3]
+			note_muted = n[4]
+
+			# Check 1: Is note in current page time range?
+			if not (page_start_step * resolution <= note_time < page_end_step * resolution):
+				continue
+
+			# Check 2: Does note belong to current displayed octave?
+			note_midi_octave = int(note_pitch / 12)
+			if note_midi_octave != target_midi_octave:
+				continue
+
+			# Valid note: Store with RELATIVE time (for pasting to any page)
+			relative_time = note_time - (page_start_step * resolution)
+			buffer.append((note_pitch, relative_time, note_length, note_velocity, note_muted))
+
+		self._copied_grid_data = buffer
+
+	def _paste_notes_from_buffer(self):
+		"""
+		Pastes notes from buffer onto the CURRENT page and CURRENT displayed octave.
+		It preserves the relative pattern (step offset) but shifts pitch and time to match current view.
+		"""
+		if not self._copied_grid_data:
+			return
+
+		page_start_step = self._page * 8
+		current_page_offset_time = page_start_step * self._resolution
+
+		# 1. Determine the Target Pitch Range
+		# We need the MIDI Octave of the CURRENT display to shift pitches correctly.
+		target_midi_octave = int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
+
+		new_notes = []
+		added_count = 0
+
+		for n in self._copied_grid_data:
+			orig_pitch = n[0]
+			rel_time = n[1]  # Time is stored relative to the original page start (0.0 to 8.0 steps)
+			orig_length = n[2]
+			orig_velocity = n[3]
+			orig_muted = n[4]
+
+			# Calculate original MIDI octave of the note
+			orig_midi_octave = int(orig_pitch / 12)
+
+			# --- PITCH SHIFTING LOGIC ---
+			# Calculate the distance (in semitones) between the original octave and target octave
+			octave_shift = target_midi_octave - orig_midi_octave
+			new_pitch = orig_pitch + (octave_shift * 12)
+
+			# Ensure pitch stays within valid MIDI range (0-127)
+			if new_pitch < 0 or new_pitch > 127:
+				continue  # Skip notes that would be out of bounds
+
+			# --- TIME PLACEMENT ---
+			# Place the note at the SAME relative step on the NEW page
+			new_time = current_page_offset_time + rel_time
+
+			# Add the transposed note
+			new_notes.append((new_pitch, new_time, orig_length, orig_velocity, orig_muted))
+			added_count += 1
+
+		if added_count == 0:
+			self._control_surface.show_message("Pattern Out of Range")
+			return
+
+		# --- MERGE WITH EXISTING NOTES ---
+		all_clip_notes = list(self._note_cache)
+		final_notes = []
+
+		# Filter out duplicates (notes at same pitch/time)
+		for n in all_clip_notes:
+			is_duplicate = False
+			for p_note in new_notes:
+				if abs(n[1] - p_note[1]) < 0.0001 and n[0] == p_note[0]:
+					is_duplicate = True
+					break
+			if not is_duplicate:
+				final_notes.append(n)
+
+		# Add our new transposed notes
+		final_notes.extend(new_notes)
+
+		# Write to clip
+		self._clip.select_all_notes()
+		self._clip.replace_selected_notes(tuple(final_notes))
+		self._note_cache = tuple(final_notes)
+		self._parse_notes()
+		self.update()
+
+		self._control_surface.show_message("Pasted (%d notes)" % added_count)
+
+	def _delete_notes_in_current_page(self):
+		"""Deletes ALL notes in current page AND current octave (in-scale + out-of-scale)."""
+		self._parse_notes()  # Ensure cache is up to date
+
+		page_start_step = self._page * 8
+		page_end_step = (self._page + 1) * 8
+		resolution = self._resolution
+
+		# Calculate target MIDI octave
+		target_midi_octave = int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
+
+		cleaned_notes = []
+		deleted_count = 0
+
+		for n in self._note_cache:
+			note_pitch = n[0]
+			note_time = n[1]
+
+			is_deleted = False
+
+			# Check 1: Is note in current page time range?
+			if not (page_start_step * resolution <= note_time < page_end_step * resolution):
+				# Not on this page -> KEEP IT
+				cleaned_notes.append(n)
+				continue
+
+			# Check 2: Does note belong to current displayed octave?
+			note_midi_octave = int(note_pitch / 12)
+			if note_midi_octave == target_midi_octave:
+				# It matches current page AND current octave -> DELETE IT
+				is_deleted = True
+				deleted_count += 1
+			else:
+				# Different octave -> KEEP IT
+				cleaned_notes.append(n)
+
+		if deleted_count > 0:
+			self._clip.select_all_notes()
+			self._clip.replace_selected_notes(tuple(cleaned_notes))
+			self._note_cache = tuple(cleaned_notes)
+			self._parse_notes()
+			self.update()
+			self._control_surface.show_message("%d erased" % deleted_count)
+		else:
+			self._control_surface.show_message("Nothing to erase")
+
+	def _duplicate_clip_to_next_slot(self):
+		"""Duplicates the current clip to the next slot or a new scene."""
+		song = self.song()
+		current_track = song.view.selected_track
+
+		if not current_track or len(current_track.clip_slots) == 0:
+			self._control_surface.show_message("No valid track/slots")
+			return
+
+		highlighted_clip_slot = song.view.highlighted_clip_slot
+		if not highlighted_clip_slot or not highlighted_clip_slot.has_clip:
+			self._control_surface.show_message("No clip in highlighted slot")
+			return
+
+		slot_list = list(current_track.clip_slots)
+		try:
+			current_slot_index = slot_list.index(highlighted_clip_slot)
+		except ValueError:
+			self._control_surface.show_message("Slot not found")
+			return
+
+		next_slot_index = current_slot_index + 1
+
+		# --- CHECK IF WE NEED A NEW SCENE ---
+		if next_slot_index >= len(slot_list):
+			# No more slots below -> Create a new Scene at the end
+			new_scene_index = len(song.scenes)
+
+			try:
+				song.create_scene(new_scene_index)
+				self._control_surface.show_message("New Scene Created")
+
+				# Refresh the slot list for the current track
+				# Creating a scene automatically adds a slot to every track
+				slot_list = list(current_track.clip_slots)
+
+				# The new slot is now the last one in the list
+				next_slot_index = len(slot_list) - 1
+				next_clip_slot = slot_list[next_slot_index]
+
+				if not next_clip_slot:
+					self._control_surface.show_message("Error: Slot not found")
+					return
+
+			except Exception as e:
+				self._control_surface.log_message(f"[DUP] Scene creation failed: {e}")
+				self._control_surface.show_message("Failed to create scene")
+				return
+
+		else:
+			# Normal case: Next slot exists
+			next_clip_slot = slot_list[next_slot_index]
+
+		src_clip = highlighted_clip_slot.clip
+
+		# Prepare destination
+		if next_clip_slot.has_clip:
+			if next_clip_slot.is_playing:
+				next_clip_slot.stop()
+			next_clip_slot.delete_clip()
+
+		dst_clip = None
+		try:
+			next_clip_slot.create_clip(src_clip.length)
+			dst_clip = next_clip_slot.clip
+		except RuntimeError:
+			self._control_surface.show_message("Error creating clip")
+			return
+
+		if not dst_clip:
+			self._control_surface.show_message("Failed to create clip")
+			return
+
+		# --- RETRIEVE AND CONVERT NOTES (Live 12 Format) ---
+		note_tuples = []
+		try:
+			src_clip.select_all_notes()
+			raw_notes = src_clip.get_selected_notes_extended()
+			src_clip.deselect_all_notes()
+
+			if raw_notes:
+				for n in raw_notes:
+					if hasattr(n, 'pitch'):
+						pitch = int(n.pitch)
+						time = float(n.start_time)
+						length = float(n.duration)
+						velocity = int(n.velocity)
+						mute = 0
+					elif isinstance(n, (list, tuple)) and len(n) >= 4:
+						pitch, time, length, velocity = int(n[0]), float(n[1]), float(n[2]), int(n[3])
+						mute = 0
+					else:
+						continue
+
+					note_tuples.append((pitch, time, length, velocity, mute))
+			else:
+				self._control_surface.show_message("Source clip has no notes")
+				return
+		except Exception:
+			self._control_surface.show_message("Error reading source notes")
+			return
+
+		if not note_tuples:
+			return
+
+		# --- APPLY NOTES ---
+		try:
+			dst_clip.select_all_notes()
+			dst_clip.replace_selected_notes(tuple(note_tuples))
+			self._control_surface.show_message("Duplicated to New Scene! (%d notes)" % len(note_tuples))
+		except Exception:
+			self._control_surface.show_message("Duplication Failed")
 
 	# UTILS
 	def uses_bottom_row(self):

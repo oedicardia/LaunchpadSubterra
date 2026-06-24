@@ -366,7 +366,7 @@ class Colors:
                 Off = Rgb.PURPLE_THIRD
 
         class LoopSelector:
-            SelectedPlaying = Rgb.PINK
+            SelectedPlaying = Rgb.PINK_HALF
             Playing = Rgb.PINK_HALF
             Selected = Rgb.PURPLE
             StoppedSelected = Rgb.WHITE
@@ -452,9 +452,10 @@ class Colors:
 
 
         class CopyPaste:
-            On = Rgb.BLUE
-            Dim = Rgb.BLUE_THIRD
+            On = Rgb.RED
+            Dim = Rgb.RED_THIRD
             Off = Rgb.BLACK
+            Copied = Rgb.RED_PULSE
 
         class Octave:
             On = Rgb.PURPLE
@@ -488,7 +489,7 @@ class Colors:
         class NoteEditor:
             MetronomeInPage = Rgb.PURPLE
             MetronomeInOtherPage = Rgb.PURPLE_THIRD
-            PlayInPage = Rgb.PINK_HALF
+            PlayInPage = Rgb.PINK_THIRD
             PlayInOtherPage = Rgb.RED_THIRD
 
         class Cycle:
@@ -499,7 +500,7 @@ class Colors:
             Page4Plus = Rgb.RED
 
         class Clip:
-            On = Rgb.GREEN
+            On = Rgb.GREEN_PULSE
             Off = Rgb.DARK_GREY
             Triggered = Rgb.GREEN_BLINK
 
