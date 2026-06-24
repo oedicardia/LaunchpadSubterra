@@ -112,6 +112,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._last_press_time = 0.0  # Timestamp for double-click detection
 		self._suppress_toggle_release = False
 		self._delete_action_on_release = False
+		self._skip_copy_release = False
+		self._duplicate_pending = False
 		self._update_copy_paste_button_state()
 
 		# Length mode
@@ -2294,7 +2296,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					identify_sender=True
 				)
 
-
 	def _clip_toggle_button_value(self, value, sender):
 		assert (self._clip_toggle_button != None)
 		assert (value in range(128))
@@ -2302,19 +2303,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		clip_slot = self.song().view.highlighted_clip_slot
 
 		if (self.is_enabled() and clip_slot is not None and clip_slot.has_clip):
+			# CRITICAL: If we are waiting for Copy release, DO NOT toggle on Toggle release
+			if hasattr(self, '_duplicate_pending') and self._duplicate_pending:
+				return # Just ignore this release event.
 
-			# Only act on Release
+			# Only act on Release for normal toggling
 			if (value == 0 and sender.is_momentary()) or (not sender.is_momentary()):
 
-				# --- CHECK FOR DUPLICATE SUPPRESSION ---
-				# Check if the parent (StepSequencer) has the flag set
+				# --- CHECK FOR DUPLICATE SUPPRESSION (from previous duplicate attempt) ---
 				if hasattr(self, '_step_sequencer') and self._step_sequencer:
 					if hasattr(self._step_sequencer, '_suppress_toggle_release') and \
 							getattr(self._step_sequencer, '_suppress_toggle_release', False):
-						# A duplicate just happened! Skip the toggle.
-						# Reset the flag so normal toggling works next time
 						self._step_sequencer._suppress_toggle_release = False
-						# Optional: Show a message? "Skipped toggle"
 						return
 
 				# Normal Toggle Logic
@@ -2326,6 +2326,28 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._control_surface.show_message("clip playing")
 
 				self._control_surface.schedule_message(1, self._update_clip_toggle_button)
+
+			# --- NEW LOGIC: DETECT TOGGLE PRESS WHILE COPY IS HELD ---
+			elif value > 0:  # On Press of Toggle
+				if hasattr(self, '_mode_copy_paste_button') and self._mode_copy_paste_button:
+					if self._mode_copy_paste_button.is_pressed():
+						# Both buttons held -> TRIGGER DUPLICATE IMMEDIATELY
+						current_mode = self._mode
+
+						if current_mode == STEPSEQ_MODE_NOTES:
+							self._duplicate_clip_to_next_slot()
+
+							# Set suppression for Toggle release
+							if hasattr(self, '_step_sequencer') and self._step_sequencer:
+								if not hasattr(self._step_sequencer, '_suppress_toggle_release'):
+									self._step_sequencer._suppress_toggle_release = False
+								self._step_sequencer._suppress_toggle_release = True
+
+							# Prevent Copy release from doing anything
+							self._skip_copy_release = True
+							return
+
+					# If Copy is NOT held, proceed normally (no change)
 
 
 	def _remove_highlighted_clip_slot_listener(self):
@@ -2999,27 +3021,83 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			current_mode = self._mode
 			now = time.time()
 
+			# --- FIX 2: PROHIBIT DURING ANIMATIONS ---
+			# If velocity or length animation is running, ignore copy/paste buttons
+			if self._velocity_wait_animation or self._length_wait_animation:
+				return
+
+			# --- FIX 1 & SAFETY: MODE CHECK ---
+			# If not in Notes mode, we do nothing EXCEPT potentially updating the LED.
+			# We DO NOT clear the buffer here. The buffer persists for the next session in Notes mode.
+			if current_mode != STEPSEQ_MODE_NOTES:
+				# Update LED to show Dim (not armed) if not in Notes mode?
+				# Or keep it On if data exists? Let's keep it On to remind user they have data.
+				if self._paste_armed and self._copied_grid_data:
+					# Keep it On
+					pass
+				else:
+					self._update_copy_paste_button_state()
+
+				# CRITICAL: Do NOT clear _copied_grid_data or _paste_armed here!
+				# Just exit.
+				return
+
+			# --- FIX: Skip if triggered via Toggle Sequence (Scenario B) ---
+			if self._skip_copy_release:
+				self._skip_copy_release = False
+				return
+
 			# --- PRESS EVENT (value > 0) ---
 			if value > 0:
-				# Check for Double Click Detection based on PREVIOUS press time
-				is_double_click = (
-					current_mode == STEPSEQ_MODE_NOTES and
-					(now - self._last_press_time) < 0.25
-				)
+				# Check if Toggle is already held
+				is_toggle_held = False
+				if hasattr(self, '_clip_toggle_button') and self._clip_toggle_button:
+					if self._clip_toggle_button.is_pressed():
+						is_toggle_held = True
 
-				# Store state for release
-				if is_double_click:
+				if is_toggle_held:
+					# Enter "Pending" state
+					self._duplicate_pending = True
+					return
+
+				# DOUBLE CLICK DETECTION LOGIC (On Second Press)
+				if (now - self._last_press_time) < 0.25:
 					self._delete_action_on_release = True
 				else:
 					self._delete_action_on_release = False
 
-				# Update last press time for next click
 				self._last_press_time = now
 				return
 
 			# --- RELEASE EVENT (value == 0) ---
 
-			# 1. Handle Duplicate (Simultaneous Hold)
+			# 1. Check Pending State (Duplicate Scenario A)
+			if self._duplicate_pending:
+				self._duplicate_pending = False
+				self._duplicate_clip_to_next_slot()
+				if hasattr(self, '_step_sequencer') and self._step_sequencer:
+					if not hasattr(self._step_sequencer, '_suppress_toggle_release'):
+						self._step_sequencer._suppress_toggle_release = False
+					self._step_sequencer._suppress_toggle_release = True
+				return
+
+			# 2. Handle Delete (Double Click Detected on Press)
+			if self._delete_action_on_release:
+				self._delete_action_on_release = False
+				# Clear buffer ONLY on successful delete (optional, but good practice to clear after delete)
+				# Or keep it? Usually delete clears the view, so buffer might be stale?
+				# Let's clear buffer on delete to avoid pasting deleted notes.
+				self._paste_armed = False
+				self._copied_grid_data = None
+				self._update_copy_paste_button_state()
+
+				if current_mode == STEPSEQ_MODE_NOTES:
+					self._control_surface.show_message("Erase Page")
+					self._delete_notes_in_current_page()
+					self.update()
+				return
+
+			# 3. Safety Check: Is Toggle held at release? (Redundant but safe)
 			duplicate_trigger = False
 			if hasattr(self, '_clip_toggle_button') and self._clip_toggle_button:
 				if self._clip_toggle_button.is_pressed():
@@ -3034,34 +3112,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._step_sequencer._suppress_toggle_release = True
 				return
 
-			# 2. Handle Delete (Double Click Detected on Press)
-			if self._delete_action_on_release:
-				self._paste_armed = False
-				self._copied_grid_data = None
-				self._update_copy_paste_button_state()
-
-				if current_mode == STEPSEQ_MODE_NOTES:
-					self._control_surface.show_message("Erase Page")
-					self._delete_notes_in_current_page()
-					self.update()
-
-				# Reset flag immediately
-				self._delete_action_on_release = False
-				return
-
-			# 3. Handle Copy / Paste (Normal Single Press)
+			# 4. Normal Copy / Paste Logic
 			if current_mode == STEPSEQ_MODE_NOTES:
 				if self._paste_armed:
-					# PASTE
 					if self._copied_grid_data:
 						self._paste_notes_from_buffer()
 						self._control_surface.show_message("Pasted (%d notes)" % len(self._copied_grid_data))
 
+					# Clear buffer AFTER pasting
 					self._copied_grid_data = None
 					self._paste_armed = False
 					self._update_copy_paste_button_state()
 				else:
-					# COPY (ARM)
 					self._copy_notes_to_buffer()
 					if self._copied_grid_data:
 						self._paste_armed = True
@@ -3069,10 +3131,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._update_copy_paste_button_state()
 					else:
 						self._control_surface.show_message("Nothing to copy")
-			else:
-				if self._paste_armed:
-					self._paste_armed = False
-					self._update_copy_paste_button_state()
+			# Else: Not in Notes mode (handled by global check above)
 
 		else:
 			if self._mode_copy_paste_button:
@@ -3343,8 +3402,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		try:
 			dst_clip.select_all_notes()
 			dst_clip.replace_selected_notes(tuple(note_tuples))
-			self._control_surface.show_message("Duplicated to New Scene! (%d notes)" % len(note_tuples))
-		except Exception:
+
+			# >>>>> NEW CODE STARTS HERE <<<<<
+			# Highlight the new clip slot so the user sees it immediately
+			# This works for both existing slots and newly created scenes
+			if hasattr(song, 'view'):
+				song.view.highlighted_clip_slot = next_clip_slot
+			# >>>>> NEW CODE ENDS HERE <<<<<
+
+			self._control_surface.show_message("Duplicated! (%d notes)" % len(note_tuples))
+
+		except Exception as e:
+			self._control_surface.log_message(f"[DUP] Application Error: {e}")
 			self._control_surface.show_message("Duplication Failed")
 
 	# UTILS
