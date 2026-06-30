@@ -1,3 +1,4 @@
+#LoopSelectorComponent.py
 import time
 
 from .SequencerConstants import RESOLUTION_MAP
