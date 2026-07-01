@@ -1,4 +1,6 @@
+#SepSequencerComponent.py
 import Live
+
 
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent

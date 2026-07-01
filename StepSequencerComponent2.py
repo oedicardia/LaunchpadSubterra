@@ -2,34 +2,39 @@
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement
-from .SequencerConstants import (RESOLUTION_NAMES,
-    STEPSEQ_MODE_NOTES,
-    STEPSEQ_MODE_NOTES_OCTAVES,
+from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
+	STEPSEQ_MODE_NOTES,
+	STEPSEQ_MODE_NOTES_OCTAVES,
 	STEPSEQ_MODE_OCTAVE_OVERVIEW,
-    STEPSEQ_MODE_COPY_PASTE,
-    STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
-    STEPSEQ_MODE_STEP_LENGTH_EDITOR,
-    STEPSEQ_MODE_VERTICAL_VELOCITY,
-    STEPSEQ_MODE_VERTICAL_LENGTH,
+	STEPSEQ_MODE_COPY_PASTE,
+	STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
+	STEPSEQ_MODE_STEP_LENGTH_EDITOR,
+	STEPSEQ_MODE_VERTICAL_VELOCITY,
+	STEPSEQ_MODE_VERTICAL_LENGTH,
 )
 from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
 from .TrackControllerComponent import TrackControllerComponent
-from random import randrange
 import time
 from random import uniform
 
-import os           # <--- ADD THIS LINE
-import json         # (Add this if not present)
-from pathlib import Path # (Optional but recommended for cleaner paths)
+import json
+from pathlib import Path
+import hashlib
+import os                  # Used in _load_metadata_cache()
 
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
 DEBUG_LOGGING = True  # Set to False for release
 
 
+
 class ClipMetadataManager:
+	# =========================== CONSTANTS ===========================
+	ID_TAG_PREFIX = '[LUX:'
+	ID_TAG_SUFFIX = ']'
+
 	def __init__(self, surface):
 		self.surface = surface
 		try:
@@ -37,155 +42,809 @@ class ClipMetadataManager:
 		except AttributeError:
 			self.path = Path(__file__).parent / "launchpad_clip_metadata.json"
 
-		self.cache = {}
+		self.cache = {"clips": {}, "version": 1}
+
+		# Track pending operations safely
+		self._pending_renames = []  # [(clip_id, new_name, old_name)]
+		self._renamed_clips = {}    # {clip_weak_ref_key: clip_id}
+
+		self._undo_listener_registered = False
+
 		self._load_cache()
+		self._register_undo_listener()
+		self._try_process_pending_operations()
+
+	def _register_undo_listener(self):
+		"""Register to listen for undo stack changes - fires between frames."""
+		if self._undo_listener_registered:
+			return
+
+		try:
+			song = self.surface.song()
+			song.add_undo_stack_change_listener(self._on_undo_state_changed)
+			self._undo_listener_registered = True
+			if DEBUG_LOGGING:
+				self.surface.log_message("[UNDO_LISTENER] Registered successfully")
+		except Exception as e:
+			self.surface.log_message(f"[UNDO_LISTENER] Registration failed: {e}")
+
+	def _unregister_undo_listener(self):
+		"""Clean up undo listener on disconnect."""
+		if not self._undo_listener_registered:
+			return
+
+		try:
+			song = self.surface.song()
+			song.remove_undo_stack_change_listener(self._on_undo_state_changed)
+			self._undo_listener_registered = False
+		except:
+			pass
 
 	def _load_cache(self):
 		if self.path.exists():
 			try:
 				with open(self.path, 'r') as f:
-					self.cache = json.load(f)
+					loaded = json.load(f)
+					if isinstance(loaded, dict) and "clips" in loaded:
+						self.cache = loaded
+					else:
+						self.cache["clips"] = loaded
+						self.cache["version"] = 1
+
+				# Post-load migration check
+				self._migrate_old_format()
+
+				if DEBUG_LOGGING:
+					self.surface.log_message(f"[CACHE_LOAD] Loaded {len(self.cache.get('clips', {}))} entries")
 			except Exception as e:
-				self.surface.log_message(f"[Meta] Failed to load: {e}")
-				self.cache = {}
+				self.surface.log_message(f"[Cache Load Error] {e}")
+				self.cache = {"clips": {}, "version": 1}
+		else:
+			self.cache = {"clips": {}, "version": 1}
 
 	def _save_cache(self):
+		"""Always save to disk immediately."""
 		try:
 			with open(self.path, 'w') as f:
 				json.dump(self.cache, f, indent=2)
+			if DEBUG_LOGGING:
+				entry_count = len(self.cache.get("clips", {}))
+				self.surface.log_message(f"[CACHE_SAVE] File updated, {entry_count} entries persisted")
 		except Exception as e:
-			self.surface.log_message(f"[Meta] Save failed: {e}")
+			self.surface.log_message(f"[Save Failed] {e}")
 
-	def get_track_and_slot_indices(self, clip):
-		"""Get reliable track index and slot index. Returns (-1,-1) if unavailable."""
+	def _migrate_old_format(self):
+		"""Convert old flat JSON structure to new nested format."""
+		clips_data = self.cache.get("clips", {})
+		migrated = False
+
+		for key, value in list(clips_data.items()):
+			if isinstance(value, dict) and "settings" in value:
+				continue  # Already in new format
+			elif isinstance(value, dict):
+				# Old flat format - wrap settings
+				self.cache["clips"][key] = {
+					"settings": value,
+					"created_at": time.time(),
+					"updated_at": time.time(),
+					"track_index": -1,
+					"slot_index": -1
+				}
+				migrated = True
+
+		if migrated:
+			self._save_cache()
+
+	# =========================== UNDO STACK PROCESSING ===========================
+
+	def _on_undo_state_changed(self):
+		"""Fires after every Live operation - perfect timing for safe property changes."""
+		self._try_process_pending_operations()
+
+	def _try_process_pending_operations(self):
+		"""Attempt to apply pending renames now that we're between callbacks."""
+		processed = []
+
+		for i, pending_op in reversed(list(enumerate(self._pending_renames))):
+			clip_id, target_name, clip_object_id = pending_op
+
+			try:
+				# Retrieve original clip reference
+				clip_obj = self._get_clip_by_object_id(clip_object_id)
+
+				if not clip_obj or not hasattr(clip_obj, 'name'):
+					# Clip was deleted or is invalid
+					processed.append(i)
+					continue
+
+				# Safe to rename now!
+				actual_clip_id = self.strip_clip_id_tag(getattr(clip_obj, 'name', ''))[1]
+
+				if actual_clip_id != clip_id:
+					# Rename is still needed
+					try:
+						clip_obj.name = target_name
+						processed.append(i)
+
+						if DEBUG_LOGGING:
+							self.surface.log_message(f"[RENAMED] '{target_name}' applied via undo callback")
+					except RuntimeError:
+						# Still blocked - keep waiting
+						pass
+				else:
+					# Name already correct (maybe manual edit?)
+					processed.append(i)
+
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self.surface.log_message(f"[RENAME_PROCESS_ERROR] {e}")
+				processed.append(i)  # Drop this operation anyway
+
+		# Remove processed items from queue
+		for idx in sorted(processed, reverse=True):
+			del self._pending_renames[idx]
+
+		# Update weak reference tracking
+		self._cleanup_stale_clip_references()
+
+	# =========================== CLIP IDENTIFICATION ===========================
+
+	def ensure_clip_has_id(self, clip):
+		"""Main entry point - ensures clip is tracked and has an ID."""
+		if not clip:
+			return None
+
+		try:
+			# Step 1: Try position-based identification (fast, reliable)
+			primary_id = self._identify_clip_by_position(clip)
+
+			if primary_id:
+				# Validate ID exists in cache, create if missing
+				if primary_id not in self.cache.get("clips", {}):
+					self._create_or_validate_cache_entry(primary_id, clip)
+				return primary_id
+
+			# Step 2: Fallback - generate unique ID and mark for renaming
+			temp_id = self._generate_temporary_id(clip)
+
+			# Queue rename to happen during next undo event
+			current_name = getattr(clip, 'name', '') or ''
+			new_name = self.inject_clip_id_tag(current_name, temp_id)
+
+			clip_object_id = id(clip)
+			self._pending_renames.append((temp_id, new_name, clip_object_id))
+			self._store_clip_reference(clip_object_id, clip)
+
+			if DEBUG_LOGGING:
+				self.surface.log_message(f"[QUEUED_RENAME] Will rename to '{new_name}' via undo callback")
+
+			return temp_id
+
+		except Exception as e:
+			import traceback
+			self.surface.log_message(f"[CLIP_ID_ERROR] {e}\n{traceback.format_exc()}")
+			return None
+
+	def _identify_clip_by_position(self, clip):
+		"""Most stable identification method - uses track/slot position."""
+		track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+
+		if track_idx < 0 or slot_idx < 0:
+			return None
+
+		# Create composite ID from position
+		content_hash = self._hash_clip_content(clip)
+		position_based_id = f"POS_T{track_idx}_S{slot_idx}_{content_hash[:8]}"
+
+		# Verify this matches cached entry by checking content hash hasn't changed
+		if position_based_id in self.cache.get("clips", {}):
+			cached = self.cache["clips"][position_based_id]
+			cached_hash = cached.get("content_hash", "")
+			if cached_hash == content_hash:
+				return position_based_id  # Match confirmed
+
+		# Hash mismatch or no entry - need fresh identification
+		return position_based_id
+
+	def _hash_clip_content(self, clip):
+		"""Creates a fingerprint from clip's note structure."""
+		note_signature = ""
+		try:
+			if hasattr(clip, 'notes'):
+				notes = list(clip.notes)[:16]  # Limit for performance
+				for n in notes:
+					pitch = getattr(n, 'pitch', 0)
+					time_pos = getattr(n, 'start_time', 0)
+					duration = getattr(n, 'duration', 0)
+					note_signature += f"{pitch}_{int(time_pos*100)}_{int(duration*100)}_"
+
+			if note_signature:
+				return hashlib.md5(note_signature.encode()).hexdigest()
+			else:
+				return "empty_clip"
+		except:
+			return "unknown_hash"
+
+	def _get_current_track_slot_indices_safe(self, clip):
+		"""Vector-safe location lookup."""
 		if not clip:
 			return -1, -1
 
 		try:
-			# First try direct parent chain navigation
 			parent = clip.canonical_parent
+			track = None
 			while parent:
 				p_type = type(parent).__name__
 				if p_type == 'Track':
 					track = parent
 					break
 				elif p_type == 'Song':
-					# Hit song without finding track explicitly
-					track = None
 					break
-				else:
-					parent = getattr(parent, 'canonical_parent', None)
-			else:
-				track = None
+				parent = getattr(parent, 'canonical_parent', None)
 
-			if track is None:
-				# CRITICAL FIX: Use song.tracks list instead
-				try:
-					song = track.canonical_parent if track else clip.canonical_parent
-					while song and type(song).__name__ != 'Song':
-						song = getattr(song, 'canonical_parent', None)
+			if not track:
+				return -1, -1
 
-					if song:
-						tracks_list = song.tracks
-						track_index = tracks_list.index(track) if track in tracks_list else -1
+			song = None
+			parent2 = track.canonical_parent
+			while parent2:
+				if type(parent2).__name__ == 'Song':
+					song = parent2
+					break
+				parent2 = getattr(parent2, 'canonical_parent', None)
 
-						# Now find slot index
-						if track_index >= 0:
-							slot_index = -1
-							for i, slot in enumerate(track.clip_slots):
-								if slot.has_clip and slot.clip == clip:
-									slot_index = i
-									break
+			if not song:
+				return -1, -1
 
-							return track_index, slot_index
-				except Exception as e:
-					if DEBUG_LOGGING:
-						self.surface.log_message(f"[Index Error] Song traversal failed: {e}")
+			tracks_list = list(song.tracks)
+			track_index = -1
+			for i, t in enumerate(tracks_list):
+				if t == track:
+					track_index = i
+					break
 
-			return -1, -1
+			if track_index < 0:
+				return -1, -1
+
+			slot_index = -1
+			clip_slots_list = list(track.clip_slots)
+			for i, slot in enumerate(clip_slots_list):
+				if slot.has_clip and getattr(slot, 'clip', None) == clip:
+					slot_index = i
+					break
+
+			return track_index, slot_index
+
 		except Exception as e:
 			if DEBUG_LOGGING:
-				self.surface.log_message(f"[Index Error] {e}")
+				self.surface.log_message(f"[LOCATION_INDEX_ERROR] {e}")
 			return -1, -1
 
-	def get_key(self, clip):
-		"""Creates unique string ID. Prioritizes stable identifiers."""
+	def _create_or_validate_cache_entry(self, clip_id, clip):
+		"""Create new entry or validate existing one."""
+		if clip_id not in self.cache["clips"]:
+			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+
+			self.cache["clips"][clip_id] = {
+				"settings": {},
+				"created_at": time.time(),
+				"updated_at": time.time(),
+				"track_index": track_idx,
+				"slot_index": slot_idx,
+				"track_name": "",
+				"clip_name_original": getattr(clip, 'name', '').split(self.ID_TAG_PREFIX)[0].strip(),
+				"content_hash": self._hash_clip_content(clip)
+			}
+
+			# Extract and store track name
+			if track_idx >= 0:
+				try:
+					song = self.surface.song()
+					tracks_list = list(song.tracks)
+					if track_idx < len(tracks_list):
+						self.cache["clips"][clip_id]["track_name"] = tracks_list[track_idx].name
+				except:
+					pass
+
+			self._save_cache()
+
+	def _generate_temporary_id(self, clip):
+		"""Generate temporary ID for untracked clips."""
+		import uuid
+		content_hash = self._hash_clip_content(clip)
+		return f"TMP_{uuid.uuid4().hex[:6]}_{content_hash[:4]}"
+
+	# =========================== WEAK REFERENCE TRACKING ===========================
+
+	def _store_clip_reference(self, object_id, clip):
+		"""Store weak reference to clip for later retrieval."""
+		import weakref
+		try:
+			weak_ref = weakref.ref(clip)
+			self._renamed_clips[str(object_id)] = weak_ref
+		except TypeError:
+			# Some objects can't be weak-referenced - store object_id only
+			self._renamed_clips[str(object_id)] = None
+
+	def _get_clip_by_object_id(self, object_id):
+		"""Retrieve clip from stored weak reference."""
+		ref = self._renamed_clips.get(str(object_id))
+		if ref is None:
+			return None
+		elif callable(ref):
+			# It's a weakref
+			return ref()
+		else:
+			return None
+
+	def _cleanup_stale_clip_references(self):
+		"""Remove expired weak references."""
+		stale_keys = []
+		for key, ref in self._renamed_clips.items():
+			if ref is not None and callable(ref):
+				if ref() is None:
+					# Object was garbage collected
+					stale_keys.append(key)
+
+		for key in stale_keys:
+			del self._renamed_clips[key]
+
+	# =========================== RENAME UTILITIES ===========================
+
+	def strip_clip_id_tag(self, clip_name):
+		"""Removes [LUX:id] suffix from clip name."""
+		if not clip_name:
+			return clip_name, None
+
+		last_bracket = clip_name.rfind(self.ID_TAG_SUFFIX)
+		if last_bracket != -1:
+			prefix = clip_name[:last_bracket].strip()
+			potential_tag = clip_name[last_bracket:]
+			if potential_tag.startswith(self.ID_TAG_PREFIX) and len(potential_tag) > len(self.ID_TAG_PREFIX) + len(self.ID_TAG_SUFFIX):
+				extracted_id = potential_tag[len(self.ID_TAG_PREFIX):-len(self.ID_TAG_SUFFIX)]
+				return prefix, extracted_id
+		return clip_name, None
+
+	def inject_clip_id_tag(self, clip_name, clip_id):
+		"""Adds [LUX:id] suffix to clip name."""
+		if not clip_name:
+			return f"{self.ID_TAG_PREFIX}{clip_id}{self.ID_TAG_SUFFIX}"
+
+		existing_name, existing_id = self.strip_clip_id_tag(clip_name)
+		if existing_id:
+			return clip_name  # Already tagged
+
+		return f"{existing_name} {self.ID_TAG_PREFIX}{clip_id}{self.ID_TAG_SUFFIX}"
+
+	def generate_new_clip_id(self):
+		"""Generates a unique hex ID for a clip."""
+		import uuid
+		return uuid.uuid4().hex[:8]
+
+	# =========================== SYNC & CLEANUP ===========================
+
+	def synchronize_all_clip_locations(self):
+		"""Call this when tracks/scenes change to update all cached locations AND remove orphans."""
+		clips_dict = self.cache.get("clips", {})
+		total_entries = len(clips_dict)
+		updated_count = 0
+		deleted_count = 0
+
+		try:
+			song = self.surface.song()
+			existing_clip_ids = set()
+
+			# === SCAN ALL CURRENT CLIPS IN THE SONG ===
+			for track_idx, track in enumerate(list(song.tracks)):
+				for slot_idx, slot in enumerate(list(track.clip_slots)):
+					if slot.has_clip:
+						clip = slot.clip
+
+						# Check if this clip has our ID tag
+						_, clip_id = self.strip_clip_id_tag(getattr(clip, 'name', ''))
+
+						if clip_id:
+							existing_clip_ids.add(clip_id)
+
+							# Update location info if changed
+							if clip_id in clips_dict:
+								entry = clips_dict[clip_id]
+								old_track = entry.get("track_index", -1)
+								old_slot = entry.get("slot_index", -1)
+
+								if track_idx != old_track or slot_idx != old_slot:
+									entry["track_index"] = track_idx
+									entry["slot_index"] = slot_idx
+									entry["updated_at"] = time.time()
+
+									# Update track name
+									try:
+										entry["track_name"] = track.name
+									except:
+										pass
+
+									updated_count += 1
+									if DEBUG_LOGGING:
+										self.surface.log_message(
+											f"[SYNC_MOVE] {clip_id}: T{old_track}:{old_slot} → T{track_idx}:{slot_idx}"
+										)
+						else:
+							# Clip without tag - check by content hash for legacy support
+							content_hash = self._hash_clip_content(clip)
+							for cid, entry in list(clips_dict.items()):
+								if entry.get("content_hash") == content_hash and \
+										entry.get("clip_name_original", "").lower() == \
+										getattr(clip, 'name', '').lower():
+									# Found match - add tag now!
+									existing_clip_ids.add(cid)
+									new_name = self.inject_clip_id_tag(clip.name, cid)
+
+									clip_object_id = id(clip)
+									self._pending_renames.append((cid, new_name, clip_object_id))
+									self._store_clip_reference(clip_object_id, clip)
+
+									if DEBUG_LOGGING:
+										self.surface.log_message(f"[SYNC_ADD_TAG] Added tag to '{clip.name}'")
+									break
+
+			# === FIND ORPHANED ENTRIES (CLIPS THAT WERE DELETED) ===
+			# Only delete TEMP_/FALLBACK_ entries by default to prevent data loss
+			# Uncomment below line if you want AGGRESSIVE cleanup (dangerous!)
+			# all_orphaned = [cid for cid in clips_dict if cid not in existing_clip_ids]
+
+			orphaned_ids = []
+			for cid in clips_dict:
+				if cid not in existing_clip_ids:
+					# Safety: Only auto-delete untagged/temporary entries
+					if cid.startswith("TMP_") or cid.startswith("FALLBACK_"):
+						orphaned_ids.append(cid)
+						deleted_count += 1
+					elif DEBUG_LOGGING:
+						# Warn about potential orphan but don't delete
+						self.surface.log_message(
+							f"[ORPHAN_DETECTED] {cid} exists in cache but clip not found (preserved for safety)"
+						)
+
+			# Remove identified orphans
+			for oid in orphaned_ids:
+				del clips_dict[oid]
+
+			# Save if anything changed
+			if updated_count > 0 or deleted_count > 0:
+				self._save_cache()
+				if DEBUG_LOGGING:
+					self.surface.log_message(
+						f"[SYNC_COMPLETE] Updated {updated_count}/{total_entries}, removed {deleted_count} orphans"
+					)
+
+		except Exception as e:
+			if DEBUG_LOGGING:
+				import traceback
+				self.surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
+
+	# =========================== SAVE / LOAD SETTINGS ===========================
+
+	def get_settings(self, clip):
+		"""Retrieve settings for clip."""
+		clip_id = self.ensure_clip_has_id(clip)
+		if clip_id and clip_id in self.cache.get("clips", {}):
+			return self.cache["clips"][clip_id].get("settings", {})
+		return None
+
+	def save_settings(self, clip, settings_dict):
+		"""Save settings for clip."""
+		if not clip:
+			return False
+
+		clip_id = self.ensure_clip_has_id(clip)  # Returns clip_id or None
+
+		if clip_id and clip_id in self.cache.get("clips", {}):
+			try:
+				self.cache["clips"][clip_id]["settings"] = settings_dict
+				self.cache["clips"][clip_id]["updated_at"] = time.time()
+
+				# Also sync location
+				track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+				if track_idx >= 0 and slot_idx >= 0:
+					self.cache["clips"][clip_id]["track_index"] = track_idx
+					self.cache["clips"][clip_id]["slot_index"] = slot_idx
+
+				self._save_cache()
+				return True
+			except KeyError as ke:
+				self.surface.log_message(f"[SAVE_KEY_ERROR] {ke}")
+				return False
+		else:
+			self.surface.log_message("[SAVE_WARN] Clip entry not found, cannot save")
+			return False
+
+	def save_clip_to_json(self, clip, params_dict):
+		"""
+        Save clip settings to JSON with multiple lookup keys for robustness.
+
+        Creates THREE reference points:
+        1. By original creation position (stable historical reference)
+        2. By current position (fast runtime lookup)
+        3. By content hash (verification/recovery anchor)
+        """
+		if not clip or not hasattr(clip, 'name'):
+			return False
+
+		try:
+			# Get identifiers
+			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+			content_hash = self._hash_clip_content(clip)
+
+			# Generate stable unique key
+			base_key = f"{track_idx}:{slot_idx}"
+			hash_suffix = content_hash[:12] if content_hash else "unknown"
+
+			# Three parallel keys for maximum flexibility
+			original_position_key = f"ORIG_{base_key}_{hash_suffix}"
+			current_position_key = f"CURRENT_{base_key}_{hash_suffix}"
+			content_only_key = f"HASH_{hash_suffix}"
+
+			# Build unified cache entry
+			entry = {
+				"settings": params_dict,
+				"track_index": track_idx,
+				"slot_index": slot_idx,
+				"content_hash": content_hash,
+				"clip_name_last_seen": getattr(clip, 'name', '').split(' [')[0].strip() if ' [' in getattr(clip, 'name',
+				                                                                                           '') else getattr(
+					clip, 'name', ''),
+				"original_creation_pos": f"T{track_idx}_S{slot_idx}",
+				"current_pos": f"T{track_idx}_S{slot_idx}",
+				"created_at": time.time(),
+				"updated_at": time.time(),
+				"metadata_version": 2  # Increment when format changes
+			}
+
+			# Store under all three keys for flexible lookup
+			clips_dict = self.cache.setdefault("clips", {})
+			clips_dict[original_position_key] = entry
+			clips_dict[current_position_key] = entry
+
+			# For content-only key, only keep ONE entry per hash (avoid bloat)
+			clips_dict[content_only_key] = entry
+
+			# Cleanup stale position keys (older than 5 minutes)
+			self._prune_outdated_position_keys(track_idx, slot_idx, hash_suffix)
+
+			# Persist
+			self._save_cache()
+
+			if DEBUG_LOGGING:
+				self.surface.log_message(
+					f"[JSON_SAVE] Stored clip under 3 keys (O/C/H) at T{track_idx}:S{slot_idx}"
+				)
+
+			return True
+
+		except Exception as e:
+			self.surface.log_message(f"[JSON_SAVE_ERROR] {e}")
+			return False
+
+	def _prune_outdated_position_keys(self, track_idx, slot_idx, hash_suffix):
+		"""Remove obsolete position references to prevent JSON bloat."""
+		clips_dict = self.cache.get("clips", {})
+		stale_keys = []
+
+		now = time.time()
+		age_threshold = 300  # 5 minutes
+
+		for key in list(clips_dict.keys()):
+			if key.startswith("POSITION_") and f"{track_idx}:{slot_idx}" in key:
+				entry = clips_dict[key]
+				if now - entry.get("updated_at", 0) > age_threshold:
+					stale_keys.append(key)
+
+		for key in stale_keys:
+			del clips_dict[key]
+
+	def recover_clip_settings_from_json(self, clip):
+		"""
+        Attempt to find stored settings in JSON despite missing/corrupted embedded tag.
+
+        Priority order:
+        1. Exact content-hash match (most reliable)
+        2. Track+slot match PLUS content-hash verification
+        3. Track+slot match ONLY (fallback - may need warnings)
+        """
 		if not clip:
 			return None
 
 		try:
-			# Normalize input
-			if hasattr(clip, 'has_clip'):
-				if not clip.has_clip:
-					return None
-				actual_clip = clip.clip
-			else:
-				actual_clip = clip
+			# Current clip identifiers
+			content_hash = self._hash_clip_content(clip)
+			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+			clips_dict = self.cache.get("clips", {})
 
-			# Try TRACK/SLOT indices first (MOST STABLE)
-			track_idx, slot_idx = self.get_track_and_slot_indices(actual_clip)
-
-			# Get parent track
-			track_name = ""
-			parent = actual_clip.canonical_parent
-			while parent:
-				if type(parent).__name__ == 'Track':
-					track_name = getattr(parent, 'name', '')
-					break
-				parent = getattr(parent, 'canonical_parent', None)
-
-			clip_name = getattr(actual_clip, 'name', '') or 'UnnamedClip'
-
-			if track_idx >= 0 and slot_idx >= 0:
-				# ✓ STABLE: Uses track/slot position in arrangement
-				key_suffix = f"T{track_idx}:S{slot_idx}"
-			else:
-				# ✗ UNSTABLE: Falls back to object identity
+			# === STRATEGY 1: Exact content hash match ===
+			hash_key = f"HASH_{content_hash[:12]}"
+			if hash_key in clips_dict:
+				entry = clips_dict[hash_key]
 				if DEBUG_LOGGING:
 					self.surface.log_message(
-						"[WARN] Cannot determine track/slot indices - falling back to unstable ID")
-				key_suffix = str(id(actual_clip) % 100000)
+						f"[RECOVERY_SUCCESS] Found via HASH_MATCH for T{track_idx}:S{slot_idx}"
+					)
+				return entry.get("settings")
 
-			result = f"{track_name}::{clip_name}::{key_suffix}"
-			# Add logging to verify stability
+			# === STRATEGY 2: Position + hash verification ===
+			pos_keys = [key for key in clips_dict.keys() if f"T{track_idx}_S{slot_idx}" in key]
+
+			for key in pos_keys:
+				entry = clips_dict[key]
+				if entry.get("content_hash") == content_hash:
+					if DEBUG_LOGGING:
+						self.surface.log_message(
+							f"[RECOVERY_SUCCESS] Found via POS+HASH for T{track_idx}:S{slot_idx}"
+						)
+					return entry.get("settings")
+
+			# === STRATEGY 3: Position match ONLY (WARNING needed) ===
+			if pos_keys:
+				most_recent = max(pos_keys, key=lambda k: clips_dict[k].get("updated_at", 0))
+				entry = clips_dict[most_recent]
+
+				# WARNING: Could be wrong clip now residing in same slot!
+				if DEBUG_LOGGING:
+					self.surface.log_message(
+						f"[RECOVERY_WARNING] Found via POSITION_ONLY (potential false positive)"
+					)
+
+				# Optional: Store flag indicating "needs verification"
+				# We'll pass this info to caller via wrapper object
+
+				# Only return if user accepts risk (caller decides)
+				return {
+					"settings": entry.get("settings"),
+					"requires_verification": True,
+					"warning": f"This clip occupies slot T{track_idx}:S{slot_idx} but content differs from last saved snapshot."
+				}
+
+			# === NOTHING FOUND ===
 			if DEBUG_LOGGING:
-				self.surface.log_message(f"[KEY_GENERATED] '{result}' (stable={track_idx >= 0})")
-
-			return result
-		except Exception as e:
-			import traceback
-			self.surface.log_message(f"[Meta GETKEY_ERROR] {e}\n{traceback.format_exc()}")
+				self.surface.log_message(f"[RECOVERY_FAILED] No matching JSON entries found")
 			return None
 
+		except Exception as e:
+			self.surface.log_message(f"[RECOVERY_ERROR] {e}")
+			return None
 
-	def get(self, clip):
-		key = self.get_key(clip)
-		return self.cache.get(key) if key else None
+	def update_clip_location_in_json(self, clip):
+		"""Update JSON entry when clip moves to new track/slot."""
+		if not clip:
+			return False
 
-	def save(self, clip, data):
-		key = self.get_key(clip)
-		if key:
-			self.cache[key] = data
+		try:
+			# Find existing entry by content hash
+			content_hash = self._hash_clip_content(clip)
+			hash_key = f"HASH_{content_hash[:12]}"
+			clips_dict = self.cache.get("clips", {})
+
+			if hash_key not in clips_dict:
+				# New clip - save fresh entry
+				params_dict = {
+					'scale': 0, 'root_note': 0, 'display_octave': 2,
+					'resolution_index': 4, 'loop_block': 0, 'loop_page_offset': 0,
+					'clip_loop_start': 0.0, 'clip_loop_end': 16.0
+				}
+				self.save_clip_to_json(clip, params_dict)
+				return True
+
+			# Existing clip - update position tracking
+			entry = clips_dict[hash_key]
+			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+
+			# Update both current and original position records
+			entry["track_index"] = track_idx
+			entry["slot_index"] = slot_idx
+			entry["current_pos"] = f"T{track_idx}_S{slot_idx}"
+			entry["updated_at"] = time.time()
+
+			# Optionally update clip name reference if it changed
+			current_name = getattr(clip, 'name', '').split(' [')[0].strip()
+			if current_name != entry.get("clip_name_last_seen"):
+				entry["clip_name_last_seen"] = current_name
+
 			self._save_cache()
 
-	# --- NEW: CLEANUP ROUTINE ---
-	def cleanup_orphans(self, current_clips_info):
-		"""
-		Remove entries from cache that no longer exist.
-		current_clips_info: set of strings like "TrackName::ClipName::T#:S#"
-		"""
-		keys_to_remove = []
-		for key in self.cache.keys():
-			if key not in current_clips_info:
-				keys_to_remove.append(key)
+			if DEBUG_LOGGING:
+				self.surface.log_message(
+					f"[LOCATION_UPDATE] Moved to T{track_idx}:S{slot_idx} (hash verified)"
+				)
 
-		for k in keys_to_remove:
-			del self.cache[k]
+			return True
 
-		if keys_to_remove:
+		except Exception as e:
+			self.surface.log_message(f"[LOCATION_UPDATE_ERROR] {e}")
+			return False
+
+
+	def remove_clip_entry(self, clip):
+		"""Remove entry when clip is deleted."""
+		clip_id, _ = self.strip_clip_id_tag(getattr(clip, 'name', ''))
+		if clip_id and clip_id in self.cache.get("clips", {}):
+			del self.cache["clips"][clip_id]
 			self._save_cache()
 			if DEBUG_LOGGING:
-				self.surface.log_message(f"[Meta Cleanup] Removed {len(keys_to_remove)} orphan entries")
+				self.surface.log_message(f"[CLIP_DELETED] Removed entry for '{clip_id}'")
+
+	def _run_cleanup_check(self):
+		"""Lightweight verification - no heavy cleanup (done via observers)."""
+		if not hasattr(self, '_meta_manager') or not self._meta_manager:
+			return
+
+		try:
+			# Trigger sync scan (includes orphan detection)
+			self._meta_manager.synchronize_all_clip_locations()
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[VERIFICATION_SYNC] Completed background check")
+
+			# Reschedule next check (every 5 minutes for safety)
+			if hasattr(self._control_surface, 'schedule_message'):
+				self._control_surface.schedule_message(10, self._run_cleanup_check)
+
+		except Exception as e:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[CHECK_ERROR] {e}")
+
+			# Still reschedule
+			if hasattr(self._control_surface, 'schedule_message'):
+				self._control_surface.schedule_message(10, self._run_cleanup_check)
+
+
+	def _schedule_cleanup_check(self):
+		"""Schedule next cleanup check in 60 seconds."""
+		if hasattr(self._control_surface, 'schedule_message'):
+			self._control_surface.schedule_message(10, self._run_cleanup_check)
+
+
+
+	def cleanup_orphans(self, current_keys=None):
+		"""Remove orphaned entries from cache (clips no longer exist)."""
+		if current_keys is None:
+			# Collect all current valid clip IDs automatically
+			try:
+				song = self.surface.song()
+				current_keys = set()
+				for track_idx, track in enumerate(list(song.tracks)):
+					for slot_idx, slot in enumerate(list(track.clip_slots)):
+						if slot.has_clip:
+							clip = slot.clip
+							_, clip_id = self.strip_clip_id_tag(getattr(clip, 'name', ''))
+							if clip_id:
+								current_keys.add(clip_id)
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self.surface.log_message(f"[CLEANUP_KEYS_ERROR] {e}")
+				return
+
+		# Scan cache and collect orphans
+		orphans = []
+		cleaned = False
+
+		clips_dict = self.cache.get("clips", {})
+		for cid in list(clips_dict.keys()):
+			if cid not in current_keys:
+				# Only delete TEMP_ prefixed entries OR explicitly confirm deletion
+				# This prevents accidental loss of manually-created clips
+				if cid.startswith("TMP_") or cid.startswith("FALLBACK_"):
+					orphans.append(cid)
+					cleaned = True
+
+		# Remove orphans
+		for oid in orphans:
+			del clips_dict[oid]
+
+		if cleaned:
+			self._save_cache()
+			if DEBUG_LOGGING:
+				self.surface.log_message(f"[CLEANUP_ORPHANS] Removed {len(orphans)} entries: {orphans}")
+
+		return len(orphans)
 
 
 class MelodicNoteEditorComponent(ControlSurfaceComponent):
@@ -203,11 +862,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		try:
 			self._meta_manager = ClipMetadataManager(control_surface)
 			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[META] Manager initialized. Cache size: {len(self._meta_manager.cache)}")
-			self._cleanup_counter = 0
-			self._schedule_cleanup_check()
+				self._control_surface.log_message(
+					f"[META] Manager initialized. Cache size: {len(self._meta_manager.cache)}")
+
+			# Register observers for automatic sync
+			self._setup_observer_listeners()
 		except Exception as e:
-			self._control_surface.log_message(f"[META INIT ERROR] {e}")
+			self._control_surface.log_message(f"[META_INIT_ERROR] {e}")
 			self._meta_manager = None
 		# if self._meta_manager and DEBUG_LOGGING:
 		# 	test_clip_id = f"TEST::{self._meta_manager.get_key(None)}::0"
@@ -251,7 +912,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		# clip (rest)
 		self._clip = None
-		self._playhead = None
 		self._note_cache = []
 		self._force_update = True
 		self.song().view.add_selected_track_listener(self._on_selected_track_changed)
@@ -280,11 +940,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._scroll_pending_action = False
 
 		# quantization
-		self._quantization = 16
+		#self._quantization = 16
 
 		# Resolution
 		self._resolution = 16
-
 		# MODE
 		self._mode = STEPSEQ_MODE_NOTES
 
@@ -373,13 +1032,27 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message("[INIT] Initial state complete")
 
 	def disconnect(self):
+		# First save active clip state
+		if self._meta_manager and self._clip:
+			old_state = self._get_current_state_dict()
+			self._meta_manager.save_clip_to_json(self._clip, old_state)
+
+		# Remove observers before anything else
+		self._remove_observer_listeners()
+
+		# Clean up meta manager
+		if hasattr(self, '_meta_manager'):
+			self._meta_manager._unregister_undo_listener()
+			self._meta_manager = None
+
+		# Continue standard cleanup
 		self._remove_highlighted_clip_slot_listener()
 		self._remove_clip_slot_listener()
 		self._step_sequencer = None
-		# If you manually remove listeners here, ensure you loop to 8
+
 		if self._matrix != None:
 			for x in range(8):
-				for y in range(8): # Ensure this matches set_matrix
+				for y in range(8):
 					button = self._matrix.get_button(x, y)
 					try:
 						button.remove_value_listener(self._matrix_value)
@@ -395,6 +1068,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._notes_octaves = None
 		self._notes_lengths = None
 		self._clip = None
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[DISCONNECT] Cleanup complete")
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[DISCONNECT] Cleanup complete")
 	
 	
 	# def _remove_scale_listeners(self):
@@ -404,7 +1083,192 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	# 			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
 	# 	except RuntimeError:
 	# 		pass
-	
+
+	@property
+	def resolution_beats(self):
+		"""SAFE accessor - always returns valid beat value ≥ 0.001."""
+		val = getattr(self, '_resolution', 0.25)
+
+		# Handle case where accidentally stored as INDEX (0-7) instead of beats
+		if isinstance(val, (int, float)):
+			if val <= 0:
+				return 0.25  # Invalid, return safe default
+
+			# If looks like index (small integer), convert using RESOLUTION_MAP
+			if val >= 0 and val < 8 and isinstance(val, int):
+				from .SequencerConstants import RESOLUTION_MAP
+				try:
+					converted = float(RESOLUTION_MAP[val])
+					if converted > 0:
+						return converted
+				except:
+					pass
+
+			# Assume already beat value (our desired state)
+			return max(0.001, val)
+
+		# Unknown type - safest fallback
+		return 0.25
+
+	# =============================================================
+	# EMBEDDED METADATA TAG SYSTEM - PURE SUX FORMAT
+	# =============================================================
+
+	METADATA_PREFIX = "[SUX:"  # New universal tag format
+	METADATA_SUFFIX = "]"
+
+	def extract_embedded_parameters(self, clip_name):
+		"""
+        Extract parameter array from clip name tag [SUX:{scale;root;oct;res;blk;off;start;end}].
+
+        Args:
+            clip_name (str): Full clip name
+
+        Returns:
+            dict: Parsed parameters or None if no valid tag found
+        """
+		if not clip_name:
+			return None
+
+		try:
+			# Find tag
+			start_tag = clip_name.find(self.METADATA_PREFIX + "{")
+			if start_tag == -1:
+				return None
+
+			end_tag = clip_name.rfind("}")
+			if end_tag <= start_tag:
+				return None
+
+			param_string = clip_name[start_tag + len("{"): end_tag].strip()
+
+			# Parse semicolon-separated values
+			if ";" in param_string:
+				values = param_string.split(";")
+
+				# Ensure minimum length
+				while len(values) < 8:
+					values.append("0")
+
+				params = {
+					'scale': int(float(values[0])) % 12 if values[0] else 0,
+					'root_note': int(float(values[1])) % 12 if values[1] else 0,
+					'display_octave': max(0, min(15, int(float(values[2])))) if values[2] else 2,
+					'resolution_index': max(0, min(7, int(float(values[3])))) if values[3] else 4,
+					'loop_block': int(float(values[4])) if values[4] else 0,
+					'loop_page_offset': int(float(values[5])) if values[5] else 0,
+					'clip_loop_start': float(values[6]) if values[6] else 0.0,
+					'clip_loop_end': float(values[7]) if values[7] else 16.0
+				}
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_EXTRACT] Loaded params from SUX tag in clip name"
+					)
+				return params
+
+			return None
+
+		except (ValueError, IndexError) as e:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[TAG_EXTRACT_ERROR] {e}")
+			return None
+
+	def build_embedded_parameters_tag(self, params_dict):
+		"""
+        Construct the SUX metadata tag from parameter dictionary.
+
+        Format: [SUX:{scale;root_note;display_octave;resolution_index;loop_block;loop_page_offset;clip_loop_start;clip_loop_end}]
+
+        Returns:
+            str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
+        """
+		try:
+			values = [
+				str(int(params_dict.get('scale', 0))),
+				str(int(params_dict.get('root_note', 0))),
+				str(int(params_dict.get('display_octave', 2))),
+				str(int(params_dict.get('resolution_index', 4))),
+				str(int(params_dict.get('loop_block', 0))),
+				str(int(params_dict.get('loop_page_offset', 0))),
+				str(round(float(params_dict.get('clip_loop_start', 0.0)), 1)),
+				str(round(float(params_dict.get('clip_loop_end', 16.0)), 1))
+			]
+
+			param_string = ";".join(values)
+			return f"{self.METADATA_PREFIX}{{{param_string}}}"
+
+		except Exception as e:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}")
+			return self.METADATA_PREFIX + "{0;0;2;4;0;0;0.0;16.0}"
+
+	def update_clip_name_with_params(self, clip, params_dict):
+		"""
+        Update clip name by replacing existing SUX tag or appending new one.
+
+        Args:
+            clip: Ableton Live Clip object
+            params_dict: Parameters to encode
+
+        Returns:
+            bool: Success status
+        """
+		if not clip or not hasattr(clip, 'name'):
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[NAME_UPDATE] No clip/name available")
+			return False
+
+		try:
+			original_name = getattr(clip, 'name', '')
+
+			# Strip any existing SUX tags for freshness
+			clean_name = self.strip_metadata_tags(original_name)
+
+			# Build fresh tag
+			new_tag = self.build_embedded_parameters_tag(params_dict)
+
+			# Combine: keep original name portion, append new tag
+			if clean_name:
+				new_full_name = f"{clean_name} {new_tag}"
+			else:
+				new_full_name = new_tag
+
+			# Set on Live clip
+			clip.name = new_full_name
+
+			if DEBUG_LOGGING:
+				display_name = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
+				self._control_surface.log_message(f"[NAME_UPDATED] '{display_name}'")
+
+			return True
+
+		except RuntimeError as e:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[NAME_UPDATE_RUNTIME_ERROR] {e}")
+			return False
+
+	def strip_metadata_tags(self, clip_name):
+		"""
+        Remove all SUX metadata tags from clip name for cleanliness.
+
+        Args:
+            clip_name (str): Raw clip name
+
+        Returns:
+            str: Name without [...}] tags
+        """
+		if not clip_name:
+			return clip_name
+
+		import re
+
+		# Remove SUX formatted tags
+		cleaned = re.sub(r'\[SUX:\{[^}]*\}\]\s*$', '', clip_name).strip()
+
+		return cleaned
+
+
 	# def _register_scale_listeners(self):
 	# 	try:
 	# 		# Only register if we have access to the song object
@@ -436,133 +1300,190 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	# 		except (ValueError, AttributeError):
 	# 			pass
 
+
+	def _setup_observer_listeners(self):
+		"""Register for Live structural change notifications."""
+		try:
+			song = self.song()
+
+			# Track structure changes (add/remove/reorder tracks)
+			song.add_tracks_listener(self._on_tracks_changed)
+
+			# Scene structure changes (affect clip slot indexing)
+			song.add_scenes_listener(self._on_scenes_changed)
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[OBSERVERS] Registered track/scene listeners")
+
+		except Exception as e:
+			self._control_surface.log_message(f"[OBSERVER_REGISTRATION_ERROR] {e}")
+
+	def _remove_observer_listeners(self):
+		"""Unregister observers during disconnect to prevent memory leaks."""
+		try:
+			song = self.song()
+			song.remove_tracks_listener(self._on_tracks_changed)
+			song.remove_scenes_listener(self._on_scenes_changed)
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[OBSERVERS] Unregistered listeners")
+
+		except:
+			pass  # Ignore errors during shutdown
+
+	def _on_tracks_changed(self):
+		"""Called when tracks are added/removed/reordered."""
+		# Guard clause - skip if meta manager unavailable
+		if not hasattr(self, '_meta_manager') or not self._meta_manager:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[TRACKS_CHANGED] Skipping (no meta manager)")
+			return
+
+		try:
+			self._meta_manager.synchronize_all_clip_locations()
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[TRACKS_CHANGED] Full sync triggered")
+		except Exception as e:
+			if DEBUG_LOGGING:
+				import traceback
+				self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
+
+	def _on_scenes_changed(self):
+		"""Called when scenes are added/removed/reordered."""
+		if not hasattr(self, '_meta_manager') or not self._meta_manager:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[SCENES_CHANGED] Skipping (no meta manager)")
+			return
+
+		try:
+			self._meta_manager.synchronize_all_clip_locations()
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[SCENES_CHANGED] Full sync triggered")
+		except Exception as e:
+			if DEBUG_LOGGING:
+				import traceback
+				self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
+
 	def set_clip(self, clip):
-		# Normalize immediately (handles both Clip and ClipSlot)
+		"""Set current clip and load/restore its settings."""
+		# Normalize input (could be ClipSlot or Clip)
 		clip = self._normalize_clip(clip)
 
 		if clip is None:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[CLIP] Set: None (no clip)")
-			if self._clip is not None:
+			# Save previous clip state before clearing
+			if self._meta_manager and self._clip:
+				try:
+					old_state = self._get_current_state_dict()
+					self._meta_manager.save_clip_to_json(self._clip, old_state)
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[PREV_CLIP_SAVE_ERROR] {e}")
+
+			if self._clip:
 				self._init_data()
-				self._clip = None
-				self._force_update = True
-				self.update()
+			self._clip = None
+			self._force_update = True
+			self.update()
 			return
 
+		# Skip if same clip already selected
 		if self._clip == clip:
 			return
 
-		# === CRITICAL: Capture BOTH old clip ref AND state BEFORE resetting ===
-		old_clip_ref = None
-		old_clip_state = None
-		if self._clip is not None:
-			old_clip_ref = self._clip  # ← Save reference to OLD clip
+		# === PHASE 1: TRY LOAD EMBEDDED PARAMETER TAG FROM CLIP NAME FIRST ===
+		clip_params = None
+		settings_source = None
 
-			# VALIDATE old_clip_ref actually works before proceeding
-			has_name_attr = hasattr(old_clip_ref, 'name')
-			can_generate_key = False
-			if has_name_attr and self._meta_manager:
-				try:
-					temp_key = self._meta_manager.get_key(old_clip_ref)
-					if temp_key is not None:
-						can_generate_key = True
-				except Exception as key_err:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[VALIDATION ERROR] Key generation failed: {key_err}")
+		clip_params = self.extract_embedded_parameters(getattr(clip, 'name', ''))
 
-			if not has_name_attr:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[ERROR] Old clip missing 'name' attribute! Type={type(old_clip_ref)}")
-				old_clip_ref = None
-			elif not can_generate_key:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[WARNING] Cannot generate valid key for old clip. Will NOT save this transition.")
-				old_clip_ref = None  # Prevent attempted save that will fail silently
-			else:
-				# Read current values NOW while they're still valid
-				old_clip_state = self._get_current_state_dict()
+		if clip_params:
+			settings_source = "EMBEDDED_TAG"
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[CLIP_NAME_HAS_SUX_TAG] Using embedded params")
+		else:
+			# === PHASE 2: FALLBACK TO JSON RECOVERY WITH VERIFICATION ===
+			if hasattr(self._meta_manager, 'recover_clip_settings_from_json'):
+				json_result = self._meta_manager.recover_clip_settings_from_json(clip)
 
-			if old_clip_ref and DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[PREPARE SAVE] Ref name='{old_clip_ref.name if old_clip_ref else 'None'}, " +
-					f"Scale={old_clip_state['scale']}, Root={old_clip_state['root_note']}, Oct={old_clip_state['display_octave']}")
+				if json_result:
+					if isinstance(json_result, dict) and json_result.get("requires_verification"):
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[USER_ACTION_NEEDED] Settings recovered but need verification."
+							)
+						clip_params = json_result.get("settings")
+						settings_source = "JSON_UNVERIFIED"
+					else:
+						clip_params = json_result
+						settings_source = "JSON_MATCHED"
 
-		# === THEN init data and swap (resets everything) ===
-		self._init_data()
-		self._clip = clip  # ← Now points to NEW clip
+			if not clip_params:
+				# Completely new clip - use defaults
+				clip_params = self._get_current_state_dict()
+				settings_source = "DEFAULTS"
 
-		# === Restore NEW clip state if available ===
-		if clip is not None:
-			restored_data = self.get_clip_data(clip)
-			if restored_data:
-				self._restore_clip_metadata(restored_data)
-				if DEBUG_LOGGING:
-					self._control_surface.log_message("[RESTORE] Loaded saved data successfully")
-			else:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message("[RESTORE] No saved data for this clip, using defaults")
-
-		# === Finally, save OLD clip's state using OLD reference ===
-		if old_clip_state and old_clip_ref:
+		# === PHASE 3: SAVE PREVIOUS CLIP STATE TO JSON ===
+		if self._meta_manager and self._clip:
 			try:
-				# Get key BEFORE we lose the clip object
-				save_key = self._meta_manager.get_key(old_clip_ref) if self._meta_manager else None
-
-				if save_key is None:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[SKIP_SAVE] Key generation returned None for '{old_clip_ref.name}'")
-				else:
-					self.save_clip_data(old_clip_ref, old_clip_state)  # ← Use old_clip_ref!
-
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[COMMIT SAVE] Old clip '{old_clip_ref.name}' saved @ key='{save_key}'")
-
-						# VERIFY FILE BY READING CONTENT BACK
-						try:
-							if self._meta_manager and self._meta_manager.path.exists():
-								import json as json_module
-								with open(self._meta_manager.path, 'r') as f_verify:
-									verify_content = f_verify.read()
-
-								file_size = self._meta_manager.path.stat().st_size
-								self._control_surface.log_message(
-									f"[FILE VERIFICATION] Size: {file_size} bytes, Content preview: {verify_content[:150]}...")
-
-								# Parse JSON to confirm it's valid
-								try:
-									parsed = json_module.loads(verify_content)
-									entry_count = len(parsed.keys())
-									self._control_surface.log_message(
-										f"[JSON CHECK] Valid JSON with {entry_count} clip entries stored")
-								except json_module.JSONDecodeError as je:
-									self._control_surface.log_message(f"[JSON ERROR] File contains invalid JSON: {je}")
-
-						except Exception as verify_err:
-							self._control_surface.log_message(f"[VERIFICATION ERROR] {verify_err}")
-			except Exception as save_err:
-				self._control_surface.log_message(f"[SAVE EXCEPTION] Failed to save clip data: {save_err}")
-				import traceback
+				old_state = self._get_current_state_dict()
+				self._meta_manager.save_clip_to_json(self._clip, old_state)
+			except Exception as e:
 				if DEBUG_LOGGING:
-					self._control_surface.log_message(traceback.format_exc())
+					self._control_surface.log_message(f"[PREV_STATE_SAVE_ERROR] {e}")
 
-		# Update listeners and UI
-		if clip is not None:
-			self._register_clip_slot_listener()
+		# === PHASE 4: INITIALIZE NEW CLIP AND APPLY SETTINGS ===
+		self._clip = clip
+		self._init_data()
 
+		if clip_params:
+			try:
+				self.load_clip_settings(clip, clip_params)
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[RESTORED_FROM] {settings_source}")
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[LOAD_SETTINGS_ERROR] {e}")
+		else:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[DEFAULTS] Using factory defaults for new clip")
+
+		# === CRITICAL ADDITION: WRITE TAG TO CLIP NAME AFTER LOADING ===
+		# Even if loaded from JSON, ensure it's now embedded in the name
+		if self._meta_manager:
+			try:
+				current_state = self._get_current_state_dict()
+				added_track_slot_info = self._meta_manager._get_current_track_slot_indices_safe(clip) if hasattr(
+					self._meta_manager, '_get_current_track_slot_indices_safe') else (-1, -1)
+				current_state['track_index'] = added_track_slot_info[0]
+				current_state['slot_index'] = added_track_slot_info[1]
+
+				success = self.update_clip_name_with_params(clip, current_state)
+				if success:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[TAG_WRITTEN] Sux tag embedded in clip name")
+				else:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message("[TAG_WRITE_FAILED] Could not embed tag")
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[TAG_WRITE_ERROR] {e}")
+
+		# Mark initialization complete
+		self._initializing = False
+
+		# Register listeners and force UI refresh
+		self._register_clip_slot_listener()
 		self._force_update = True
 		self.update()
 
-		if DEBUG_LOGGING:
-			cname = clip.name.strip() if clip and clip.name else "(unnamed)"
-			tidx, sidx = self._meta_manager.get_track_and_slot_indices(clip) if self._meta_manager else (-1, -1)
-			# ✅ Fixed: lowercase tidx matches variable declaration above
-			self._control_surface.log_message(f"[CLIP] Set: {cname} @ T{tidx}:S{sidx}")
+		# Final debug logging
+		cname = getattr(clip, 'name', '(unnamed)').split(' [')[0][:30] if clip and clip.name else "(unnamed)"
+		tidx, sidx = self._meta_manager._get_current_track_slot_indices_safe(clip) if self._meta_manager else (-1, -1)
 
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[CLIP_SET] '{cname}' @ T{tidx}:S{sidx} (source={settings_source})"
+			)
 
 	def _get_simple_clip_key(self, clip):
 		"""Fallback: Simple key using object identity when get_key() fails."""
@@ -575,75 +1496,94 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""Returns current settings as dictionary WITHOUT modifying them."""
 		scale_val = 0
 		root_val = 0
-		resolution_val = 16
-		# NEW: Loop state variables
-		loop_block = -1
-		loop_page_offset = 0
-		clip_loop_start = 0.0
-		clip_loop_end = 0.0
+		resolution_index = 0
 
 		try:
 			if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
-				scale_val = getattr(self._step_sequencer._scale_selector, '_modus', 0)
-				root_val = getattr(self._step_sequencer._scale_selector, '_key', 0)
+				selector = self._step_sequencer._scale_selector
+				scale_val = getattr(selector, '_modus', 0)
+				root_val = getattr(selector, '_key', 0)
 
+			# === RESOLUTION HANDLING USING RESOLUTION_MAP ===
 			current_resolution = getattr(self, '_resolution', 16)
-			if isinstance(current_resolution, float):
-				resolution_lookup = {0.25: 16, 0.5: 8, 1.0: 4, 0.125: 32}
-				resolution_val = resolution_lookup.get(current_resolution, int(1 / current_resolution))
-			else:
-				resolution_val = int(current_resolution)
 
-			# ========== LOOP PARAMETERS ==========
-			# Access LoopSelectorComponent through parent
+			from .SequencerConstants import RESOLUTION_MAP
+
+			if isinstance(current_resolution, float):
+				resolution_index = None
+				for i, map_value in enumerate(RESOLUTION_MAP):
+					if abs(map_value - current_resolution) < 0.0001:
+						resolution_index = i
+						break
+
+				if resolution_index is None:
+					resolution_index = len(RESOLUTION_MAP) // 2
+
+				res_label = RESOLUTION_NAMES[resolution_index] if resolution_index < len(
+					RESOLUTION_NAMES) else "UNKNOWN"
+			else:
+				resolution_index = int(current_resolution)
+				if resolution_index >= len(RESOLUTION_MAP):
+					resolution_index = len(RESOLUTION_MAP) - 1
+				if resolution_index < 0:
+					resolution_index = 0
+				res_label = RESOLUTION_NAMES[resolution_index]
+
+			display_octave = getattr(self, '_display_octave', 2)
+
+			loop_block = 0
+			loop_page_offset = 0
+			clip_loop_start = 0.0
+			clip_loop_end = 0.0
+
 			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
 				ls = self._step_sequencer._loop_selector
-
-				# Save block/index position (selection made with row 7 buttons)
 				loop_block = getattr(ls, '_block', 0)
-
-				# Save page offset (which set of 8 blocks we're viewing)
 				loop_page_offset = getattr(ls, '_loop_page_offset', 0)
 
-				# Save actual clip loop bounds (start/end markers)
 				if self._clip:
-					clip_loop_start = getattr(self._clip, 'loop_start', 0.0)
-					clip_loop_end = getattr(self._clip, 'loop_end', 0.0)
+					clip_loop_start = round(getattr(self._clip, 'loop_start', 0.0), 4)
+					clip_loop_end = round(getattr(self._clip, 'loop_end', 0.0), 4)
 
 		except Exception as e:
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[STATE_DICT ERROR] {e}")
+			return {
+				'scale': 0,
+				'root_note': 0,
+				'display_octave': 2,
+				'resolution_index': 4,
+				'resolution_name': "1/16",
+				'loop_block': 0,
+				'loop_page_offset': 0,
+				'clip_loop_start': 0.0,
+				'clip_loop_end': 0.0,
+				'timestamp': time.time()
+			}
 
-		return {
+		result = {
 			'scale': scale_val,
 			'root_note': root_val,
-			'display_octave': int(getattr(self, '_display_octave', 2)),
-			'resolution': resolution_val,
-			# NEW LOOP FIELDS
+			'display_octave': int(display_octave),
+			'resolution_index': resolution_index,  # ← THIS LINE MUST ALWAYS BE PRESENT
+			'resolution_name': res_label,  # ← Human-readable label for reference
 			'loop_block': loop_block,
 			'loop_page_offset': loop_page_offset,
-			'clip_loop_start': round(clip_loop_start, 4),  # Round for JSON precision
-			'clip_loop_end': round(clip_loop_end, 4),
+			'clip_loop_start': clip_loop_start,
+			'clip_loop_end': clip_loop_end,
 			'timestamp': time.time()
 		}
 
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[SAVING_STATE] Scale={scale_val}, Root={root_val}, Oct={display_octave}, " +
+				f"ResIdx={resolution_index} ({res_label}), Offset={loop_page_offset}, " +
+				f"Loop={clip_loop_start:.2f}->{clip_loop_end:.2f}"
+			)
 
-	def _save_current_state_to_registry(self, clip):
-		"""Saves current editor settings to the JSON file for a specific clip."""
-		if clip is None: return
+		return result
 
-		data = {
-			'scale': self._step_sequencer._scale_selector._modus if hasattr(self._step_sequencer, '_scale_selector') else 0,
-			'root_note': self._step_sequencer._scale_selector._key if hasattr(self._step_sequencer, '_scale_selector') else 0,
-			'display_octave': self._display_octave,
-			'resolution': self._resolution,
-			'quantization': self._quantization,
-			'loop_length': getattr(clip, 'length', 0) if hasattr(clip, 'length') else 0,
-			'is_monophonic': self._is_monophonic,
-			'timestamp': time.time()
-		}
 
-		self._meta_manager.save(clip, data)
 
 	def _restore_clip_metadata(self, metadata):
 		"""Applies saved metadata to the current session."""
@@ -736,6 +1676,227 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		except Exception as e:
 			self._control_surface.log_message(f"[RESTORE ERROR] {e}")
 
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[RESTORE_VERIFICATION] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
+				f"Block={metadata.get('loop_block', '?')} Offset={metadata.get('loop_page_offset', '?')}"
+			)
+
+	def load_clip_settings(self, clip, settings_dict):
+		"""Loads settings from dictionary into active clip's UI state."""
+		if not settings_dict:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[LOAD_SETTINGS] No settings provided, using current defaults")
+			return
+
+		try:
+			# === SCALE/ROOT ===
+			if 'scale' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
+				selector = self._step_sequencer._scale_selector
+				mode_idx = int(settings_dict.get('scale', 0))
+				if mode_idx < len(selector._modus_names):
+					selector.set_modus(mode_idx, False, True)
+
+			if 'root_note' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
+				selector = self._step_sequencer._scale_selector
+				root_note = int(settings_dict['root_note']) % 12
+				selector.set_key(root_note, False, True)
+
+			# === OCTAVE ===
+			if 'display_octave' in settings_dict:
+				oct_val = int(settings_dict['display_octave'])
+				oct_val = max(0, min(15, oct_val))
+				old_oct = getattr(self, '_display_octave', 2)
+				if oct_val != old_oct:
+					self._display_octave = oct_val
+					self._parse_notes()
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[LOADING_DISPLAY_OCTAVE] From JSON={settings_dict.get('display_octave')} " +
+					f"To Internal={getattr(self, '_display_octave', '?')}"
+				)
+
+			# === RESOLUTION: CRITICAL FIX WITH VALIDATION ===
+			from .SequencerConstants import RESOLUTION_MAP
+
+			new_resolution_beats = None
+
+			# Try modern format first (resolution_index)
+			if 'resolution_index' in settings_dict:
+				res_idx = int(settings_dict['resolution_index'])
+
+				# Validate bounds
+				if res_idx >= len(RESOLUTION_MAP):
+					res_idx = len(RESOLUTION_MAP) - 1
+				if res_idx < 0:
+					res_idx = 0
+
+				# CONVERT INDEX → BEAT VALUE
+				new_resolution_beats = float(RESOLUTION_MAP[res_idx])
+
+				if DEBUG_LOGGING:
+					from .SequencerConstants import RESOLUTION_NAMES
+					res_name = RESOLUTION_NAMES[res_idx] if 0 <= res_idx < len(RESOLUTION_NAMES) else "UNKNOWN"
+					self._control_surface.log_message(
+						f"[LOADING_RESOLUTION] JSON idx={res_idx} ({res_name}) → Converted to {new_resolution_beats:.2f} beats"
+					)
+
+			# Backward compatibility: Support legacy 'resolution' field containing beat values
+			elif 'resolution' in settings_dict:
+				res_val = int(settings_dict['resolution'])
+
+				# ★★★ VALIDATION: Reject zero/negative resolutions ★★
+				if res_val <= 0:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[RESOLUTION_INVALID] Legacy value {res_val} rejected (must be positive)"
+						)
+					# Fall back to safe default
+					new_resolution_beats = RESOLUTION_MAP[4]  # Default 1/16th note
+				else:
+					# If it's already a beat-like number (8, 16, 32, etc.), use directly
+					new_resolution_beats = float(res_val)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[LOADING_RESOLUTION_LEGACY] BeatVal={res_val} → {new_resolution_beats:.2f} beats"
+						)
+			else:
+				# No resolution field found - use safe default
+				new_resolution_beats = RESOLUTION_MAP[4]  # Default 1/16th note
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[RESOLUTION_MISSING] Using default {new_resolution_beats:.2f} beats"
+					)
+
+			# Apply the converted beat value ONLY if we got a valid conversion
+			# Safety net: ensure resolution_never exceeds zero
+			if new_resolution_beats is not None and new_resolution_beats > 0:
+				old_res_beats = getattr(self, '_resolution', 0.25)
+				self._resolution = new_resolution_beats  # ← ASSIGN TO _resolution, NOT resolution_beats
+				self._parse_notes()
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[RESOLUTION_APPLIED] Old={old_res_beats:.2f} New={new_resolution_beats:.2f}"
+					)
+			else:
+				# Fallback: Use minimum safe resolution
+				min_resolution = min(RESOLUTION_MAP)
+				old_res_beats = getattr(self, '_resolution', 0.25)
+				self._resolution = min_resolution  # ← ASSIGN TO _resolution, NOT resolution_beats
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[RESOLUTION_FALLBACK] Unsafe value detected → Set to minimum {min_resolution:.2f} beats"
+					)
+					self._parse_notes()
+
+			# === LOOP PARAMETERS (LoopSelector) ===
+			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+				ls = self._step_sequencer._loop_selector
+
+				if 'loop_block' in settings_dict:
+					block = int(settings_dict['loop_block'])
+					if hasattr(ls, '_block'):
+						ls._block = block
+						ls._force = True
+
+				if 'loop_page_offset' in settings_dict:
+					offset = int(settings_dict['loop_page_offset'])
+
+					if hasattr(ls, '_loop_page_offset'):
+						ls._last_known_offset = offset - 1
+						ls._loop_page_offset = offset
+
+					if hasattr(self._step_sequencer, '_loop_page_offset'):
+						self._step_sequencer._loop_page_offset = offset
+
+					absolute_block = ls._block + (offset * 8)
+					if hasattr(self._step_sequencer, 'set_page'):
+						self._step_sequencer.set_page(absolute_block)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[LOOP_PAGE] Offset={offset}, Block={ls._block}, AbsolutePage={absolute_block}"
+						)
+
+
+				if 'clip_loop_start' in settings_dict and 'clip_loop_end' in settings_dict:
+					if self._clip:
+						start = float(settings_dict['clip_loop_start'])
+						end = float(settings_dict['clip_loop_end'])
+						if end > start:
+							try:
+								self._clip.loop_start = start
+								self._clip.loop_end = end
+								self._clip.start_marker = start
+								self._clip.end_marker = end
+								if hasattr(ls, '_get_clip_loop'):
+									ls._get_clip_loop()
+									ls.update()
+							except RuntimeError:
+								pass
+
+				# Refresh cycle button visual state now that loop params are synced
+				if hasattr(self._step_sequencer, '_update_cycle_button'):
+					try:
+						self._step_sequencer._update_cycle_button()
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								"[CYCLE_BUTTON_REFRESH] Post-loop-parameter-update forced refresh"
+							)
+					except Exception as e:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(f"[CYCLE_BUTTON_ERROR] {e}")
+
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[SETTINGS_APPLIED] Oct={settings_dict.get('display_octave')} ResIdxOrBeats={settings_dict.get('resolution_index', settings_dict.get('resolution'))} Scale={settings_dict.get('scale')}"
+				)
+
+		except Exception as e:
+			import traceback
+			self._control_surface.log_message(f"[SET_LOADING ERROR] {e}\n{traceback.format_exc()}")
+
+		# === VERIFICATION CHECKLIST ===
+		if DEBUG_LOGGING:
+			final_res = getattr(self, '_resolution', 'NOT SET')
+			final_offset = getattr(self._step_sequencer._loop_selector, '_loop_page_offset', 'NOT SET') if hasattr(
+				self._step_sequencer, '_loop_selector') else 'NO LS'
+			final_block = getattr(self._step_sequencer._loop_selector, '_block', 'NOT SET') if hasattr(
+				self._step_sequencer, '_loop_selector') else 'NO LS'
+
+			self._control_surface.log_message(
+				f"[VERIFICATION_CHECK] Resolution_Beats={final_res:.2f} PageOffset={final_offset} Block={final_block}"
+			)
+
+			# Compare saved vs loaded values
+			saved_res_idx = settings_dict.get('resolution_index', 'N/A')
+			expected_beats = None
+			if saved_res_idx != 'N/A':
+				from .SequencerConstants import RESOLUTION_MAP
+				try:
+					expected_beats = float(RESOLUTION_MAP[int(saved_res_idx)])
+				except (IndexError, ValueError):
+					expected_beats = None
+
+			if expected_beats is not None and abs(float(final_res) - expected_beats) > 0.001:
+				self._control_surface.log_message(
+					f"[WARNING_RES_MISMATCH] Expected Beats={expected_beats:.2f} Got={final_res:.2f}"
+				)
+
+		# Force refresh
+		self._force_update = True
+		self.update()
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[FINAL_PUSH] ForceUpdate=True UpdateCalled=True"
+			)
+
 	# --- HELPER METHODS FOR METADATA MANAGER ---
 
 	def _load_metadata_cache(self):
@@ -813,7 +1974,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if not self._meta_manager or not clip:
 			return
 
-		primary_key = self._meta_manager.get_key(clip)
+		primary_key = self._meta_manager._identify_clip_by_position(clip)
 
 		if primary_key is None:
 			primary_key = self._get_simple_clip_key(clip)
@@ -835,35 +1996,31 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(
 					f"[CACHE_WRITE] Wrote entry under key '{primary_key}', file now {file_size} bytes")
 
-	def _schedule_cleanup_check(self):
-		"""Schedule next cleanup check in 60 seconds."""
-		if hasattr(self._control_surface, 'schedule_message'):
-			self._control_surface.schedule_message(1000, self._run_cleanup_check)
+	def cleanup_missing_clips(self):
+		"""Scan cache for clips that no longer exist."""
+		song = self.song()
+		existing_ids = set()
 
-	def _run_cleanup_check(self):
-		"""Run orphan cleanup and schedule next one."""
-		if not self._meta_manager or not self._clip:
-			return
+		# Collect all valid IDs
+		for track in song.tracks:
+			for slot in track.clip_slots:
+				if slot.has_clip:
+					_, clip_id = self._meta_manager.strip_clip_id_tag(getattr(slot.clip, 'name', ''))
+					if clip_id:
+						existing_ids.add(clip_id)
 
-		try:
-			# Build set of current valid clip keys
-			current_keys = set()
-			song = self.song()
+		# Remove orphaned entries
+		orphans = []
+		for cid in list(self._meta_manager.cache.get("clips", {}).keys()):
+			if cid not in existing_ids:
+				orphans.append(cid)
+				del self._meta_manager.cache["clips"][cid]
 
-			for track in song.tracks:
-				for slot in track.clip_slots:
-					if slot.has_clip:
-						key = self._meta_manager.get_key(slot.clip)
-						if key:
-							current_keys.add(key)
-
-			# Run cleanup
-			self._meta_manager.cleanup_orphans(current_keys)
-
-
-		except Exception as e:
+		if orphans:
+			self._meta_manager._save_cache()
 			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[Cleanup Error] {e}")
+				self._control_surface.log_message(f"[CLEANUP] Removed {len(orphans)} orphan entries: {orphans}")
+
 
 	def set_enabled(self, enabled):
 		ControlSurfaceComponent.set_enabled(self, enabled)
@@ -1022,8 +2179,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# --- 5: LOGIC FOR ALL OTHER MODE TRANSITIONS ---
 		# If entering any mode that owns bottom_row() via uses_bottom_row(), ensure Loop Selector knows
 		elif mode in [STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR,
-		              STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
-		              STEPSEQ_MODE_COPY_PASTE, STEPSEQ_MODE_OCTAVE_OVERVIEW]:
+					  STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
+					  STEPSEQ_MODE_COPY_PASTE, STEPSEQ_MODE_OCTAVE_OVERVIEW]:
 			if loop_selector and self.uses_bottom_row():
 				# We now own Row 7, so tell Loop Selector to let go
 				if loop_selector.is_enabled():
@@ -1138,66 +2295,79 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_multinote(self, x=0, y=0):
 		pass
 
-	@property
-	def resolution(self):
-		return self._resolution
-
 	def set_resolution(self, resolution):
-		#old_resolution = self._resolution
+		"""Set resolution with validation BEFORE storage."""
+
+		# === VALIDATION PHASE (before any storage) ===
+		if resolution <= 0:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[WARN] Invalid resolution set to default")
+			resolution = 16  # Default fallback
+
+		# Store raw value (caller's responsibility)
+		old_resolution = self._resolution if hasattr(self, '_resolution') else 0.25
 		self._resolution = resolution
 
-		# Validate resolution is supported
-		if resolution <= 0:
-			resolution = 16  # Default fallback
-			self._control_surface.log_message("[WARN] Invalid resolution set to default")
+		if DEBUG_LOGGING:
+			old_beats = self.resolution_beats  # Use safe accessor to display what was actually used
+			new_idx = None
+			from .SequencerConstants import RESOLUTION_MAP
+			try:
+				# Find which index this corresponds to
+				for i, v in enumerate(RESOLUTION_MAP):
+					if abs(v - resolution) < 0.0001:
+						new_idx = i
+						break
+			except:
+				pass
+			self._control_surface.log_message(
+				f"[SET_RESOLUTION] Raw={resolution} → Safe Beats={old_beats:.2f}" +
+				(f" → Index {new_idx}" if new_idx is not None else "")
+			)
 
-		# Only parse if we have a valid clip
+		# Update internal buffers if clip exists
 		if self._clip is not None:
 			self._parse_notes()
 			self._update_matrix()
 
-	@property
-	def quantization(self):
-		return self._quantization
-
-	def set_quantization(self, quantization):
-
-		old_quantize = self._quantization
-		self._quantization = quantization
-
-		# update loop point
-		if self._clip != None and old_quantize != self._quantization:
-
-			self._loop_start = int(
-				self._clip.loop_start *
-				self._quantization /
-				old_quantize
-			)
-
-			self._loop_end = int(
-				self._clip.loop_end *
-				self._quantization /
-				old_quantize
-			)
-
-			# safety
-			if self._loop_end <= self._loop_start:
-				self._loop_end = self._loop_start + 1
-
-			try:
-				self._clip.loop_start = self._loop_start
-				self._clip.loop_end = self._loop_end
-
-				self._clip.start_marker = self._loop_start
-				self._clip.end_marker = self._loop_end
-
-			except RuntimeError:
-				pass
-
-			# IMPORTANT:
-			# do not rewrite notes during controller init
-			if not self._initializing:
-				self._update_clip_notes()
+	# def set_quantization(self, quantization):
+	#
+	# 	old_quantize = self._quantization
+	# 	self._quantization = quantization
+	#
+	# 	# update loop point
+	# 	if self._clip != None and old_quantize != self._quantization:
+	#
+	# 		self._loop_start = int(
+	# 			self._clip.loop_start *
+	# 			self._quantization /
+	# 			old_quantize
+	# 		)
+	#
+	# 		self._loop_end = int(
+	# 			self._clip.loop_end *
+	# 			self._quantization /
+	# 			old_quantize
+	# 		)
+	#
+	# 		# safety
+	# 		if self._loop_end <= self._loop_start:
+	# 			self._loop_end = self._loop_start + 1
+	#
+	# 		try:
+	# 			self._clip.loop_start = self._loop_start
+	# 			self._clip.loop_end = self._loop_end
+	#
+	# 			self._clip.start_marker = self._loop_start
+	# 			self._clip.end_marker = self._loop_end
+	#
+	# 		except RuntimeError:
+	# 			pass
+	#
+	# 		# IMPORTANT:
+	# 		# do not rewrite notes during controller init
+	# 		if not self._initializing:
+	# 			self._update_clip_notes()
 
 	def set_diatonic(self, diatonic):
 		self._diatonic = diatonic
@@ -1219,15 +2389,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._page = page
 
 	def _get_notes_at_step(self, idx):
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		return [note for note in self._note_cache if start_time <= note[1] < end_time]
 
 	def _get_note_for_pitch_at_step(self, idx, pitch):
 
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		for note in self._note_cache:
 
@@ -1267,7 +2437,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					continue
 
 				# CRITICAL: Calculate step index with bounds protection
-				i = int(note_position / self._resolution)
+				i = int(note_position / self.resolution_beats)
 
 				# SAFETY CHECK: Skip notes that fall outside our array range
 				if i >= step_count or i < 0:
@@ -1282,7 +2452,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._notes_velocities[i] = x
 
 					for x in range(7):
-						if note_length * 4 >= self._length_map[x] * self._resolution:
+						if note_length * 4 >= self._length_map[x] * self.resolution_beats:
 							self._notes_lengths[i] = x
 
 				# Process pitch display
@@ -1299,7 +2469,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(f"[PARSE NOTES ERROR] {e}")
 
 	def _toggle_note_at_grid_position(self, idx, y):
-		grid_time = idx * self._resolution
+		grid_time = idx * self.resolution_beats
 		pitch = (self._key_indexes[6 - y] + 12 * (self._display_octave - 2))
 		notes = list(self._note_cache)
 		for note in notes:
@@ -1318,7 +2488,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			(
 				pitch,
 				grid_time,
-				self._resolution,
+				self.resolution_beats,
 				self._velocity_map[5],
 				False
 			)
@@ -1343,10 +2513,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			for x in range(len(self._notes_velocities)):
 				for note_index in range(7):
 					if self._notes_pitches[x * 7 + note_index] == 1:
-						note_time = x * self._resolution
+						note_time = x * self.resolution_beats
 						#time = x * self._quantization
 						velocity = self._velocity_map[self._notes_velocities[x]]
-						length = self._length_map[self._notes_lengths[x]] * self._resolution / 4.0
+						length = self._length_map[self._notes_lengths[x]] * self.resolution_beats / 4.0
 						#length = self._length_map[self._notes_lengths[x]] * self._quantization / 4.0
 						pitch = self._key_indexes[note_index] + 12 * (self._notes_octaves[x] - 2)
 						if(pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0):
@@ -1425,7 +2595,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0],
-		 	[0, 0, 0, 0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0],
 			[0, 0, 0, 0, 0, 0, 0, 0],
@@ -1611,8 +2781,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								scale_notes = [n % 12 for n in selector.notes]
 
 							#idx = self._get_step_index(x) #already above
-							start_time = idx * self._resolution
-							end_time = start_time + self._resolution
+							start_time = idx * self.resolution_beats
+							end_time = start_time + self.resolution_beats
 							step_notes_list = self._get_notes_at_step(idx)
 
 							for y in range(7):
@@ -1681,7 +2851,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 											note_time = n[1]
 											note_deg = n[0] % 12
 
-											if self._is_note_on_grid(note_time, self._resolution):
+											if self._is_note_on_grid(note_time, self.resolution_beats):
 												has_on_step = True
 											else:
 												has_off_step = True
@@ -1962,7 +3132,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 												bucket = 0
 												# Find bucket: compare note_len against length_map * resolution/4.0
 												for i, v in enumerate(self._length_map):
-													if note_len >= v * self._resolution / 4.0:
+													if note_len >= v * self.resolution_beats / 4.0:
 														bucket = i
 												length_buckets.append(bucket)
 
@@ -2064,7 +3234,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										# Calculate bucket for the max length
 										length_bucket = 0
 										for i, v in enumerate(self._length_map):
-											if pitch_max_length >= v * self._resolution / 4.0:
+											if pitch_max_length >= v * self.resolution_beats / 4.0:
 												length_bucket = i
 
 										if length_bucket > 7: length_bucket = 7
@@ -2087,12 +3257,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# --- METRONOME ---
 				# playing notes (ONLY current visible page and Normal Mode)
 				if self._playhead != None and self._mode == STEPSEQ_MODE_NOTES:
-					if hasattr(self, '_resolution'):
-						res = self._resolution
-					elif hasattr(self._step_sequencer, '_resolution'):
-						res = self._step_sequencer._resolution
-					else:
-						res = 0.25  # Default fallback
+					# Get safe resolution (always ≥ 0.001 beats)
+					try:
+						if hasattr(self, 'resolution_beats') and callable(getattr(self, 'resolution_beats')):
+							res = self.resolution_beats
+						elif hasattr(self, '_resolution'):
+							res = max(0.001, float(self._resolution))  # Clamp unsafe values
+						elif hasattr(self._step_sequencer, '_resolution'):
+							res = max(0.001, float(self._step_sequencer._resolution))
+						else:
+							res = 0.25
+
+						# Double-check clamp (extra safety)
+						if res <= 0:
+							res = 0.25
+
+					except Exception as e:
+						# Ultimate fallback if anything goes wrong
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(f"[METRONOME_ERROR] Resolution error: {e}")
+						res = 0.25
 
 					play_position = int(self._playhead / res)
 					play_x_position = play_position % 8
@@ -2205,8 +3389,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if self._clip == None:
 				self._step_sequencer.create_clip()
 			else:
-				start = int(self._clip.loop_start / self._resolution)
-				end = int(self._clip.loop_end / self._resolution)
+				start = int(self._clip.loop_start / self.resolution_beats)
+				end = int(self._clip.loop_end / self.resolution_beats)
 
 				if (effective_page + 1) * 8 > end or effective_page * 8 < start:
 					# Current page is outside of running loop, only update this page
@@ -2334,9 +3518,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						# Check for Double Click
 						is_double_click = False
 						if (self._last_velocity_press_pos is not None and
-						    self._last_velocity_press_pos['x'] == x and
-						    self._last_velocity_press_pos['y'] == y and
-						    (current_ts - self._last_velocity_press_time) < self._double_click_window):
+							self._last_velocity_press_pos['x'] == x and
+							self._last_velocity_press_pos['y'] == y and
+							(current_ts - self._last_velocity_press_time) < self._double_click_window):
 							is_double_click = True
 
 						# Update tracking state for next press
@@ -2346,8 +3530,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if is_double_click:
 							# --- DELETE OPERATION (DELETE LAST NOTE IN STEP) ---
 							step_idx = self._editing_step
-							start_time = step_idx * self._resolution
-							end_time = start_time + self._resolution
+							start_time = step_idx * self.resolution_beats
+							end_time = start_time + self.resolution_beats
 
 							notes = list(self._note_cache)
 
@@ -2396,9 +3580,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						# Check for Double Click
 						is_double_click = False
 						if (self._last_length_press_pos is not None and
-						    self._last_length_press_pos['x'] == x and
-						    self._last_length_press_pos['y'] == y and
-						    (current_ts - self._last_length_press_time) < self._double_click_window):
+							self._last_length_press_pos['x'] == x and
+							self._last_length_press_pos['y'] == y and
+							(current_ts - self._last_length_press_time) < self._double_click_window):
 							is_double_click = True
 
 						# Update tracking
@@ -2408,8 +3592,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if is_double_click:
 							# --- DELETE OPERATION ---
 							step_idx = self._editing_step
-							start_time = step_idx * self._resolution
-							end_time = start_time + self._resolution
+							start_time = step_idx * self.resolution_beats
+							end_time = start_time + self.resolution_beats
 
 							notes = list(self._note_cache)
 							target_index = -1
@@ -2435,10 +3619,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Calculate target length based on column X
 							len_bucket = x
 							if len_bucket > 7: len_bucket = 7
-							target_length = self._length_map[len_bucket] * self._resolution / 4.0
+							target_length = self._length_map[len_bucket] * self.resolution_beats / 4.0
 
-							start_time = step_idx * self._resolution
-							end_time = start_time + self._resolution
+							start_time = step_idx * self.resolution_beats
+							end_time = start_time + self.resolution_beats
 
 							# Double Click Check (Delete Logic) - Keep your existing double click logic here
 
@@ -2477,15 +3661,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if vel_bucket > 7: vel_bucket = 7
 						target_velocity = self._velocity_map[vel_bucket]
 
-						start_time = step_idx * self._resolution
-						end_time = start_time + self._resolution
+						start_time = step_idx * self.resolution_beats
+						end_time = start_time + self.resolution_beats
 
 						# --- DETECT DOUBLE CLICK ---
 						is_double_click = False
 						if (self._last_velocity_press_pos is not None and
-						    self._last_velocity_press_pos['x'] == x and
-						    self._last_velocity_press_pos['y'] == y and
-						    (current_ts - self._last_velocity_press_time) < self._double_click_window):
+							self._last_velocity_press_pos['x'] == x and
+							self._last_velocity_press_pos['y'] == y and
+							(current_ts - self._last_velocity_press_time) < self._double_click_window):
 							is_double_click = True
 
 						# Update tracking
@@ -2565,10 +3749,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if len_bucket < 0: len_bucket = 0
 						if len_bucket > 7: len_bucket = 7
 
-						target_length = self._length_map[len_bucket] * self._resolution / 4.0
+						target_length = self._length_map[len_bucket] * self.resolution_beats / 4.0
 
-						start_time = step_idx * self._resolution
-						end_time = start_time + self._resolution
+						start_time = step_idx * self.resolution_beats
+						end_time = start_time + self.resolution_beats
 
 						# --- DETECT DOUBLE CLICK ---
 						is_double_click = False
@@ -2608,7 +3792,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									# Calculate the bucket of this existing note
 									existing_len_bucket = 0
 									for i_map, v in enumerate(self._length_map):
-										if note_l >= v * self._resolution / 4.0:
+										if note_l >= v * self.resolution_beats / 4.0:
 											existing_len_bucket = i_map
 
 									# Check if it matches the clicked row's bucket
@@ -2667,10 +3851,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						len_bucket = x  # Column 0-7 maps directly to length_map index
 						if len_bucket > 7: len_bucket = 7
 
-						target_length = self._length_map[len_bucket] * self._resolution / 4.0
+						target_length = self._length_map[len_bucket] * self.resolution_beats / 4.0
 
-						start_time = step_idx * self._resolution
-						end_time = start_time + self._resolution
+						start_time = step_idx * self.resolution_beats
+						end_time = start_time + self.resolution_beats
 
 						# --- DOUBLE CLICK DELETE ---
 						is_double_click = False
@@ -2741,9 +3925,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _get_row_for_pitch(self, midi_note):
 		"""
-        Find which grid row (0-6) corresponds closest to this MIDI note.
-        Returns -1 if no reasonable mapping exists.
-        """
+		Find which grid row (0-6) corresponds closest to this MIDI note.
+		Returns -1 if no reasonable mapping exists.
+		"""
 		# Get all possible pitches on the grid
 		grid_pitches = []
 		for row_idx in range(7):
@@ -2769,8 +3953,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return remainder < tolerance or remainder > (resolution - tolerance)
 
 	def _add_note_at_step(self, idx, pitch, velocity):
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		notes = list(self._note_cache)
 
@@ -2780,7 +3964,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				return
 
 		notes.append(
-			(pitch, start_time, self._resolution, velocity, False)
+			(pitch, start_time, self.resolution_beats, velocity, False)
 		)
 
 		self._write_note_cache_to_clip(notes)
@@ -2793,8 +3977,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return x + 8 * self._get_effective_page()
 
 	def _set_velocity_for_pitch_at_step(self, idx, pitch, velocity):
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		notes = list(self._note_cache)
 
@@ -2812,8 +3996,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._write_note_cache_to_clip(notes)
 
 	def _set_length_for_pitch_at_step(self, idx, pitch, target_length):
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		notes = list(self._note_cache)
 		changed = False
@@ -3313,8 +4497,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		notes = list(self._note_cache)
 
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		changed = False
 
@@ -3345,7 +4529,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if (self._mode_notes_velocities_button != None):
 				if self._clip != None:
 					self._mode_notes_velocities_button.set_on_off_values("StepSequencer2.Velocity.On",
-					                                                     "StepSequencer2.Velocity.Dim")
+																		 "StepSequencer2.Velocity.Dim")
 					# Only turn ON if currently ANIMATING.
 					# In Horizontal/Vertical modes, it should be OFF (acting as an exit button).
 					if self._velocity_wait_animation:
@@ -3455,14 +4639,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		length = (
 				self._length_map[length_index]
-				* self._resolution
+				* self.resolution_beats
 				/ 4.0
 		)
 
 		notes = list(self._note_cache)
 
-		start_time = idx * self._resolution
-		end_time = start_time + self._resolution
+		start_time = idx * self.resolution_beats
+		end_time = start_time + self.resolution_beats
 
 		changed = False
 
@@ -3618,7 +4802,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if (self._mode_copy_paste_button != None):
 				assert isinstance(button, ButtonElement)
 				self._mode_copy_paste_button.add_value_listener(self._mode_button_copy_paste_value,
-				                                                   identify_sender=True)
+																   identify_sender=True)
 
 	def _update_copy_paste_button_state(self):
 		if not hasattr(self, '_mode_copy_paste_button') or not self._mode_copy_paste_button:
@@ -3769,7 +4953,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		page_start_step = self._page * 8
 		page_end_step = (self._page + 1) * 8
-		resolution = self._resolution
+
+		# CRITICAL: Use SAFE accessor that guarantees beat value ≥ 0.001
+		resolution = self.resolution_beats  # ← CHANGED FROM self._resolution
 
 		# Calculate target MIDI octave based on current display
 		target_midi_octave = int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
@@ -3807,7 +4993,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return
 
 		page_start_step = self._page * 8
-		current_page_offset_time = page_start_step * self._resolution
+		current_page_offset_time = page_start_step * self.resolution_beats
 
 		# 1. Determine the Target Pitch Range
 		# We need the MIDI Octave of the CURRENT display to shift pitches correctly.
@@ -3879,7 +5065,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		page_start_step = self._page * 8
 		page_end_step = (self._page + 1) * 8
-		resolution = self._resolution
+		resolution = self.resolution_beats
 
 		# Calculate target MIDI octave
 		target_midi_octave = int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
@@ -4061,6 +5247,57 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._name = "melodic step sequencer"
 		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
 
+	def _search_and_relink_clip(self, target_hash, cached_entry):
+		"""Find clip that matched this hash anywhere in the song."""
+		try:
+			song = self.song()
+
+			for track_idx, track in enumerate(list(song.tracks)):
+				for slot_idx, slot in enumerate(list(track.clip_slots)):
+					if slot.has_clip:
+						clip = slot.clip
+						current_hash = self._meta_manager._hash_clip_content(clip)
+
+						if current_hash == target_hash:
+							# Found it! Update JSON tracking
+							if DEBUG_LOGGING:
+								self._control_surface.log_message(
+									f"[FOUND_MOVED_CLIP] Relocated to T{track_idx}:S{slot_idx}"
+								)
+
+							# Update cache entry with new position
+							cached_entry["track_index"] = track_idx
+							cached_entry["slot_index"] = slot_idx
+							cached_entry["moved_count"] = cached_entry.get("moved_count", 0) + 1
+							cached_entry["updated_at"] = time.time()
+
+							self._meta_manager._save_cache()
+							return True
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[NOT_FOUND] Moving clip still lost in void")
+
+			return False
+
+		except Exception as e:
+			self._control_surface.log_message(f"[SEARCH_ERROR] {e}")
+			return False
+
+	def report_move_anomaly(self, clip, expected_hash, actual_hash):
+		"""Log suspicious clip movements that might indicate user tampering."""
+		import hashlib
+
+		# Alert if hash changed significantly (>20% difference)
+		similarity = sum(a == b for a, b in zip(expected_hash, actual_hash)) / max(len(expected_hash), len(actual_hash))
+
+		if similarity < 0.8:
+			if DEBUG_LOGGING:
+				self.surface.log_message(
+					f"[ANOMALY_ALERT] Possible deliberate renaming/moving detected (similarity: {similarity:.1%})"
+				)
+
+			# Can optionally send Live message notification
+			self.surface.show_message("Clip parameters may be out of sync - check settings manually")
 
 	def _set_scale_selector(self):
 		super(StepSequencerComponent2, self)._set_scale_selector()
@@ -4140,7 +5377,7 @@ class StepSequencerComponent2(StepSequencerComponent):
 				elif self._note_editor._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
 					# Distinguish between Horizontal and Vertical sub-modes
 					if hasattr(self._note_editor,
-					           '_is_velocity_editor_vertical') and self._note_editor._is_velocity_editor_vertical:
+							   '_is_velocity_editor_vertical') and self._note_editor._is_velocity_editor_vertical:
 						self._osd.attributes[5] = "Vert Vel"
 					else:
 						# Default horizontal editor showing the step index
@@ -4195,7 +5432,6 @@ class StepSequencerComponent2(StepSequencerComponent):
 		pass
 
 	def _clear_side_button_listeners(self):
-
 		for button in self._side_buttons:
 
 			try:

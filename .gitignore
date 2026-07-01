@@ -1,5 +1,7 @@
 __pycache__
 .DS_Store
 /.idea/
+.json
 Reg_SubterraLPs.pub
 Reg_SubterraLPs
+
