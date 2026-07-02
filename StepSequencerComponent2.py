@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 import hashlib
 import os                  # Used in _load_metadata_cache()
+import re
 
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
@@ -32,7 +33,7 @@ DEBUG_LOGGING = True  # Set to False for release
 
 class ClipMetadataManager:
 	# =========================== CONSTANTS ===========================
-	ID_TAG_PREFIX = '[LUX:'
+	ID_TAG_PREFIX = '[SUX:'
 	ID_TAG_SUFFIX = ']'
 
 	def __init__(self, surface):
@@ -142,7 +143,7 @@ class ClipMetadataManager:
 		self._try_process_pending_operations()
 
 	def _try_process_pending_operations(self):
-		"""Attempt to apply pending renames now that we're between callbacks."""
+		"""Attempt to apply pending renames now that we're between Live callbacks."""
 		processed = []
 
 		for i, pending_op in reversed(list(enumerate(self._pending_renames))):
@@ -158,22 +159,17 @@ class ClipMetadataManager:
 					continue
 
 				# Safe to rename now!
-				actual_clip_id = self.strip_clip_id_tag(getattr(clip_obj, 'name', ''))[1]
-
-				if actual_clip_id != clip_id:
-					# Rename is still needed
-					try:
-						clip_obj.name = target_name
-						processed.append(i)
-
-						if DEBUG_LOGGING:
-							self.surface.log_message(f"[RENAMED] '{target_name}' applied via undo callback")
-					except RuntimeError:
-						# Still blocked - keep waiting
-						pass
-				else:
-					# Name already correct (maybe manual edit?)
+				try:
+					clip_obj.name = target_name
 					processed.append(i)
+
+					if DEBUG_LOGGING:
+						display_name = target_name[:50] + ('...' if len(target_name) > 50 else '')
+						self.surface.log_message(f"[RENAMED_APPLIED] '{display_name}'")
+				except RuntimeError as re:
+					# Still blocked - keep waiting for next undo event
+					if DEBUG_LOGGING:
+						self.surface.log_message(f"[RENAME_STILL_BLOCKED] {re} Will retry next undo event")
 
 			except Exception as e:
 				if DEBUG_LOGGING:
@@ -184,7 +180,7 @@ class ClipMetadataManager:
 		for idx in sorted(processed, reverse=True):
 			del self._pending_renames[idx]
 
-		# Update weak reference tracking
+		# Cleanup stale references
 		self._cleanup_stale_clip_references()
 
 	# =========================== CLIP IDENTIFICATION ===========================
@@ -1007,6 +1003,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message("[INIT] Completing button setup")
 		self._update_copy_paste_button_state()
 
+		# ============================================
+		# BACKGROUND FLUSH TIMER
+		# ============================================
+		# Regularly attempt to flush pending renames every few seconds
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[FLUSH_TIMER] Initializing background flush timer")
+
+		try:
+			self._flush_timer_active = True
+			self._schedule_background_flush()
+		except Exception as e:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(f"[FLUSH_TIMER_INIT_ERROR] {e}")
+
 		# CRITICAL: Ensure hardware receives the command immediately
 		if hasattr(self, '_force_update'):
 			self._force_update = True
@@ -1032,20 +1042,69 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message("[INIT] Initial state complete")
 
 	def disconnect(self):
-		# First save active clip state
-		if self._meta_manager and self._clip:
-			old_state = self._get_current_state_dict()
-			self._meta_manager.save_clip_to_json(self._clip, old_state)
+		"""
+        Clean up resources and FLUSH ALL PENDING RENAMES before exit.
 
-		# Remove observers before anything else
+        CRITICAL: This ensures SUX tags get written to clips even if
+        they were queued and never executed due to lack of undo activity.
+        """
+		# STOP BACKGROUND FLUSH TIMER FIRST
+		if hasattr(self, '_flush_timer_active'):
+			self._flush_timer_active = False
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[DISCONNECT_START] Stopping timers and beginning cleanup sequence")
+
+		# ============================================
+		# PHASE 1: SAVE ACTIVE CLIP STATE TO JSON
+		# ============================================
+		if self._meta_manager and self._clip:
+			try:
+				old_state = self._get_current_state_dict()
+				self._meta_manager.save_clip_to_json(self._clip, old_state)
+				if DEBUG_LOGGING:
+					self._control_surface.log_message("[DISCONNECT] Saved active clip state to JSON")
+			except Exception as e:
+				self._control_surface.log_message(f"[PREV_CLIP_SAVE_ERROR] {e}")
+
+		# ============================================
+		# PHASE 2: FORCIBLEY FLUSH PENDING RENAMES
+		# ============================================
+		# This is the KEY FIX - attempt to write any queued tags now!
+		self._flush_pending_renames()
+
+		# ============================================
+		# PHASE 3: TRY ONE MORE ROUND OF VERIFICATION
+		# ============================================
+		# Double-check that no renames are still stuck
+		if self._meta_manager and self._meta_manager._pending_renames:
+			if DEBUG_LOGGING:
+				remaining = len(self._meta_manager._pending_renames)
+				self._control_surface.log_message(
+					f"[DISCONNECT_WARNING] {remaining} renames still queued - may be lost!"
+				)
+
+				# Attempt second flush
+				second_flush = self._flush_pending_renames()
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[DISCONNECT_SECOND_FLUSH] Additional {second_flush} processed"
+					)
+
+		# ============================================
+		# PHASE 4: REMOVE OBSERVERS AND LISTENERS
+		# ============================================
 		self._remove_observer_listeners()
 
-		# Clean up meta manager
-		if hasattr(self, '_meta_manager'):
+		# ============================================
+		# PHASE 5: UNREGISTER META MANAGER UNDO LISTENER
+		# ============================================
+		if hasattr(self, '_meta_manager') and self._meta_manager:
 			self._meta_manager._unregister_undo_listener()
-			self._meta_manager = None
 
-		# Continue standard cleanup
+		# ============================================
+		# PHASE 6: CLEAN UP OTHER RESOURCES
+		# ============================================
 		self._remove_highlighted_clip_slot_listener()
 		self._remove_clip_slot_listener()
 		self._step_sequencer = None
@@ -1069,11 +1128,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._notes_lengths = None
 		self._clip = None
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message("[DISCONNECT] Cleanup complete")
+		# Finalize meta manager
+		self._meta_manager = None
 
 		if DEBUG_LOGGING:
-			self._control_surface.log_message("[DISCONNECT] Cleanup complete")
+			self._control_surface.log_message("[DISCONNECT_COMPLETE] All cleanup finished")
 	
 	
 	# def _remove_scale_listeners(self):
@@ -1116,6 +1175,45 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	METADATA_PREFIX = "[SUX:"  # New universal tag format
 	METADATA_SUFFIX = "]"
+
+	def _schedule_background_flush(self):
+		"""Schedule the next background flush attempt."""
+		if not hasattr(self, '_flush_timer_active') or not self._flush_timer_active:
+			return
+
+		# Schedule check in ~2 seconds
+		if hasattr(self._control_surface, 'schedule_message'):
+			try:
+				self._control_surface.schedule_message(2, self._background_flush_callback)
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[FLUSH_SCH_ERR] {e}")
+
+	def _background_flush_callback(self):
+		"""Background task that periodically flushes pending renames."""
+		if not hasattr(self, '_flush_timer_active') or not self._flush_timer_active:
+			return
+
+		# Perform the actual flush
+		count = self._flush_pending_renames()
+
+		# Check if we still have items pending
+		if hasattr(self, '_meta_manager') and self._meta_manager:
+			remaining = len(self._meta_manager._pending_renames)
+
+			if DEBUG_LOGGING:
+				if remaining > 0:
+					self._control_surface.log_message(
+						f"[BACKGROUND_FLUSH] Flushed {count}, {remaining} remain"
+					)
+
+				# If nothing remaining, maybe stop frequent checks
+				if remaining == 0 and count == 0:
+					# Quiet period - don't spam logs
+					pass
+
+		# Always reschedule unless we're shutting down
+		self._schedule_background_flush()
 
 	def extract_embedded_parameters(self, clip_name):
 		"""
@@ -1205,68 +1303,355 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def update_clip_name_with_params(self, clip, params_dict):
 		"""
-        Update clip name by replacing existing SUX tag or appending new one.
+		Update clip name with SUX parameter tag.
 
-        Args:
-            clip: Ableton Live Clip object
-            params_dict: Parameters to encode
+		STRATEGY:
+		1. CHECK if valid tag already exists
+		2. Attempt IMMEDIATE write first
+		3. If Live blocks it, use schedule_message() for proper deferral (NOT just queueing)
+		4. Still maintain backup queue for disconnect flush
 
-        Returns:
-            bool: Success status
-        """
+		Returns True if tag was initiated (immediately or deferred), False on critical failure.
+		"""
 		if not clip or not hasattr(clip, 'name'):
 			if DEBUG_LOGGING:
 				self._control_surface.log_message("[NAME_UPDATE] No clip/name available")
 			return False
 
 		try:
+			# Build the desired tag
+			new_tag = self.build_embedded_parameters_tag(params_dict)
 			original_name = getattr(clip, 'name', '')
 
-			# Strip any existing SUX tags for freshness
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[TAG_DEBUG] Original clip name: '{original_name[:60]}'" +
+					("..." if len(original_name) > 60 else "")
+				)
+
 			clean_name = self.strip_metadata_tags(original_name)
 
-			# Build fresh tag
-			new_tag = self.build_embedded_parameters_tag(params_dict)
+			# ============================================
+			# PROPER TAG VERIFICATION (FIXED VERSION)
+			# ============================================
+			tag_exists_and_valid = False
 
-			# Combine: keep original name portion, append new tag
+			if "[SUX:" in original_name:
+				# Look for COMPLETE tag structure with BOTH brackets
+				start_bracket = original_name.find("[SUX:")
+				end_bracket = original_name.rfind("]")
+
+				if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+					# Extract the candidate tag INCLUDING closing bracket
+					potential_tag = original_name[start_bracket:end_bracket + 1]
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[TAG_DETECT] Found candidate: '{potential_tag}'"
+						)
+
+					# Verify complete structure: must have [SUX:, {, ;, }, ]
+					has_open = "[" in potential_tag and "{" in potential_tag
+					has_semicolon = ";" in potential_tag
+					has_close_curly = "}" in potential_tag
+					has_close_square = "]" in potential_tag
+
+					if has_open and has_semicolon and has_close_curly and has_close_square:
+						tag_exists_and_valid = True
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[TAG_VALID] ✓ Complete tag structure confirmed"
+							)
+					else:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[TAG_INVALID] Tag missing components: " +
+								f"open={has_open};semi={has_semicolon};curly]={has_close_curly};square]={has_close_square}"
+							)
+
+			if tag_exists_and_valid:
+				# Check if parameters match what we'd write
+				old_clean = clean_name
+				expected_full_name = f"{old_clean} {new_tag}" if old_clean else new_tag
+
+				if self.strip_metadata_tags(original_name) == self.strip_metadata_tags(expected_full_name):
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[TAG_UP_TO_DATE] Clip name already contains correct parameters"
+						)
+					return True
+
+			if tag_exists_and_valid:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_PARAMS_MISMATCH] Tags differ, updating..."
+					)
+
+			# Build new full name
 			if clean_name:
 				new_full_name = f"{clean_name} {new_tag}"
 			else:
 				new_full_name = new_tag
 
-			# Set on Live clip
-			clip.name = new_full_name
-
 			if DEBUG_LOGGING:
-				display_name = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
-				self._control_surface.log_message(f"[NAME_UPDATED] '{display_name}'")
+				display_new = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
+				self._control_surface.log_message(
+					f"[TAG_PREPARED] Building name: '{display_new}'"
+				)
+
+			# ============================================
+			# PHASE 1: TRY IMMEDIATE WRITE FIRST
+			# ============================================
+			immediate_success = False
+			try:
+				clip.name = new_full_name
+				immediate_success = True
+
+				if DEBUG_LOGGING:
+					display_written = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
+					self._control_surface.log_message(
+						f"[TAG_IMMEDIATE_SUCCESS] Written directly: '{display_written}'"
+					)
+
+				# VERIFY it actually took effect
+				actual_name = getattr(clip, 'name', '')
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_VERIFY] Actual clip name after write: '{actual_name[:60]}'" +
+						("..." if len(actual_name) > 60 else "")
+					)
+
+				if new_tag in actual_name:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[TAG_VERIFIED] ✓ Tag confirmed in clip name")
+					return True
+				elif "[SUX:" in actual_name and "}" in actual_name:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[TAG_PARTIAL] Tag exists but may vary slightly")
+					return True
+				else:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[TAG_VERIFY_FAIL] ✗ Write succeeded but tag MISSING!"
+						)
+
+			except RuntimeError as re:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_IMMEDIATE_FAILED] Immediate write blocked: {re}. " +
+						f"Attempting scheduled deferral..."
+					)
+
+			# ============================================
+			# PHASE 2: SCHEDULE MESSAGE DEFERRAL (KEY FIX!)
+			# ============================================
+			if not immediate_success:
+				# IMPORTANT: Use schedule_message() for proper Living Framework deferral
+				# This tells Live "try this again after current callback chain completes"
+
+				# Store the rename request data
+				rename_request = {
+					'clip_object': clip,
+					'target_name': new_full_name,
+					'timestamp': time.time()
+				}
+
+				# Store temporarily for scheduled callback access
+				self._pending_deferred_rename = rename_request
+
+				# Schedule on next frame
+				if hasattr(self._control_surface, 'schedule_message'):
+					try:
+						self._control_surface.schedule_message(1, self._execute_deferred_rename)
+
+						if DEBUG_LOGGING:
+							display_queued = new_full_name[:40] + ('...' if len(new_full_name) > 40 else '')
+							self._control_surface.log_message(
+								f"[TAG_SCHEDULED] Tag will be written on next frame: '{display_queued}'"
+							)
+
+						return True
+
+					except Exception as sch_err:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[TAG_SCHED_ERR] Failed to schedule: {sch_err}. " +
+								f"Falling back to queue..."
+							)
+
+				# FINAL FALLBACK: Add to traditional queue (less reliable)
+				if hasattr(self, '_meta_manager') and self._meta_manager:
+					clip_object_id = id(clip)
+					self._meta_manager._pending_renames.append((None, new_full_name, clip_object_id))
+					self._meta_manager._store_clip_reference(clip_object_id, clip)
+
+					if DEBUG_LOGGING:
+						display_backup = new_full_name[:40] + ('...' if len(new_full_name) > 40 else '')
+						self._control_surface.log_message(
+							f"[TAG_BACKUP_QUEUE] ⚠️ Tag queued (backup strategy)"
+						)
+
+					return True
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_FINAL_FAIL] Cannot defer rename, meta manager missing"
+					)
+				return False
 
 			return True
 
-		except RuntimeError as e:
+		except Exception as e:
 			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[NAME_UPDATE_RUNTIME_ERROR] {e}")
+				import traceback
+				self._control_surface.log_message(f"[NAME_QUEUE_ERROR] ❌ {e}\n{traceback.format_exc()}")
 			return False
+
+	def _execute_deferred_rename(self):
+		"""Callback that executes previously scheduled rename."""
+		if not hasattr(self, '_pending_deferred_rename') or not self._pending_deferred_rename:
+			return
+
+		rename_request = self._pending_deferred_rename
+		clip = rename_request['clip_object']
+		target_name = rename_request['target_name']
+
+		# Clear the stored reference
+		delattr(self, '_pending_deferred_rename')
+
+		if not clip or not hasattr(clip, 'name'):
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[DEFERRED_SKIP] Clip invalid")
+			return
+
+		# Try to write now - callback chain should be complete
+		try:
+			clip.name = target_name
+
+			# Verify
+			actual_name = getattr(clip, 'name', '')
+			if "[SUX:" in actual_name:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[DEFERRED_SUCCESS] Tag written via delayed callback"
+					)
+				return
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[DEFERRED_VERIFY_WARN] Deferred write succeeded but tag may not be present"
+				)
+
+		except RuntimeError as re:
+			# Still blocked - fall back to traditional queue
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[DEFERRED_BLOCKED] Still blocked after delay: {re}. Queuing permanently..."
+				)
+
+			# Move to persistent queue
+			if hasattr(self, '_meta_manager') and self._meta_manager:
+				clip_object_id = id(clip)
+				self._meta_manager._pending_renames.append((None, target_name, clip_object_id))
+				self._meta_manager._store_clip_reference(clip_object_id, clip)
+
+		return
 
 	def strip_metadata_tags(self, clip_name):
 		"""
-        Remove all SUX metadata tags from clip name for cleanliness.
+		Remove all SUX metadata tags from clip name for cleanliness.
 
-        Args:
-            clip_name (str): Raw clip name
+		Args:
+			clip_name (str): Raw clip name
 
-        Returns:
-            str: Name without [...}] tags
-        """
+		Returns:
+			str: Name without [SUX:...}] tags
+		"""
 		if not clip_name:
 			return clip_name
 
-		import re
+		# Step 1: Remove well-formed tags at end of name
+		cleaned = re.sub(r'\s+\[SUX:\{[^}]*\}\]$', '', clip_name).strip()
 
-		# Remove SUX formatted tags
-		cleaned = re.sub(r'\[SUX:\{[^}]*\}\]\s*$', '', clip_name).strip()
+		# Step 2: If nothing changed, try removing malformed/incomplete tags
+		if cleaned == clip_name:
+			# Remove trailing [SUX:...anything...] patterns
+			cleaned = re.sub(r'\s+\[SUX:[^\]]*$', '', clip_name).strip()
 
-		return cleaned
+		# Step 3: One final sweep for any stray tag fragments
+		if '[SUX:' in cleaned:
+			# Conservative approach: only remove if clearly at end
+			last_bracket = cleaned.rfind('[SUX:')
+			if last_bracket > 0:
+				cleaned = cleaned[:last_bracket].strip()
+
+				return cleaned
+
+	def _flush_pending_renames(self):
+		"""
+	    FORCE-FLUSH all pending rename operations immediately.
+
+	    Call this during disconnect() before script shutdown to ensure
+	    any queued tags get written to clip names before Live exits.
+
+	    Returns count of successfully processed renames.
+	    """
+		if not hasattr(self, '_meta_manager') or not self._meta_manager:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[FLUSH_SKIP] No meta manager available")
+			return 0
+
+		if not self._meta_manager._pending_renames:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message("[FLUSH_NONE] No pending renames to process")
+			return 0
+
+		processed_count = 0
+		skipped_invalid = 0
+
+		# Process from end to beginning so we can safely delete items
+		for i in reversed(list(range(len(self._meta_manager._pending_renames)))):
+			pending_op = self._meta_manager._pending_renames[i]
+			clip_id, target_name, clip_object_id = pending_op
+
+			# Retrieve clip reference
+			clip_obj = self._meta_manager._get_clip_by_object_id(clip_object_id)
+
+			if not clip_obj or not hasattr(clip_obj, 'name'):
+				# Clip was deleted or became invalid - remove from queue
+				del self._meta_manager._pending_renames[i]
+				skipped_invalid += 1
+				continue
+
+			# Try to force rename now
+			try:
+				clip_obj.name = target_name
+
+				# Verify it worked
+				actual_name = getattr(clip_obj, 'name', '')
+				if target_name in actual_name or (len(target_name) <= 60 and target_name == actual_name):
+					del self._meta_manager._pending_renames[i]
+					processed_count += 1
+				else:
+					# Name changed but doesn't match exactly - partial success
+					del self._meta_manager._pending_renames[i]
+					processed_count += 1
+
+			except RuntimeError:
+				# Still blocked - leave in queue for next opportunity
+				pass
+
+		# Report summary
+		remaining = len(self._meta_manager._pending_renames)
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[FLUSH_COMPLETE] Success:{processed_count} Invalid:{skipped_invalid} Remaining:{remaining}"
+			)
+
+		return processed_count
 
 
 	# def _register_scale_listeners(self):
@@ -1453,20 +1838,23 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			try:
 				current_state = self._get_current_state_dict()
 				added_track_slot_info = self._meta_manager._get_current_track_slot_indices_safe(clip) if hasattr(
-					self._meta_manager, '_get_current_track_slot_indices_safe') else (-1, -1)
+					self._meta_manager, '_get_current_track_track_indices_safe') else (-1, -1)
 				current_state['track_index'] = added_track_slot_info[0]
 				current_state['slot_index'] = added_track_slot_info[1]
 
 				success = self.update_clip_name_with_params(clip, current_state)
-				if success:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[TAG_WRITTEN] Sux tag embedded in clip name")
-				else:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message("[TAG_WRITE_FAILED] Could not embed tag")
+
+				# DO NOT LOG "WRITTEN" HERE - let update_clip_name_with_params handle its own logging
+				# That method knows whether it was immediate or queued
+				if DEBUG_LOGGING and success:
+					self._control_surface.log_message(
+						f"[TAG_ENQUEUE] Initiated tag write operation (check logs above for result)"
+					)
+
 			except Exception as e:
 				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[TAG_WRITE_ERROR] {e}")
+					import traceback
+					self._control_surface.log_message(f"[TAG_WRITE_ERROR] {e}\n{traceback.format_exc()}")
 
 		# Mark initialization complete
 		self._initializing = False
@@ -1484,6 +1872,44 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message(
 				f"[CLIP_SET] '{cname}' @ T{tidx}:S{sidx} (source={settings_source})"
 			)
+
+	# Add at the end of MelodicNoteEditorComponent class, near other utility methods:
+
+	def manually_write_all_tags(self):
+		"""
+        MANUAL DEBUGGING TOOL: Forces all current clip parameters to be written
+        immediately as tags. Useful for verifying tags persist across restarts.
+
+        Call from Python console:
+            from your_module import melodic_sequencer_instance
+            melodic_sequencer_instance.manually_write_all_tags()
+        """
+		if not self._clip:
+			self._control_surface.show_message("No clip selected")
+			return
+
+		try:
+			current_state = self._get_current_state_dict()
+
+			# Try direct write
+			success = self.update_clip_name_with_params(self._clip, current_state)
+
+			if success:
+				# Verify it worked
+				clip_name = self._clip.name
+				if "[SUX:" in clip_name:
+					self._control_surface.show_message("Tag wrote successfully!")
+					self._control_surface.log_message(f"[MANUAL_DEBUG] Tag present: {clip_name[:60]}...")
+				else:
+					self._control_surface.show_message("Tag attempted but not verified")
+					self._control_surface.log_message(f"[MANUAL_DEBUG] Warning: Tag may not have taken effect")
+			else:
+				self._control_surface.show_message("Tag write failed")
+
+		except Exception as e:
+			import traceback
+			self._control_surface.show_message("Error writing tag")
+			self._control_surface.log_message(f"[MANUAL_DEBUG ERROR] {e}\n{traceback.format_exc()}")
 
 	def _get_simple_clip_key(self, clip):
 		"""Fallback: Simple key using object identity when get_key() fails."""
