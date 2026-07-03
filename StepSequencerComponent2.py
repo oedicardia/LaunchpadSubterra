@@ -1184,7 +1184,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Schedule check in ~2 seconds
 		if hasattr(self._control_surface, 'schedule_message'):
 			try:
-				self._control_surface.schedule_message(2, self._background_flush_callback)
+				self._control_surface.schedule_message(15, self._background_flush_callback)
 			except Exception as e:
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(f"[FLUSH_SCH_ERR] {e}")
@@ -1274,13 +1274,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def build_embedded_parameters_tag(self, params_dict):
 		"""
-        Construct the SUX metadata tag from parameter dictionary.
+	    Construct the SUX metadata tag from parameter dictionary.
 
-        Format: [SUX:{scale;root_note;display_octave;resolution_index;loop_block;loop_page_offset;clip_loop_start;clip_loop_end}]
+	    Format: [SUX:{scale;root_note;display_octave;resolution_index;loop_block;loop_page_offset;clip_loop_start;clip_loop_end}]
 
-        Returns:
-            str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
-        """
+	    IMPORTANT: Must include BOTH opening '[' and closing ']' brackets!
+
+	    Returns:
+	        str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
+	    """
 		try:
 			values = [
 				str(int(params_dict.get('scale', 0))),
@@ -1294,12 +1296,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			]
 
 			param_string = ";".join(values)
-			return f"{self.METADATA_PREFIX}{{{param_string}}}"
+
+			# CRITICAL FIX: Include BOTH opening '[' and closing ']'
+			full_tag = f"{self.METADATA_PREFIX}{{{param_string}}}{self.METADATA_SUFFIX}"
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[BUILD_TAG_DEBUG] Built tag: '{full_tag}'"
+				)
+
+			return full_tag
 
 		except Exception as e:
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}")
-			return self.METADATA_PREFIX + "{0;0;2;4;0;0;0.0;16.0}"
+			# Return minimal valid tag format with BOTH brackets
+			return f"{self.METADATA_PREFIX}{{0;0;2;4;0;0;0.0;16.0}}{self.METADATA_SUFFIX}"
 
 	def update_clip_name_with_params(self, clip, params_dict):
 		"""
@@ -1604,8 +1616,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return 0
 
 		if not self._meta_manager._pending_renames:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[FLUSH_NONE] No pending renames to process")
+			#if DEBUG_LOGGING:
+			#	self._control_surface.log_message("[FLUSH_NONE] No pending renames to process")
 			return 0
 
 		processed_count = 0

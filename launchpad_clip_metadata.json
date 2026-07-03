@@ -1,0 +1,120 @@
+{
+  "clips": {
+    "ORIG_0:0_empty_clip": {
+      "settings": {
+        "scale": 0,
+        "root_note": 0,
+        "display_octave": 1,
+        "resolution_index": 3,
+        "resolution_name": "1/32",
+        "loop_block": 0,
+        "loop_page_offset": 0,
+        "clip_loop_start": 0.0,
+        "clip_loop_end": 24.0,
+        "timestamp": 1783065512.236005
+      },
+      "track_index": 0,
+      "slot_index": 0,
+      "content_hash": "empty_clip",
+      "clip_name_last_seen": "[SUX:{0;0;2;4;0;0;0.0;24.0}]",
+      "original_creation_pos": "T0_S0",
+      "current_pos": "T0_S0",
+      "created_at": 1783065512.236249,
+      "updated_at": 1783065512.236249,
+      "metadata_version": 2
+    },
+    "CURRENT_0:0_empty_clip": {
+      "settings": {
+        "scale": 0,
+        "root_note": 0,
+        "display_octave": 1,
+        "resolution_index": 3,
+        "resolution_name": "1/32",
+        "loop_block": 0,
+        "loop_page_offset": 0,
+        "clip_loop_start": 0.0,
+        "clip_loop_end": 24.0,
+        "timestamp": 1783065512.236005
+      },
+      "track_index": 0,
+      "slot_index": 0,
+      "content_hash": "empty_clip",
+      "clip_name_last_seen": "[SUX:{0;0;2;4;0;0;0.0;24.0}]",
+      "original_creation_pos": "T0_S0",
+      "current_pos": "T0_S0",
+      "created_at": 1783065512.236249,
+      "updated_at": 1783065512.236249,
+      "metadata_version": 2
+    },
+    "HASH_empty_clip": {
+      "settings": {
+        "scale": 0,
+        "root_note": 0,
+        "display_octave": 3,
+        "resolution_index": 6,
+        "resolution_name": "1/4",
+        "loop_block": 1,
+        "loop_page_offset": 0,
+        "clip_loop_start": 0.0,
+        "clip_loop_end": 24.0,
+        "timestamp": 1783065527.10147
+      },
+      "track_index": 0,
+      "slot_index": 1,
+      "content_hash": "empty_clip",
+      "clip_name_last_seen": "[SUX:{0;0;1;3;0;0;0.0;24.0}]",
+      "original_creation_pos": "T0_S1",
+      "current_pos": "T0_S1",
+      "created_at": 1783065527.101704,
+      "updated_at": 1783065527.101705,
+      "metadata_version": 2
+    },
+    "ORIG_0:1_empty_clip": {
+      "settings": {
+        "scale": 0,
+        "root_note": 0,
+        "display_octave": 3,
+        "resolution_index": 6,
+        "resolution_name": "1/4",
+        "loop_block": 1,
+        "loop_page_offset": 0,
+        "clip_loop_start": 0.0,
+        "clip_loop_end": 24.0,
+        "timestamp": 1783065527.10147
+      },
+      "track_index": 0,
+      "slot_index": 1,
+      "content_hash": "empty_clip",
+      "clip_name_last_seen": "[SUX:{0;0;1;3;0;0;0.0;24.0}]",
+      "original_creation_pos": "T0_S1",
+      "current_pos": "T0_S1",
+      "created_at": 1783065527.101704,
+      "updated_at": 1783065527.101705,
+      "metadata_version": 2
+    },
+    "CURRENT_0:1_empty_clip": {
+      "settings": {
+        "scale": 0,
+        "root_note": 0,
+        "display_octave": 3,
+        "resolution_index": 6,
+        "resolution_name": "1/4",
+        "loop_block": 1,
+        "loop_page_offset": 0,
+        "clip_loop_start": 0.0,
+        "clip_loop_end": 24.0,
+        "timestamp": 1783065527.10147
+      },
+      "track_index": 0,
+      "slot_index": 1,
+      "content_hash": "empty_clip",
+      "clip_name_last_seen": "[SUX:{0;0;1;3;0;0;0.0;24.0}]",
+      "original_creation_pos": "T0_S1",
+      "current_pos": "T0_S1",
+      "created_at": 1783065527.101704,
+      "updated_at": 1783065527.101705,
+      "metadata_version": 2
+    }
+  },
+  "version": 1
+}
