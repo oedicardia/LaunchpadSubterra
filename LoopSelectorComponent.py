@@ -179,9 +179,11 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             return
 
         self.update()
+        self._step_sequencer.sync_clip_with_json()
 
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
+        self._step_sequencer.sync_clip_with_json()
 
     def _loop_button_value(self, value, sender):
         # self._control_surface.log_message(
@@ -322,6 +324,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
                 self._last_button_time = time.time()
                 self._last_button_idx = idx
+            self._step_sequencer.sync_clip_with_json()
 
     def _is_selecting_current_loop(self, start, end):
 
@@ -377,6 +380,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 self._block = new_block
                 absolute_block = self._block + (self._loop_page_offset * 8)
                 self._step_sequencer.set_page(absolute_block)
+                self._step_sequencer.sync_clip_with_json()
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
     def update(self):
