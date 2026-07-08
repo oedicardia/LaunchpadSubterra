@@ -6,6 +6,7 @@ from _Framework.ButtonElement import ButtonElement
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
 STEPSEQ_MODE_MULTINOTE = 2
+DEBUG_LOGGING = True  # Set to False for release
 class LoopSelectorComponent(ControlSurfaceComponent):
 
     def __init__(self, step_sequencer, buttons, control_surface):
@@ -178,7 +179,21 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             self._debug(f"SET LOOP FAILED: {str(e)}")
             return
 
+        block_size = self._blocksize * self._resolution
+        absolute_loop_start_block = int(round(start / block_size))
+
+        if DEBUG_LOGGING:
+            self._control_surface.log_message(
+                f"[SET_LOOP] start={start} → abs_block={absolute_loop_start_block}"
+            )
+
         self.update()
+
+        # Sync with step sequencer - it will calculate page_offset internally
+        if hasattr(self._step_sequencer, '_loop_block'):
+            self._step_sequencer._loop_block = absolute_loop_start_block
+
+        # Trigger sync through step sequencer (will save to JSON with absolute loop_block)
         self._step_sequencer.sync_clip_with_json()
 
     def set_loop_page_offset(self, offset):

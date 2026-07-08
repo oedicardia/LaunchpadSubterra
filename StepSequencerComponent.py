@@ -1034,9 +1034,10 @@ class StepSequencerComponent(CompoundComponent):
 
         # CRITICAL: Force Loop Selector to recalculate its block boundaries
         if self._loop_selector != None:
-            #self._loop_selector.set_clip_loop(self._clip.loop_start, self._clip.loop_end)  # Triggers re-calc
+            if self._clip != None:
+                self._loop_selector.set_clip_loop(self._clip.loop_start, self._clip.loop_end)  # Triggers re-calc
             # OR simply update it
-            self._loop_selector.update()
+            #self._loop_selector.update()
 
         if self._loop_selector != None:
             self._update_loop_selector()

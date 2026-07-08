@@ -28,8 +28,6 @@ import re
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
 DEBUG_LOGGING = True  # Set to False for release
-ID_TAG_PREFIX = '[SUX:'
-ID_TAG_SUFFIX = ']'
 
 class ClipMetadataManager:
 	"""Manages persistent clip metadata storage in JSON."""
@@ -125,37 +123,40 @@ class ClipMetadataManager:
 
 		try:
 			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
-			self._log(f"indices = T{track_idx}:S{slot_idx}")
+
+			# Extract ONLY settings from params_dict (filter out positional metadata)
+			settings_only = {}
+			settings_keys = [
+				'scale', 'root_note', 'display_octave', 'resolution_index',
+				'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end',
+				'timestamp', 'resolution_name'
+			]
+
+			for key in settings_keys:
+				if key in params_dict:
+					settings_only[key] = params_dict[key]
 
 			content_hash = self._hash_clip_content(clip)
-			self._log(f"content_hash = {content_hash[:20]}...")
-
 			key_pos = f"POS_{track_idx}_{slot_idx}"
-			self._log(f"key_pos = '{key_pos}'")
 
 			entry = {
-				"settings": params_dict,
-				"track_index": track_idx,
-				"slot_index": slot_idx,
+				"settings": settings_only,  # ← Only settings here!
+				"track_index": track_idx,  # ← Position here!
+				"slot_index": slot_idx,  # ← Position here!
 				"content_hash": content_hash,
 				"updated_at": time.time()
 			}
-			self._log(f"entry created with settings keys: {list(entry['settings'].keys())}")
 
 			self.cache.setdefault("clips", {})
 			self.cache["clips"][key_pos] = entry
-			self._log(f"Added entry to self.cache['clips'][key_pos]")
-			self._log(f"Now cache has {len(self.cache.get('clips', {}))} total entries")
 
-			self._log(f"Calling _save_cache() NOW...")
 			self._save_cache()
-			self._log(f"save_clip_to_json() COMPLETE")
-
+			self._log(f"Saved clip T{track_idx}:S{slot_idx} (hash={content_hash[:16]})")
 			return True
 
 		except Exception as e:
 			import traceback
-			self._log(f"❌ save_clip_to_json() FAILED: {e}")
+			self._log(f"Save error: {e}")
 			self._log(traceback.format_exc())
 			return False
 
@@ -647,9 +648,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	# EMBEDDED METADATA TAG SYSTEM - PURE SUX FORMAT
 	# =============================================================
 
-	METADATA_PREFIX = "[SUX:"  # New universal tag format
-	METADATA_SUFFIX = "]"
-
 	def _schedule_background_flush(self):
 		"""Schedule the next background flush attempt."""
 		if not hasattr(self, '_flush_timer_active') or not self._flush_timer_active:
@@ -690,106 +688,86 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._schedule_background_flush()
 
 	def extract_embedded_parameters(self, clip_name):
-		"""Extract parameter array from clip name tag [SUX:{scale;root;oct;res;blk;off;start;end}].
-		Returns None if tag is malformed, missing, or unreadable."""
+		"""
+        Parse SUX tag from clip name. Extracts from FIRST valid tag only.
+
+        Handles BOTH:
+        - Good format: [SUX:{0;0;3;3;0;0;0.0;24.0}]
+        - Corrupt format: [SUX:0;0;3;3;0;0;0.0;24.0] (missing {})
+
+        Returns None if no valid tag found.
+        """
 		if not clip_name:
 			return None
 
 		try:
-			# Find [SUX:{
-			start_marker = self.METADATA_PREFIX + "{"  # "[SUX:{"
-			start_idx = clip_name.find(start_marker)
+			# Find FIRST tag start: [SUX:
+			start_idx = clip_name.find(self.METADATA_PREFIX)
 			if start_idx == -1:
 				return None
 
-			# Find closing braces
-			end_bracket = clip_name.rfind("]")
-			end_curly = clip_name.rfind("}")
-
-			# Must have BOTH after the opening marker
-			if end_bracket <= start_idx or end_curly <= start_idx:
+			# Find NEXT closing bracket ] (not rfind, use find to get first match)
+			end_idx = clip_name.find(self.METADATA_SUFFIX, start_idx + len(self.METADATA_PREFIX))
+			if end_idx <= start_idx:
 				return None
 
-			# Extract content BETWEEN markers: after [SUX:{ and before }
-			content_start = start_idx + len(start_marker)
-			content_end = end_curly
+			# Extract content between FIRST [SUX: and FIRST ]
+			param_start = start_idx + len(self.METADATA_PREFIX) + 1
+			param_string = clip_name[param_start:end_idx].strip()
+			if param_string.endswith('}'):
+				param_string = param_string[:-1]
 
-			if content_end <= content_start:
-				return None
-
-			param_string = clip_name[content_start:content_end].strip()
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
-					f"[TAG_EXTRACT_CONTENT] Extracted param string: '{param_string}'"
+					f"[EXTRACT_DEBUG] Extracted from FIRST tag: '{param_string[:40]}...'"
 				)
 
-			# Validate format
+			# Must have semicolons
 			if ";" not in param_string:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[TAG_NO_SEMICOLON] No semicolons in: '{param_string}'"
-					)
 				return None
 
 			values = param_string.split(";")
 
 			if len(values) < 8:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[TAG_INCOMPLETE] {len(values)}/8 params: '{values}'"
-					)
 				return None
-			# Parse each value - TRIM whitespace first!
-			params = {}
-			valid_keys = [
-				('scale', int), ('root_note', int), ('display_octave', int),
-				('resolution_index', int), ('loop_block', int),
-				('loop_page_offset', int), ('clip_loop_start', float), ('clip_loop_end', float)
-			]
 
-			for i, (key, parser) in enumerate(valid_keys):
-				raw_val = values[i].strip()  # ← CRITICAL: TRIM FIRST!
-
-				if raw_val == "":
-					params[key] = 0.0 if parser == float else 0
-				else:
-					# Reject values containing brackets
-					if '{' in raw_val or '}' in raw_val or '[' in raw_val or ']' in raw_val:
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[TAG_BAD_VAL] Key={key}, Val={raw_val!r} contains brackets!"
-							)
-						return None
-
-					try:
-						params[key] = parser(raw_val)
-					except ValueError as ve:
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[TAG_PARSE_ERROR] Key={key}, Val={raw_val!r}, Err={ve}"
-							)
-						return None
+			# Parse each value - TRIM FIRST!
+			params = {
+				'scale': int(values[0].strip()) % 12 if values[0].strip() else 0,
+				'root_note': int(values[1].strip()) % 12 if values[1].strip() else 0,
+				'display_octave': max(0, min(15, int(values[2].strip()))) if values[2].strip() else 2,
+				'resolution_index': max(0, min(7, int(values[3].strip()))) if values[3].strip() else 4,
+				'loop_block': int(values[4].strip()) if values[4].strip() else 0,
+				'loop_page_offset': int(values[5].strip()) if values[5].strip() else 0,
+				'clip_loop_start': float(values[6].strip()) if values[6].strip() else 0.0,
+				'clip_loop_end': float(values[7].strip()) if values[7].strip() else 16.0
+			}
 
 			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[TAG_OK_PARSED] Oct={params['display_octave']}, Res={params['resolution_index']}")
+				self._control_surface.log_message(
+					f"[TAG_OK] Oct={params['display_octave']}, Res={params['resolution_index']}"
+				)
+
 			return params
 
 		except Exception as e:
 			if DEBUG_LOGGING:
-				import traceback
-				self._control_surface.log_message(f"[TAG_CRITICAL_ERROR] {e}\n{traceback.format_exc()}")
+				self._control_surface.log_message(f"[TAG_ERROR] {e}")
 			return None
 
 	def build_embedded_parameters_tag(self, params_dict):
 		"""
-		Construct the SUX metadata tag from parameter dictionary.
-		Format: [SUX:{scale;root_note;display_octave;resolution_index;loop_block;loop_page_offset;clip_loop_start;clip_loop_end}]
-		IMPORTANT: Must include BOTH opening '[' and closing ']' brackets!
-		Returns:
-			str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
-		"""
+        Construct the SUX metadata tag from parameter dictionary.
+
+        Format: [SUX:{scale;root;oct;res;blk;off;start;end}]
+
+        CRITICAL: Must include BOTH opening '[' and closing ']' AND curly braces '{' '}'!
+
+        Returns:
+            str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
+        """
 		try:
-			vals = [
+			values = [
 				str(int(params_dict.get('scale', 0))),
 				str(int(params_dict.get('root_note', 0))),
 				str(int(params_dict.get('display_octave', 2))),
@@ -799,10 +777,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				str(round(float(params_dict.get('clip_loop_start', 0.0)), 1)),
 				str(round(float(params_dict.get('clip_loop_end', 16.0)), 1))
 			]
-			# BOTH brackets!
-			return f"{self.METADATA_PREFIX}{';'.join(vals)}{self.METADATA_SUFFIX}"
-		except:
-			return f"{self.METADATA_PREFIX}0;0;2;4;0;0;0.0;16.0{self.METADATA_SUFFIX}"
+
+			param_string = ";".join(values)
+
+			# ⭐⭐⭐ CRITICAL FIX: Include BOTH curly braces AND square brackets! ⭐⭐⭐
+			# Format: [SUX:{...}]
+			full_tag = f"{self.METADATA_PREFIX}{{{param_string}}}{self.METADATA_SUFFIX}"
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[BUILD_TAG] Built tag: '{full_tag}'"
+				)
+
+			return full_tag
+
+		except Exception as e:
+			if DEBUG_LOGGING:
+				import traceback
+				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}\n{traceback.format_exc()}")
+			# Return minimal valid tag with BOTH curly braces
+			return f"{self.METADATA_PREFIX}{{0;0;2;4;0;0;0.0;16.0}}{self.METADATA_SUFFIX}"
 
 
 	def update_clip_name_with_params(self, clip, params_dict):
@@ -823,26 +817,72 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return False
 
 		try:
-			# ============================================
-			# STEP 1: BUILD THE DESIRED TAG
-			# ============================================
+			original_name = getattr(clip, 'name', '')
+
+			# ⭐⭐⭐ CRITICAL: DETECT DUPLICATE TAGS EARLY ⭐⭐⭐
+			tag_count = original_name.count(self.METADATA_PREFIX)
+
+			if tag_count > 1:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[DUPLICATE_DETECTED] Found {tag_count} tags in clip name! " +
+						f"Stripping all..."
+					)
+
+				# Force strip ALL tags before proceeding
+				clean_before = self.strip_metadata_tags(original_name)
+
+				if clean_before != original_name:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[CLEANUP_DONE] Stripped duplicates, now: '{clean_before[:50]}...'"
+						)
+
+			# Build the desired tag
 			new_tag = self.build_embedded_parameters_tag(params_dict)
 
 			# Verify tag format before proceeding
-			if not new_tag.startswith("[SUX:"):
+			if not new_tag.startswith(self.METADATA_PREFIX):
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_BUILD_FAIL] Tag doesn't start with prefix: '{new_tag}'"
+					)
+				return False
+
+			# Ensure it ends with suffix
+			if not new_tag.endswith(self.METADATA_SUFFIX):
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_BUILD_WARN] Tag missing closing bracket, auto-correcting"
+					)
+				new_tag = new_tag + self.METADATA_SUFFIX
+			# ⭐⭐⭐ CONFIRM TAG HAS CURLY BRACES ⭐⭐⭐
+			if DEBUG_LOGGING:
+				has_curly = "{" in new_tag and "}" in new_tag
+				status = "✓" if has_curly else "✗"
+				self._control_surface.log_message(
+					f"[TAG_DEBUG] Tag format check: {status} '{new_tag}'"
+				)
+				if not has_curly:
+					self._control_surface.log_message(
+						f"[TAG_ERROR] Tag is missing curly braces! Critical bug!"
+					)
+
+			# Verify tag format before proceeding
+			if not new_tag.startswith(self.METADATA_PREFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_FAIL] Tag doesn't start with '[SUX:': '{new_tag}'"
 					)
 				return False
 
-			if not new_tag.endswith("]"):
+			if not new_tag.endswith(self.METADATA_SUFFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_WARN] Tag missing closing bracket, auto-correcting"
 					)
 				# Auto-fix by appending missing bracket
-				new_tag = new_tag + "]"
+				new_tag = new_tag + self.METADATA_SUFFIX
 
 			original_name = getattr(clip, 'name', '')
 
@@ -863,9 +903,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			tag_exists_and_valid = False
 			extract_from_old = None
 
-			if "[SUX:" in original_name and "}" in original_name and "]" in original_name:
-				start_bracket = original_name.find("[SUX:")
-				end_bracket = original_name.rfind("]")
+			if self.METADATA_PREFIX in original_name and "}" in original_name and self.METADATA_SUFFIX in original_name:
+				start_bracket = original_name.find(self.METADATA_PREFIX)
+				end_bracket = original_name.rfind(self.METADATA_SUFFIX)
 
 				if end_bracket > start_bracket:
 					potential_tag = original_name[start_bracket:end_bracket+1]
@@ -969,7 +1009,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._control_surface.log_message(f"[TAG_VERIFIED] ✓ Tag confirmed in clip name")
 					return True  # Success, done!
 
-				elif "[SUX:" in actual_name and "]" in actual_name:
+				elif self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
 					if DEBUG_LOGGING:
 						self._control_surface.log_message(f"[TAG_PARTIAL] Tag exists but may vary slightly")
 					return True  # Acceptable success
@@ -1078,7 +1118,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# Verify
 			actual_name = getattr(clip, 'name', '')
-			if "[SUX:" in actual_name and "]" in actual_name:
+			if self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[DEFERRED_SUCCESS] Tag written via delayed callback"
@@ -1107,7 +1147,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def sync_clip_with_json(self):
 		"""
-		Core sync logic - saves JSON and updates tag for CURRENT clip.
+		CRITICAL: Call this EVERY TIME parameters change!
+		Separates SETTINGS from POSITION to avoid polluting settings dict.
 		"""
 		if not self._clip or not self._meta_manager:
 			if DEBUG_LOGGING:
@@ -1115,44 +1156,74 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return
 
 		try:
-			# 1. Get current state
-			current_state = self._get_current_state_dict()
+			# 1. Get CURRENT STATE (SETTINGS ONLY - no position!)
+			settings_only = self._get_current_state_dict()
 
-			# 2. Update indices to match actual clip position
+			# 2. Get POSITION SEPARATELY (not stored in settings dict!)
 			track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
-			current_state['track_index'] = track_idx
-			current_state['slot_index'] = slot_idx
-
-			# 3. SAVE TO JSON (Persistence)
-			self._meta_manager.save_clip_to_json(self._clip, current_state)
-
-			# 4. UPDATE TAG IN CLIP NAME (Persistence in Live itself)
-			self.update_clip_name_with_params(self._clip, current_state)
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
-					f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={current_state['display_octave']}, Res={current_state['resolution_index']})"
+					f"[SYNC_JSON] Preparing sync: T{track_idx}:S{slot_idx}" +
+					f" Oct={settings_only['display_octave']} Res={settings_only['resolution_index']}"
+				)
+
+			# 3. Add positional data to metadata, NOT settings
+			# Create a copy for saving (don't modify original settings dict!)
+			save_payload = {
+				**settings_only,  # Spread settings
+				'track_index': track_idx,  # Add position SEPARATELY
+				'slot_index': slot_idx
+			}
+
+			# 4. SAVE TO JSON
+			self._meta_manager.save_clip_to_json(self._clip, save_payload)
+
+			# 5. UPDATE TAG IN CLIP NAME (only save settings, not position!)
+			self.update_clip_name_with_params(self._clip, settings_only)
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={settings_only['display_octave']}, Res={settings_only['resolution_index']})"
 				)
 
 		except Exception as e:
 			import traceback
 			self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
 
-
 	def strip_metadata_tags(self, clip_name):
 		"""
-		Remove all SUX metadata tags from clip name for cleanliness.
-		ALWAYS returns a string (never None). Returns empty string if input invalid.
-		Args:
-			clip_name (str): Raw clip name
-		Returns:
-			str: Name without [SUX:...}] tags, or '' if input invalid
-		"""
+        Remove ALL SUX tags from clip name (not just the last one).
+
+        Handles any number of duplicate tags:
+        - Single: [SUX:{0;0;2;4;0;0;0.0;16.0}]
+        - Multiple: [SUX:{...}] [SUX:{...}] [SUX:{...}]
+        - Corrupt: [SUX:...] without {}
+
+        ALWAYS returns string (never None).
+
+        Uses self.METADATA_PREFIX and self.METADATA_SUFFIX constants.
+        """
 		if not clip_name:
 			return ""
-		cleaned = re.sub(r'\s+\[SUX:\{[^}]*\}\]\s*$', '', clip_name).strip()
-		return cleaned if cleaned else clip_name
 
+		# Escape constants for regex safety
+		prefix_esc = re.escape(self.METADATA_PREFIX)
+		suffix_esc = re.escape(self.METADATA_SUFFIX)
+
+		# Pattern matches ONE tag: [SUX:...] where ... is anything until next ]
+		# Use GLOBAL flag (flags=re.UNICODE or re.MULTILINE) to replace ALL occurrences
+		pattern_all = rf'{prefix_esc}[^\]]*{suffix_esc}'
+
+		# CRITICAL FIX: Use re.sub with GLOBAL replacement (replace ALL tags, not just last)
+		# This removes EVERY tag anywhere in the string
+		cleaned = re.sub(pattern_all, '', clip_name).strip()
+
+		# SAFETY: Ensure we return a valid string (never None)
+		if cleaned is None:
+			return clip_name  # Fallback to original
+
+		return cleaned
 
 	def _verify_final_tag(self, clip, expected_state):
 		"""Delayed verification that runs after deferred writes complete."""
@@ -1173,7 +1244,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# FIX: Check for param VALUES, not exact string match
 			# Build param string WITHOUT brackets for flexible matching
-			expected_params_str = expected_tag.replace("[SUX:", "").replace("]", "")  # Remove outer brackets
+			expected_params_str = expected_tag.replace(self.METADATA_PREFIX, "").replace(self.METADATA_SUFFIX, "")  # Remove outer brackets
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[VERIFY_DEBUG] Params only: '{expected_params_str}'")
 
@@ -1202,9 +1273,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				if not has_correct_params:
 					# Check if ANY tag exists
-					if "[SUX:" in actual_name and "]" in actual_name:
-						start_idx = actual_name.find("[SUX:")
-						end_idx = actual_name.rfind("]") + 1
+					if self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
+						start_idx = actual_name.find(self.METADATA_PREFIX)
+						end_idx = actual_name.rfind(self.METADATA_SUFFIX) + 1
 						existing_tag = actual_name[start_idx:end_idx]
 						self._control_surface.log_message(f"[VERIFY_DIFFERENT_TAG] Found: '{existing_tag}'")
 
@@ -1484,10 +1555,25 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# ========== PHASE 3: SAVE PREVIOUS CLIP STATE TO JSON ==========
 		if self._meta_manager and self._clip:
 			try:
-				old_state = self._get_current_state_dict()
-				self._meta_manager.save_clip_to_json(self._clip, old_state)
+				# Get settings only (no position)
+				settings_only = self._get_current_state_dict()
+
+				# Get position separately
+				track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
+
+				# Combine for saving
+				save_payload = {
+					**settings_only,
+					'track_index': track_idx,
+					'slot_index': slot_idx
+				}
+
+				self._meta_manager.save_clip_to_json(self._clip, save_payload)
+
 				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[PHASE3] Saved previous clip to JSON")
+					self._control_surface.log_message(
+						f"[PHASE3] Saved previous clip to JSON (T{track_idx}:S{slot_idx})"
+					)
 			except Exception as e:
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(f"[PREV_STATE_SAVE_ERROR] {e}")
@@ -1584,7 +1670,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if success:
 				# Verify it worked
 				clip_name = self._clip.name
-				if "[SUX:" in clip_name:
+				if self.METADATA_PREFIX in clip_name:
 					self._control_surface.show_message("Tag wrote successfully!")
 					self._control_surface.log_message(f"[MANUAL_DEBUG] Tag present: {clip_name[:60]}...")
 				else:
@@ -1796,7 +1882,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			)
 
 	def load_clip_settings(self, clip, settings_dict):
-		"""Loads settings from dictionary into active clip's UI state."""
+		"""Loads settings from dictionary into active clip's UI state.
+
+		CRITICAL FIXES:
+		1. Resolution LED sync through proper setter chain
+		2. Calculate page_offset from absolute block (don't save it)
+		3. Force Loop Selector visual update
+		"""
 		if not settings_dict:
 			if DEBUG_LOGGING:
 				self._control_surface.log_message("[LOAD_SETTINGS] No settings provided, using current defaults")
@@ -1824,13 +1916,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._display_octave = oct_val
 					self._parse_notes()
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[LOADING_DISPLAY_OCTAVE] From JSON={settings_dict.get('display_octave')} " +
-					f"To Internal={getattr(self, '_display_octave', '?')}"
-				)
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[LOADING_DISPLAY_OCTAVE] From JSON={settings_dict.get('display_octave')} " +
+						f"To Internal={getattr(self, '_display_octave', '?')}"
+					)
 
-			# === RESOLUTION: CRITICAL FIX WITH VALIDATION ===
+			# === RESOLUTION: LOAD VALUE, LET SETTER HANDLE LED SYNC ===
 			from .SequencerConstants import RESOLUTION_MAP
 
 			new_resolution_beats = None
@@ -1906,7 +1998,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					)
 					self._parse_notes()
 
-			# === LOOP PARAMETERS (LoopSelector) ===
+			# === CRITICAL: FORCE RESOLUTION BUTTON LED UPDATE ===
+			# Now that we've loaded the resolution, trigger the proper setter chain
+			# This will update both LED display AND loop selector boundaries
+			if self._step_sequencer and hasattr(self._step_sequencer, '_note_editor'):
+				# The resolution was already set above, but we need to refresh the UI
+				# Call through proper setter to ensure LED sync
+				try:
+					self._step_sequencer._note_editor.set_resolution(self._resolution)
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[RESOLUTION_LED_SYNC_ERROR] {e}")
+
+			# === LOOP PARAMETERS: RECALCULATE page_offset FROM ABSOLUTE POSITION ===
 			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
 				ls = self._step_sequencer._loop_selector
 
@@ -1916,26 +2020,40 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						ls._block = block
 						ls._force = True
 
-				if 'loop_page_offset' in settings_dict:
-					offset = int(settings_dict['loop_page_offset'])
+				# ⭐⭐⭐ CRITICAL FIX: CALCULATE page_offset, DON'T RESTORE IT ⭐⭐⭐
+				# Recalculate offset from absolute loop_block position
+				if hasattr(ls, '_block'):
+					calculated_offset = ls._block // 8  # 8 blocks per page
+				else:
+					calculated_offset = 0
 
-					if hasattr(ls, '_loop_page_offset'):
-						ls._last_known_offset = offset - 1
-						ls._loop_page_offset = offset
-
-					if hasattr(self._step_sequencer, '_loop_page_offset'):
-						self._step_sequencer._loop_page_offset = offset
-
-					absolute_block = ls._block + (offset * 8)
-					if hasattr(self._step_sequencer, 'set_page'):
-						self._step_sequencer.set_page(absolute_block)
-
-					if DEBUG_LOGGING:
+				if DEBUG_LOGGING:
+					if hasattr(ls, '_block'):
 						self._control_surface.log_message(
-							f"[LOOP_PAGE] Offset={offset}, Block={ls._block}, AbsolutePage={absolute_block}"
+							f"[LOOP_OFFSET_RECALC] abs_block={ls._block} → calculated page_offset={calculated_offset}"
 						)
 
+				# Set both step sequencer and loop selector offsets
+				if hasattr(self._step_sequencer, '_loop_page_offset'):
+					old_offset = self._step_sequencer._loop_page_offset
+					self._step_sequencer._loop_page_offset = calculated_offset
 
+					if calculated_offset != old_offset:
+						# Force page change if offset changed
+						if hasattr(self._step_sequencer, 'set_page'):
+							absolute_block = ls._block
+							self._step_sequencer.set_page(absolute_block)
+							if DEBUG_LOGGING:
+								self._control_surface.log_message(
+									f"[PAGE_CHANGE] Moved to absolute block {absolute_block}"
+								)
+
+				if hasattr(ls, '_loop_page_offset'):
+					# IMPORTANT: Reset last_known_offset so Update detects the change
+					ls._last_known_offset = calculated_offset - 1  # Force detection on next update
+					ls._loop_page_offset = calculated_offset
+
+				# === LOAD LOOPS DIRECTLY FROM TAG VALUES ===
 				if 'clip_loop_start' in settings_dict and 'clip_loop_end' in settings_dict:
 					if self._clip:
 						start = float(settings_dict['clip_loop_start'])
@@ -1948,9 +2066,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								self._clip.end_marker = end
 								if hasattr(ls, '_get_clip_loop'):
 									ls._get_clip_loop()
-									ls.update()
+									ls.update()  # Force LED refresh
+								if DEBUG_LOGGING:
+									self._control_surface.log_message(
+										f"[LOOP_RESTORED] Start={start:.1f} End={end:.1f}"
+									)
 							except RuntimeError:
 								pass
+
+				# === CRITICAL: FORCE LOOP SELECTOR VISUAL UPDATE ===
+				# After all loop parameters are set, force full redraw
+				if hasattr(ls, 'update'):
+					ls.update()
+					if DEBUG_LOGGING:
+						self._control_surface.log_message("[LOOP_SELECTOR_FORCE_UPDATE] Redrawn after clip load")
 
 				# Refresh cycle button visual state now that loop params are synced
 				if hasattr(self._step_sequencer, '_update_cycle_button'):
@@ -1963,7 +2092,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					except Exception as e:
 						if DEBUG_LOGGING:
 							self._control_surface.log_message(f"[CYCLE_BUTTON_ERROR] {e}")
-
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
