@@ -1977,12 +1977,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# === RESOLUTION: LOAD VALUE, LET SETTER HANDLE LED SYNC ===
 			from .SequencerConstants import RESOLUTION_MAP
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[RES_VERIFY] before processing"
-					f"StepSeq idx={self._step_sequencer._resolution_index} "
-					f"NoteEditor beats={self._resolution}"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[RES_VERIFY] before processing"
+			# 		f"StepSeq idx={self._step_sequencer._resolution_index} "
+			# 		f"NoteEditor beats={self._resolution}"
+			# 	)
 			new_resolution_beats = None
 
 			# Try modern format first (resolution_index)
@@ -1995,6 +1995,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if res_idx < 0:
 					res_idx = 0
 
+				# Save canonical value
+				self._step_sequencer._resolution_index = res_idx
 				# CONVERT INDEX → BEAT VALUE
 				new_resolution_beats = float(RESOLUTION_MAP[res_idx])
 
@@ -2037,7 +2039,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# Safety net: ensure resolution_never exceeds zero
 			if new_resolution_beats is not None and new_resolution_beats > 0:
 				old_res_beats = getattr(self, '_resolution', 0.25)
-				self._resolution = new_resolution_beats  # ← ASSIGN TO _resolution, NOT resolution_beats
+				self.apply_loaded_resolution(new_resolution_beats)
 				self._parse_notes()
 
 				if DEBUG_LOGGING:
@@ -2206,7 +2208,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# The resolution was already set above, but we need to refresh the UI
 				# Call through proper setter to ensure LED sync
 				try:
-					self._step_sequencer.set_resolution(self._resolution)
+					self._step_sequencer.refresh_after_clip_load()
 				except Exception as e:
 					if DEBUG_LOGGING:
 						self._control_surface.log_message(f"[RESOLUTION_LED_SYNC_ERROR] {e}")
@@ -2316,6 +2318,32 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				f"loop_start={ls._loop_start} "
 				f"loop_end={ls._loop_end}"
 			)
+		self._verify_resolution_consistency()
+
+	def _verify_resolution_consistency(self):
+		"""Debug helper to ensure the note editor and StepSequencer agree."""
+		if not DEBUG_LOGGING:
+			return
+
+		expected = RESOLUTION_MAP[self._step_sequencer._resolution_index]
+
+		if abs(expected - self._resolution) > 1e-6:
+			self._control_surface.log_message(
+				f"[RESOLUTION_MISMATCH] "
+				f"index={self._step_sequencer._resolution_index} "
+				f"expected={expected} "
+				f"editor={self._resolution}"
+			)
+
+	def apply_loaded_resolution(self, beats):
+		"""
+        Called only while loading a clip.
+        Updates the editor without triggering JSON sync.
+        """
+		self._resolution = beats
+
+		if self._clip:
+			self._parse_notes()
 
 	# --- HELPER METHODS FOR METADATA MANAGER ---
 

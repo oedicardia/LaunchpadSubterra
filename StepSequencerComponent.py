@@ -1245,6 +1245,20 @@ class StepSequencerComponent(CompoundComponent):
                 self.update()
 
 # UTILS
+    def refresh_after_clip_load(self):
+        if self._loop_selector:
+            self._update_loop_selector()
+
+        if self._note_selector:
+            self._update_note_selector()
+
+        if self._note_editor:
+            self._update_note_editor()
+
+        self._update_resolution_button()
+
+        self._update_OSD()
+
     def create_clip(self):
         if self.song().view.highlighted_clip_slot != None:
             clip_slot = self.song().view.highlighted_clip_slot
