@@ -542,15 +542,28 @@ class StepSequencerComponent(CompoundComponent):
         self._note_editor.update()
 
     def _update_buttons(self):
-        self._update_resolution_button()
-        #self._update_quantization_button()
-        self._update_lock_button()
-        self._update_cycle_button()
-        self._update_mode_button()
-        #self._update_mute_shift_button()
-        self._update_scale_selector_button()
-        self._update_left_button()
-        self._update_right_button()
+        if hasattr(self, "_resolution_button"):
+            self._update_resolution_button()
+
+        if hasattr(self, "_lock_button"):
+            self._update_lock_button()
+
+        if hasattr(self, "_cycle_button"):
+            self._update_cycle_button()
+
+        if hasattr(self, "_mode_button"):
+            self._update_mode_button()
+
+        if hasattr(self, "_scale_selector_button"):
+            self._update_scale_selector_button()
+
+        if hasattr(self, "_left_button"):
+            self._update_left_button()
+
+        if hasattr(self, "_right_button"):
+            self._update_right_button()
+
+
 
 
 # CLIP CALLBACKS
@@ -983,6 +996,14 @@ class StepSequencerComponent(CompoundComponent):
             else:
                 self._resolution_button.set_light("DefaultButton.Disabled")
 
+    def updateResolutionButton(self):
+        if self.is_enabled() and self._resolution_button != None and self._playhead != None:
+            if(self._beat == int(self._playhead)):
+                self._resolution_button.set_light(self.RESOLUTION_COLOR_MAP_LOW[self._resolution_index])
+            else:
+                self._beat = int(self._playhead)
+                self._update_resolution_button()
+
     # Refresh button and its listener OK
     def set_resolution_button(self, button):
         # debug
@@ -996,7 +1017,7 @@ class StepSequencerComponent(CompoundComponent):
             if (self._resolution_button != None):
                 self._resolution_button.add_value_listener(self._resolution_button_value, identify_sender=True)
 
-    # Handle button held and resolution resolution selection OK
+    # Handle button held and resolution selection
     def _resolution_button_value(self, value, sender):
         # debug
         #self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -")
@@ -1018,15 +1039,6 @@ class StepSequencerComponent(CompoundComponent):
         # debug
         #self._control_surface.log_message(" - - - - -resolution_button pressed - - - - -self_note_cache ="+ str(self._note_cache))
 
-
-    def updateResolutionButton(self):
-        if self.is_enabled() and self._resolution_button != None and self._playhead != None:
-            if(self._beat == int(self._playhead)):
-                self._resolution_button.set_light(self.RESOLUTION_COLOR_MAP_LOW[self._resolution_index])
-            else:
-                self._beat = int(self._playhead)
-                self._update_resolution_button()
-
     def set_resolution(self, resolution):
         self._resolution = resolution
         if self._note_editor != None:
@@ -1045,7 +1057,9 @@ class StepSequencerComponent(CompoundComponent):
             self._update_note_selector()
         if self._note_editor != None:
             self._update_note_editor()
+        # UI updates only after construction
         self._update_OSD()
+        self._update_buttons()
 
 # CYCLE Button (formerly lock)
     def _on_cycle_pressed(self, value, sender):

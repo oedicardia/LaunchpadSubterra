@@ -63,6 +63,14 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             self._full_loop_start = clip.loop_start
             self._full_loop_end = clip.loop_end
 
+        if DEBUG_LOGGING:
+            self._control_surface.log_message(
+                f"[LOOP_SET_CLIP] "
+                f"clip={clip.name if clip else None} "
+                f"loop_start={clip.loop_start if clip else None} "
+                f"loop_end={clip.loop_end if clip else None}"
+            )
+
     @property
     def _mode(self):
         return self._step_sequencer._mode
@@ -194,11 +202,13 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             self._step_sequencer._loop_block = absolute_loop_start_block
 
         # Trigger sync through step sequencer (will save to JSON with absolute loop_block)
-        self._step_sequencer.sync_clip_with_json()
+        if not getattr(self._step_sequencer, "_loading_clip", False):
+            self._step_sequencer.sync_clip_with_json()
 
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
-        self._step_sequencer.sync_clip_with_json()
+        if not getattr(self._step_sequencer, "_loading_clip", False):
+            self._step_sequencer.sync_clip_with_json()
 
     def _loop_button_value(self, value, sender):
         # self._control_surface.log_message(
@@ -339,7 +349,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
                 self._last_button_time = time.time()
                 self._last_button_idx = idx
-            self._step_sequencer.sync_clip_with_json()
+            if not getattr(self._step_sequencer, "_loading_clip", False):
+                self._step_sequencer.sync_clip_with_json()
 
     def _is_selecting_current_loop(self, start, end):
 
@@ -395,7 +406,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 self._block = new_block
                 absolute_block = self._block + (self._loop_page_offset * 8)
                 self._step_sequencer.set_page(absolute_block)
-                self._step_sequencer.sync_clip_with_json()
+                if not getattr(self._step_sequencer, "_loading_clip", False):
+                    self._step_sequencer.sync_clip_with_json()
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
     def update(self):

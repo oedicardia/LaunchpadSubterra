@@ -382,6 +382,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 		# clip (rest)
+		self._loading_clip = False
 		self._clip = None
 		self._note_cache = []
 		self._force_update = True
@@ -454,8 +455,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_octave_shifted = False
 		self._last_notes_octaves_button_press = time.time()
 
-
-
 		# self._mode_notes_pitches_button = None
 		# self.set_mode_notes_pitches_button(self._side_buttons[7])
 		# self._is_notes_pitches_shifted = False
@@ -468,6 +467,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		self._is_velocity_shifted = False
 		self._is_mute_shifted = False
+
+		# loop selector
+		self._loop_block = 0  # Track current loop block independently
+
 
 		# disable the lock but allow the code to be used in the future if desired
 		self._is_locked = False  # Add this line
@@ -1149,7 +1152,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
 		CRITICAL: Call this EVERY TIME parameters change!
 		Separates SETTINGS from POSITION to avoid polluting settings dict.
+
+		CRITICAL FIX: Read loop_block from LoopSelector (LATEST value), NOT from self._loop_block!
 		"""
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[SYNC] clip={self._clip.name if self._clip else None}"
+			)
+			import traceback
+
+			self._control_surface.log_message(
+				"".join(traceback.format_stack(limit=6))
+			)
 		if not self._clip or not self._meta_manager:
 			if DEBUG_LOGGING:
 				self._control_surface.log_message("[SYNC_SKIP] No clip or meta_manager")
@@ -1159,16 +1173,43 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# 1. Get CURRENT STATE (SETTINGS ONLY - no position!)
 			settings_only = self._get_current_state_dict()
 
-			# 2. Get POSITION SEPARATELY (not stored in settings dict!)
+			# 2. ⭐⭐⭐ CRITICAL: READ loop_block FROM LOOP SELECTOR (ALWAYS LATEST) ⭐⭐⭐
+			# DO NOT trust self._loop_block - read directly from source of truth!
+			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+				ls = self._step_sequencer._loop_selector
+				if hasattr(ls, '_block'):
+					latest_block = ls._block  # ← READ DIRECTLY FROM LOOP SELECTOR!
+
+					if DEBUG_LOGGING:
+						old_block = settings_only.get('loop_block', 'NOT SET')
+						self._control_surface.log_message(
+							f"[SYNC_LOOP_BLOCK] Reading from LoopSelector._block={latest_block} " +
+							f"(was {old_block} in settings)"
+						)
+
+					settings_only['loop_block'] = latest_block  # ← OVERRIDE WITH ACTUAL VALUE
+				else:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[SYNC_LOOP_BLOCK_WARN] LoopSelector missing _block attribute!"
+						)
+			else:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[SYNC_LOOP_BLOCK_WARN] No LoopSelector available!"
+					)
+
+			# 3. Get POSITION SEPARATELY (not stored in settings dict!)
 			track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
 					f"[SYNC_JSON] Preparing sync: T{track_idx}:S{slot_idx}" +
-					f" Oct={settings_only['display_octave']} Res={settings_only['resolution_index']}"
+					f" Oct={settings_only['display_octave']} Res={settings_only['resolution_index']} " +
+					f"LoopBlock={settings_only['loop_block']}"
 				)
 
-			# 3. Add positional data to metadata, NOT settings
+			# 4. Add positional data to metadata, NOT settings
 			# Create a copy for saving (don't modify original settings dict!)
 			save_payload = {
 				**settings_only,  # Spread settings
@@ -1176,20 +1217,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				'slot_index': slot_idx
 			}
 
-			# 4. SAVE TO JSON
+			# 5. SAVE TO JSON
 			self._meta_manager.save_clip_to_json(self._clip, save_payload)
 
-			# 5. UPDATE TAG IN CLIP NAME (only save settings, not position!)
+			# 6. UPDATE TAG IN CLIP NAME (only save settings, not position!)
+			# Make sure we pass the same settings_only (with corrected loop_block)
 			self.update_clip_name_with_params(self._clip, settings_only)
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
-					f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={settings_only['display_octave']}, Res={settings_only['resolution_index']})"
+					f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={settings_only['display_octave']}, Res={settings_only['resolution_index']}, LoopBlock={settings_only['loop_block']})"
 				)
 
 		except Exception as e:
 			import traceback
 			self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
+
 
 	def strip_metadata_tags(self, clip_name):
 		"""
@@ -1888,12 +1931,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		1. Resolution LED sync through proper setter chain
 		2. Calculate page_offset from absolute block (don't save it)
 		3. Force Loop Selector visual update
+		4. Load loop_block onto ALL THREE COMPONENTS (Parent, Child, and Me)
 		"""
+		if DEBUG_LOGGING:
+			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+				ls = self._step_sequencer._loop_selector
+				self._control_surface.log_message(
+					f"[LOAD_SETTINGS] "
+					f"selector_resolution={ls._resolution} "
+					f"selector_loop_end={ls._loop_end}"
+				)
 		if not settings_dict:
 			if DEBUG_LOGGING:
 				self._control_surface.log_message("[LOAD_SETTINGS] No settings provided, using current defaults")
 			return
 
+		self._loading_clip = True
 		try:
 			# === SCALE/ROOT ===
 			if 'scale' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
@@ -1924,7 +1977,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# === RESOLUTION: LOAD VALUE, LET SETTER HANDLE LED SYNC ===
 			from .SequencerConstants import RESOLUTION_MAP
-
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[RES_VERIFY] before processing"
+					f"StepSeq idx={self._step_sequencer._resolution_index} "
+					f"NoteEditor beats={self._resolution}"
+				)
 			new_resolution_beats = None
 
 			# Try modern format first (resolution_index)
@@ -1997,48 +2055,96 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						f"[RESOLUTION_FALLBACK] Unsafe value detected → Set to minimum {min_resolution:.2f} beats"
 					)
 					self._parse_notes()
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[RES_VERIFY] after processing"
+					f"StepSeq idx={self._step_sequencer._resolution_index} "
+					f"NoteEditor beats={self._resolution}"
+				)
 
-			# === CRITICAL: FORCE RESOLUTION BUTTON LED UPDATE ===
-			# Now that we've loaded the resolution, trigger the proper setter chain
-			# This will update both LED display AND loop selector boundaries
-			if self._step_sequencer and hasattr(self._step_sequencer, '_note_editor'):
-				# The resolution was already set above, but we need to refresh the UI
-				# Call through proper setter to ensure LED sync
-				try:
-					self._step_sequencer._note_editor.set_resolution(self._resolution)
-				except Exception as e:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[RESOLUTION_LED_SYNC_ERROR] {e}")
-
-			# === LOOP PARAMETERS: RECALCULATE page_offset FROM ABSOLUTE POSITION ===
+			# === LOOP PARAMETERS: SYNC _loop_block ACROSS ALL THREE COMPONENTS ===
 			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
 				ls = self._step_sequencer._loop_selector
 
+				# ⭐⭐⭐ SET loop_block ON ALL THREE COMPONENTS ⭐⭐⭐
 				if 'loop_block' in settings_dict:
-					block = int(settings_dict['loop_block'])
-					if hasattr(ls, '_block'):
-						ls._block = block
-						ls._force = True
+					loaded_loop_block = int(settings_dict['loop_block'])
 
-				# ⭐⭐⭐ CRITICAL FIX: CALCULATE page_offset, DON'T RESTORE IT ⭐⭐⭐
-				# Recalculate offset from absolute loop_block position
+					# 1. Set on StepSequencerComponent (PARENT) - MAIN SOURCE OF TRUTH
+					if hasattr(self._step_sequencer, '_loop_block'):
+						old_parent_block = self._step_sequencer._loop_block
+						self._step_sequencer._loop_block = loaded_loop_block
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_PARENT] StepSequencer._loop_block: Old={old_parent_block} New={loaded_loop_block}"
+							)
+					else:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_WARN] StepSequencer missing _loop_block attribute!"
+							)
+
+					# 2. Set on LoopSelectorComponent (CHILD) - MUST MATCH PARENT
+					if hasattr(ls, '_block'):
+						old_ls_block = ls._block
+						ls._block = loaded_loop_block
+						ls._force = True  # Force full redraw
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_CHILD] LoopSelector._block: Old={old_ls_block} New={ls._block} _force=True"
+							)
+					else:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_WARN] LoopSelector missing _block attribute!"
+							)
+
+					# 3. ⭐⭐⭐ ALSO SET ON MELODIC NOTE EDITOR (THIS COMPONENT) ⭐⭐⭐
+					# This was the MISSING piece - need to update self._loop_block!
+					if hasattr(self, '_loop_block'):
+						old_me_block = self._loop_block
+						self._loop_block = loaded_loop_block
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_MELODIC] MelodicNoteEditor._loop_block: Old={old_me_block} New={loaded_loop_block}"
+							)
+					else:
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[LOOP_BLOCK_MELODIC_WARN] MelodicNoteEditor missing _loop_block attribute!"
+							)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[LOOP_BLOCK_LOAD] From settings={loaded_loop_block} applied to all components"
+						)
+				else:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[LOOP_BLOCK_MISSING] No loop_block in settings, using current value={getattr(ls, '_block', 'N/A')}"
+						)
+
+				# ⭐⭐⭐ CALCULATE page_offset FROM loop_block ⭐⭐⭐
+				# Don't restore page_offset - calculate it from absolute position!
 				if hasattr(ls, '_block'):
 					calculated_offset = ls._block // 8  # 8 blocks per page
 				else:
 					calculated_offset = 0
 
 				if DEBUG_LOGGING:
-					if hasattr(ls, '_block'):
-						self._control_surface.log_message(
-							f"[LOOP_OFFSET_RECALC] abs_block={ls._block} → calculated page_offset={calculated_offset}"
-						)
+					self._control_surface.log_message(
+						f"[LOOP_OFFSET_RECALC] abs_block={ls._block} → calculated page_offset={calculated_offset}"
+					)
 
 				# Set both step sequencer and loop selector offsets
 				if hasattr(self._step_sequencer, '_loop_page_offset'):
 					old_offset = self._step_sequencer._loop_page_offset
 					self._step_sequencer._loop_page_offset = calculated_offset
 
-					if calculated_offset != old_offset:
+					if self._page != ls._block:
 						# Force page change if offset changed
 						if hasattr(self._step_sequencer, 'set_page'):
 							absolute_block = ls._block
@@ -2093,26 +2199,92 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						if DEBUG_LOGGING:
 							self._control_surface.log_message(f"[CYCLE_BUTTON_ERROR] {e}")
 
+			# === CRITICAL: FORCE RESOLUTION BUTTON LED UPDATE ===
+			# Now that we've loaded the resolution, trigger the proper setter chain
+			# This will update both LED display AND loop selector boundaries
+			if self._step_sequencer and hasattr(self._step_sequencer, '_note_editor'):
+				# The resolution was already set above, but we need to refresh the UI
+				# Call through proper setter to ensure LED sync
+				try:
+					self._step_sequencer.set_resolution(self._resolution)
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[RESOLUTION_LED_SYNC_ERROR] {e}")
+
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
-					f"[SETTINGS_APPLIED] Oct={settings_dict.get('display_octave')} ResIdxOrBeats={settings_dict.get('resolution_index', settings_dict.get('resolution'))} Scale={settings_dict.get('scale')}"
+					f"[SETTINGS_APPLIED] Oct={settings_dict.get('display_octave')} ResIdxOrBeats={settings_dict.get('resolution_index', settings_dict.get('resolution'))} Scale={settings_dict.get('scale')} LoopBlock={settings_dict.get('loop_block', 'MISSING')}"
 				)
 
 		except Exception as e:
 			import traceback
 			self._control_surface.log_message(f"[SET_LOADING ERROR] {e}\n{traceback.format_exc()}")
 
-		# === VERIFICATION CHECKLIST ===
+		self._loading_clip = False
+
+		# ⭐⭐⭐ VERIFY loop_block sync across ALL THREE COMPONENTS ⭐⭐⭐
 		if DEBUG_LOGGING:
 			final_res = getattr(self, '_resolution', 'NOT SET')
-			final_offset = getattr(self._step_sequencer._loop_selector, '_loop_page_offset', 'NOT SET') if hasattr(
-				self._step_sequencer, '_loop_selector') else 'NO LS'
-			final_block = getattr(self._step_sequencer._loop_selector, '_block', 'NOT SET') if hasattr(
-				self._step_sequencer, '_loop_selector') else 'NO LS'
+
+			# Check StepSequencer (PARENT)
+			step_seq_block = None
+			if hasattr(self._step_sequencer, '_loop_block'):
+				step_seq_block = getattr(self._step_sequencer, '_loop_block', 'NO ATTR')
+
+			# Check LoopSelector (CHILD)
+			loop_sel_block = None
+			if hasattr(self._step_sequencer, '_loop_selector'):
+				ls = self._step_sequencer._loop_selector
+				if hasattr(ls, '_block'):
+					loop_sel_block = getattr(ls, '_block', 'NO ATTR')
+
+			# ⭐⭐⭐ Check MelodicNoteEditor (THIS COMPONENT) ⭐⭐⭐
+			note_editor_block = None
+			if hasattr(self, '_loop_block'):
+				note_editor_block = getattr(self, '_loop_block', 'NO ATTR')
+			else:
+				note_editor_block = "NOT DEFINED"  # ← Explicit indication it's missing
 
 			self._control_surface.log_message(
-				f"[VERIFICATION_CHECK] Resolution_Beats={final_res:.2f} PageOffset={final_offset} Block={final_block}"
+				f"[VERIFICATION_CHECK] StepSeq_Block={step_seq_block} LoopSel_Block={loop_sel_block} NoteEditor_Block={note_editor_block}"
 			)
+			self._control_surface.log_message(
+				f"[PAGE_VERIFY] "
+				f"page={self._page} "
+				f"step_loop_block={getattr(self._step_sequencer, '_loop_block', 'N/A')} "
+				f"selector_block={getattr(self._step_sequencer._loop_selector, '_block', 'N/A')}"
+			)
+			# Check for mismatch between any components
+			if step_seq_block is not None and loop_sel_block is not None and note_editor_block not in [None,
+			                                                                                           "NOT DEFINED"]:
+				try:
+					step_val = int(step_seq_block)
+					sel_val = int(loop_sel_block)
+					me_val = int(note_editor_block)
+
+					# Check all three against each other
+					if step_val != sel_val or sel_val != me_val:
+						self._control_surface.log_message(
+							f"[LOOP_MISMATCH] ⚠️ Mismatch detected: StepSeq={step_val}, LoopSel={sel_val}, Melodic={me_val}"
+						)
+
+						# Automatic correction - sync all to StepSequencer (source of truth)
+						target_val = step_val
+
+						if hasattr(self._step_sequencer._loop_selector, '_block'):
+							self._step_sequencer._loop_selector._block = target_val
+							self._step_sequencer._loop_selector._force = True
+
+						if hasattr(self, '_loop_block'):
+							self._loop_block = target_val
+
+						self._step_sequencer._loop_selector.update()
+
+						self._control_surface.log_message(
+							f"[LOOP_CORRECTED] Synced all components to {target_val}"
+						)
+				except (ValueError, TypeError):
+					pass
 
 			# Compare saved vs loaded values
 			saved_res_idx = settings_dict.get('resolution_index', 'N/A')
@@ -2136,6 +2308,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(
 				f"[FINAL_PUSH] ForceUpdate=True UpdateCalled=True"
+			)
+			self._control_surface.log_message(
+				f"[LOOP_UI] "
+				f"block={ls._block} "
+				f"resolution={ls._resolution} "
+				f"loop_start={ls._loop_start} "
+				f"loop_end={ls._loop_end}"
 			)
 
 	# --- HELPER METHODS FOR METADATA MANAGER ---
@@ -2571,7 +2750,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._parse_notes()
 			self._update_matrix()
 
-		self.sync_clip_with_json()
+		# ⭐⭐⭐ CRITICAL: SYNC loop_block with parent BEFORE saving ⭐⭐⭐
+		if hasattr(self._step_sequencer, '_loop_block'):
+			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+				ls = self._step_sequencer._loop_selector
+				# Sync parent with child
+				self._step_sequencer._loop_block = getattr(ls, '_block', 0)
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[LOOP_BLOCK_SYNC] StepSequencer._loop_block synced to {self._step_sequencer._loop_block}"
+					)
+
+		if not getattr(self, "_loading_clip", False):
+			self.sync_clip_with_json()
 
 	def set_diatonic(self, diatonic):
 		self._diatonic = diatonic
@@ -4561,7 +4753,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._parse_notes()
 		self._force_update = True
 		self.update()
-		self.sync_clip_with_json()
+		if not getattr(self, "_loading_clip", False):
+			self.sync_clip_with_json()
 
 	def _update_mode_notes_octaves_button(self):
 		if self.is_enabled():
@@ -5451,6 +5644,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._new_clip_pages = 1
 		self._name = "melodic step sequencer"
 		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
+		# loop selector
+		self._loop_block = 0
 
 	def _search_and_relink_clip(self, target_hash, cached_entry):
 		"""Find clip that matched this hash anywhere in the song."""
@@ -5667,8 +5862,20 @@ class StepSequencerComponent2(StepSequencerComponent):
         This is called from LoopSelectorComponent, MelodicNoteEditorComponent, etc.
         """
 		# Delegate to MelodicNoteEditorComponent if available
+
 		if hasattr(self, '_note_editor') and self._note_editor:
 			try:
+				# ⭐⭐⭐ ENSURE loop_block is synced before saving ⭐⭐⭐
+				if hasattr(self, '_loop_block') and hasattr(self, '_loop_selector'):
+					ls = self._loop_selector
+					if hasattr(ls, '_block'):
+						self._loop_block = ls._block
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[SYNC_LOOP_BLOCK] Synced _loop_block={self._loop_block} from LoopSelector"
+							)
+
 				self._note_editor.sync_clip_with_json()
 
 				if DEBUG_LOGGING:
@@ -5680,3 +5887,10 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 		elif DEBUG_LOGGING:
 			self._control_surface.log_message(f"[SYNC_SKIP] No _note_editor available")
+
+		if DEBUG_LOGGING:
+			if self._clip:
+				self._control_surface.log_message(
+					f"[SYNC_LOOP_BLOCK] clip={self._clip.name} "
+					f"LoopSelector._block={self._loop_selector._block}"
+				)
