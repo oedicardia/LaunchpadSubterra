@@ -40,42 +40,96 @@ class ClipMetadataManager:
 		self.cache = {"clips": {}}
 
 		# Determine cache path with diagnostics
-		try:
-			import os
-			user_docs = Path.home() / "Documents" / "Ableton"
-			user_docs.mkdir(parents=True, exist_ok=True)
-			self.cache_path = user_docs / "launchpad_clip_metadata.json"
-
-			# VERIFY PATH IS WRITABLE
-			test_path = Path(str(self.cache_path) + ".test")
-			try:
-				test_path.touch()
-				test_path.unlink()
-				if DEBUG_LOGGING:
-					self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
-			except Exception as path_err:
-				self._log(f"❌ Path NOT WRITABLE: {path_err}")
-				self._log(f"Trying alternate: ~/.Ableton/")
-				self.cache_path = Path.home() / ".Ableton" / "launchpad_clip_metadata.json"
-		except Exception as e:
-			self._log(f"Path init error: {e}")
-			self.cache_path = Path.home() / "Documents" / "Ableton" / "launchpad_clip_metadata.json"
+		self._cross_platform_cache_path_detect()
 
 		self._pending_renames = []
 		self._clip_refs = {}
 		self._undo_listener_registered = False
 		self._renamed_clips = {}
+
 		if DEBUG_LOGGING:
 			self._log(f"INIT: Cache path = {self.cache_path}")
+		# Backup and clear on initialization
 		self._backup_and_reset_cache()
+		# Load fresh cache (will be empty after reset)
 		self._load_cache()
 		# Don't scan on init - do it on-demand
 		if DEBUG_LOGGING:
 			self._log("[META] Lazy loading enabled - no startup scan")
 
+	def _cross_platform_cache_path_detect(self):
+		user_home = Path.home()
+
+		# Detect operating system
+		import sys
+		is_windows = sys.platform.startswith('win')
+		is_mac = sys.platform == 'darwin'
+
+		if DEBUG_LOGGING:
+			self._log(f"[PATH_INIT] Platform: {sys.platform} | Home: {user_home}")
+
+		# Define candidate paths for different platforms
+		candidate_paths = []
+
+		# Primary Ableton user folder locations by OS
+		if is_mac:
+			# macOS conventions (check multiple locations)
+			candidate_paths.append(user_home / "Documents" / "Ableton")
+			candidate_paths.append(user_home / "Music" / "Ableton")
+			candidate_paths.append(user_home / "Library" / "Application Support" / "Ableton")
+		elif is_windows:
+			# Windows conventions
+			candidate_paths.append(user_home / "Documents" / "Ableton")
+			candidate_paths.append(Path(os.environ.get('USERPROFILE', '')) / "Documents" / "Ableton")
+		else:
+			# Linux and others
+			candidate_paths.append(user_home / "Documents" / "Ableton")
+			candidate_paths.append(user_home / ".Ableton")
+
+		# Test each candidate path for writability
+		self.cache_path = None
+		for test_path in candidate_paths:
+			try:
+				# Create directory if it doesn't exist
+				test_path.mkdir(parents=True, exist_ok=True)
+
+				# Test if writable
+				test_file = test_path / ".path_writable_test.tmp"
+				test_file.touch()
+				test_file.unlink()
+
+				# Success! Use this path
+				self.cache_path = test_path / "launchpad_clip_metadata.json"
+
+				if DEBUG_LOGGING:
+					self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
+
+				break  # Found valid path
+
+			except Exception as path_err:
+				if DEBUG_LOGGING:
+					self._log(f"✗ Path not usable: {test_path} ({path_err})")
+				continue
+
+		# Fallback if no path worked
+		if self.cache_path is None:
+			if DEBUG_LOGGING:
+				self._log("❌ All primary paths failed! Using temp directory fallback...")
+
+			# Last resort: use OS temp directory
+			import tempfile
+			temp_dir = Path(tempfile.gettempdir())
+			ableton_temp = temp_dir / "Ableton_Launchpad_Metadata"
+			ableton_temp.mkdir(parents=True, exist_ok=True)
+			self.cache_path = ableton_temp / "launchpad_clip_metadata.json"
+
+			if DEBUG_LOGGING:
+				self._log(f"⚠️ Using TEMP fallback: {self.cache_path}")
+				self._log(f"⚠️ Metadata may be cleared on system reboot!")
+
 	def _backup_and_reset_cache(self):
-		"""Backup existing cache and start fresh for new project."""
-		if not self.cache_path.exists():
+		"""Backup existing cache and start fresh for new project (cross-platform)."""
+		if not self.cache_path or not self.cache_path.exists():
 			if DEBUG_LOGGING:
 				self._log("[RESET] No existing cache file to backup")
 			return
@@ -97,13 +151,15 @@ class ClipMetadataManager:
 
 			# Clear the original file
 			self.cache_path.unlink()
-			if DEBUG_LOGGING:
-				self._log(f"✓ CACHE CLEARED: Ready for fresh scan")
+			self._log(f"✓ CACHE CLEARED: Ready for fresh scan")
+			self._log(f"   Location: {self.cache_path}")
 
 		except Exception as e:
-			self._log(f"❌ BACKUP/RESET ERROR: {e}")
-
-	# Continue anyway - script can still function without metadata
+			if DEBUG_LOGGING:
+				import traceback
+				self._log(f"❌ BACKUP/RESET ERROR: {e}")
+				self._log(traceback.format_exc())
+			# Continue anyway - script can still function without metadata
 
 	def ensure_clip_in_cache(self, clip):
 		"""
@@ -416,15 +472,15 @@ class ClipMetadataManager:
 			return None
 
 		try:
-			start_idx = clip_name.find(self.METADATA_PREFIX)
+			start_idx = clip_name.find(METADATA_PREFIX)
 			if start_idx == -1:
 				return None
 
-			end_idx = clip_name.find(self.METADATA_SUFFIX, start_idx + len(self.METADATA_PREFIX))
+			end_idx = clip_name.find(METADATA_SUFFIX, start_idx + len(METADATA_PREFIX))
 			if end_idx <= start_idx:
 				return None
 
-			param_start = start_idx + len(self.METADATA_PREFIX) + 1
+			param_start = start_idx + len(METADATA_PREFIX) + 1
 			param_string = clip_name[param_start:end_idx].strip()
 			if param_string.endswith('}'):
 				param_string = param_string[:-1]
@@ -954,17 +1010,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		try:
 			# Find FIRST tag start: [SUX:
-			start_idx = clip_name.find(self.METADATA_PREFIX)
+			start_idx = clip_name.find(METADATA_PREFIX)
 			if start_idx == -1:
 				return None
 
 			# Find NEXT closing bracket ] (not rfind, use find to get first match)
-			end_idx = clip_name.find(self.METADATA_SUFFIX, start_idx + len(self.METADATA_PREFIX))
+			end_idx = clip_name.find(METADATA_SUFFIX, start_idx + len(METADATA_PREFIX))
 			if end_idx <= start_idx:
 				return None
 
 			# Extract content between FIRST [SUX: and FIRST ]
-			param_start = start_idx + len(self.METADATA_PREFIX) + 1
+			param_start = start_idx + len(METADATA_PREFIX) + 1
 			param_string = clip_name[param_start:end_idx].strip()
 			if param_string.endswith('}'):
 				param_string = param_string[:-1]
@@ -1034,7 +1090,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# ⭐⭐⭐ CRITICAL FIX: Include BOTH curly braces AND square brackets! ⭐⭐⭐
 			# Format: [SUX:{...}]
-			full_tag = f"{self.METADATA_PREFIX}{{{param_string}}}{self.METADATA_SUFFIX}"
+			full_tag = f"{METADATA_PREFIX}{{{param_string}}}{METADATA_SUFFIX}"
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
@@ -1048,7 +1104,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				import traceback
 				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}\n{traceback.format_exc()}")
 			# Return minimal valid tag with BOTH curly braces
-			return f"{self.METADATA_PREFIX}{{0;0;2;4;0;0;0.0;16.0}}{self.METADATA_SUFFIX}"
+			return f"{METADATA_PREFIX}{{0;0;2;4;0;0;0.0;16.0}}{METADATA_SUFFIX}"
 
 
 	def update_clip_name_with_params(self, clip, params_dict):
@@ -1072,7 +1128,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			original_name = getattr(clip, 'name', '')
 
 			# ⭐⭐⭐ CRITICAL: DETECT DUPLICATE TAGS EARLY ⭐⭐⭐
-			tag_count = original_name.count(self.METADATA_PREFIX)
+			tag_count = original_name.count(METADATA_PREFIX)
 
 			if tag_count > 1:
 				if DEBUG_LOGGING:
@@ -1094,7 +1150,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			new_tag = self.build_embedded_parameters_tag(params_dict)
 
 			# Verify tag format before proceeding
-			if not new_tag.startswith(self.METADATA_PREFIX):
+			if not new_tag.startswith(METADATA_PREFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_FAIL] Tag doesn't start with prefix: '{new_tag}'"
@@ -1102,12 +1158,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				return False
 
 			# Ensure it ends with suffix
-			if not new_tag.endswith(self.METADATA_SUFFIX):
+			if not new_tag.endswith(METADATA_SUFFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_WARN] Tag missing closing bracket, auto-correcting"
 					)
-				new_tag = new_tag + self.METADATA_SUFFIX
+				new_tag = new_tag + METADATA_SUFFIX
 			# ⭐⭐⭐ CONFIRM TAG HAS CURLY BRACES ⭐⭐⭐
 			if DEBUG_LOGGING:
 				has_curly = "{" in new_tag and "}" in new_tag
@@ -1121,20 +1177,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					)
 
 			# Verify tag format before proceeding
-			if not new_tag.startswith(self.METADATA_PREFIX):
+			if not new_tag.startswith(METADATA_PREFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_FAIL] Tag doesn't start with '[SUX:': '{new_tag}'"
 					)
 				return False
 
-			if not new_tag.endswith(self.METADATA_SUFFIX):
+			if not new_tag.endswith(METADATA_SUFFIX):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[TAG_BUILD_WARN] Tag missing closing bracket, auto-correcting"
 					)
 				# Auto-fix by appending missing bracket
-				new_tag = new_tag + self.METADATA_SUFFIX
+				new_tag = new_tag + METADATA_SUFFIX
 
 			original_name = getattr(clip, 'name', '')
 
@@ -1155,9 +1211,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			tag_exists_and_valid = False
 			extract_from_old = None
 
-			if self.METADATA_PREFIX in original_name and "}" in original_name and self.METADATA_SUFFIX in original_name:
-				start_bracket = original_name.find(self.METADATA_PREFIX)
-				end_bracket = original_name.rfind(self.METADATA_SUFFIX)
+			if METADATA_PREFIX in original_name and "}" in original_name and METADATA_SUFFIX in original_name:
+				start_bracket = original_name.find(METADATA_PREFIX)
+				end_bracket = original_name.rfind(METADATA_SUFFIX)
 
 				if end_bracket > start_bracket:
 					potential_tag = original_name[start_bracket:end_bracket+1]
@@ -1261,7 +1317,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._control_surface.log_message(f"[TAG_VERIFIED] ✓ Tag confirmed in clip name")
 					return True  # Success, done!
 
-				elif self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
+				elif METADATA_PREFIX in actual_name and METADATA_SUFFIX in actual_name:
 					if DEBUG_LOGGING:
 						self._control_surface.log_message(f"[TAG_PARTIAL] Tag exists but may vary slightly")
 					return True  # Acceptable success
@@ -1370,7 +1426,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# Verify
 			actual_name = getattr(clip, 'name', '')
-			if self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
+			if METADATA_PREFIX in actual_name and METADATA_SUFFIX in actual_name:
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[DEFERRED_SUCCESS] Tag written via delayed callback"
@@ -1494,14 +1550,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
         ALWAYS returns string (never None).
 
-        Uses self.METADATA_PREFIX and self.METADATA_SUFFIX constants.
+        Uses METADATA_PREFIX and METADATA_SUFFIX constants.
         """
 		if not clip_name:
 			return ""
 
 		# Escape constants for regex safety
-		prefix_esc = re.escape(self.METADATA_PREFIX)
-		suffix_esc = re.escape(self.METADATA_SUFFIX)
+		prefix_esc = re.escape(METADATA_PREFIX)
+		suffix_esc = re.escape(METADATA_SUFFIX)
 
 		# Pattern matches ONE tag: [SUX:...] where ... is anything until next ]
 		# Use GLOBAL flag (flags=re.UNICODE or re.MULTILINE) to replace ALL occurrences
@@ -1536,7 +1592,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# FIX: Check for param VALUES, not exact string match
 			# Build param string WITHOUT brackets for flexible matching
-			expected_params_str = expected_tag.replace(self.METADATA_PREFIX, "").replace(self.METADATA_SUFFIX, "")  # Remove outer brackets
+			expected_params_str = expected_tag.replace(METADATA_PREFIX, "").replace(METADATA_SUFFIX, "")  # Remove outer brackets
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[VERIFY_DEBUG] Params only: '{expected_params_str}'")
 
@@ -1565,9 +1621,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				if not has_correct_params:
 					# Check if ANY tag exists
-					if self.METADATA_PREFIX in actual_name and self.METADATA_SUFFIX in actual_name:
-						start_idx = actual_name.find(self.METADATA_PREFIX)
-						end_idx = actual_name.rfind(self.METADATA_SUFFIX) + 1
+					if METADATA_PREFIX in actual_name and METADATA_SUFFIX in actual_name:
+						start_idx = actual_name.find(METADATA_PREFIX)
+						end_idx = actual_name.rfind(METADATA_SUFFIX) + 1
 						existing_tag = actual_name[start_idx:end_idx]
 						self._control_surface.log_message(f"[VERIFY_DIFFERENT_TAG] Found: '{existing_tag}'")
 
@@ -2017,7 +2073,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	# 		if success:
 	# 			# Verify it worked
 	# 			clip_name = self._clip.name
-	# 			if self.METADATA_PREFIX in clip_name:
+	# 			if METADATA_PREFIX in clip_name:
 	# 				self._control_surface.show_message("Tag wrote successfully!")
 	# 				self._control_surface.log_message(f"[MANUAL_DEBUG] Tag present: {clip_name[:60]}...")
 	# 			else:
