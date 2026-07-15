@@ -186,28 +186,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 	def session_component(self):
 		return self._session
 
-	"""def _update_mode(self):
-		mode = self._modes_heap[-1][0] #get first value of last _modes_heap tuple. _modes_heap tuple structure is (mode, sender, observer) 
 
-		assert mode in range(self.number_of_modes()) # 8 for this script
-		if self._main_mode_index == mode:
-			if self._main_mode_index == 1: #user mode 1 and device controller and instrument mode
-				self._sub_mode_list[self._main_mode_index] = (self._sub_mode_list[self._main_mode_index] + 1) % len(Settings.USER_MODES_1)
-				self.update()
-			elif self._main_mode_index == 2: #user mode 2  and step sequencer
-				self._sub_mode_list[self._main_mode_index] = (self._sub_mode_list[self._main_mode_index] + 1) % len(Settings.USER_MODES_2)
-				self.update()
-			elif self._main_mode_index == 3: #Mixer mode
-				self.update()
-			else: #Session mode
-				self._sub_mode_list[self._main_mode_index] = 0
-				self._mode_index = 0
-				self.update()
-		
-		else:
-			self._main_mode_index = mode
-			self.update()
-	"""
 	def set_mode(self, mode):
 		self._main_mode_index = mode
 		self._apply_main_mode()
@@ -221,6 +200,10 @@ class MainSelectorComponent(ModeSelectorComponent):
 
 		new_mode = self._modes_buttons.index(sender)
 
+		# Add long press timer variable if not exists
+		if not hasattr(self, '_last_stepseq2_mode_button_press'):
+			self._last_stepseq2_mode_button_press = 0
+
 		# -----------------------
 		# BUTTON PRESS
 		# -----------------------
@@ -228,7 +211,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 
 			self._main_mode_index = new_mode
 
-			# long press logic (Session button only)
+			# LONG PRESS LOGIC FOR SESSION MODE (existing)
 			if new_mode == 0:
 				now = int(round(time.time() * 1000))
 
@@ -237,6 +220,40 @@ class MainSelectorComponent(ModeSelectorComponent):
 				else:
 					if now - self._last_session_mode_button_press < self._long_press:
 						self._pro_session_on = not self._pro_session_on
+
+			# NEW: LONG PRESS LOGIC FOR MELODIC STEP SEQUIENCER (MODE 3)
+			elif new_mode == 3:
+				now = int(round(time.time() * 1000))
+
+				# Check if we're already in this mode (double press scenario)
+				if self._last_mode_index == 3:
+					time_delta = now - self._last_stepseq2_mode_button_press
+
+					# LONG PRESS DETECTED (>500ms)
+					if time_delta >= self._long_press:
+						# Trigger metadata scan
+						if hasattr(self, '_stepseq2') and self._stepseq2:
+							if hasattr(self._stepseq2, '_note_editor') and self._stepseq2._note_editor:
+								if hasattr(self._stepseq2._note_editor, 'manual_scan_all_clips'):
+
+									# Show feedback message
+									self._control_surface.show_message("Scanning clips...")
+
+									# Schedule scan to avoid blocking UI
+									if hasattr(self._control_surface, 'schedule_message'):
+										self._control_surface.schedule_message(
+											1,
+											self._do_metadata_scan_callback
+										)
+									else:
+										# Fallback if schedule_message not available
+										self._do_metadata_scan_callback()
+
+					# Reset timer to prevent repeated triggers
+					self._last_stepseq2_mode_button_press = 0
+				else:
+					# First press - record timestamp for next press detection
+					self._last_stepseq2_mode_button_press = now
 
 			self._last_mode_index = new_mode
 			self._apply_main_mode()
@@ -318,129 +335,8 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._session.set_allow_update(True)
 		self._zooming.set_allow_update(True)
 
-	"""def update(self):
-		assert (self._modes_buttons != None)
-		if self.is_enabled():
 
-			self._update_mode_buttons()
 
-			as_active = True
-			as_enabled = True
-			self._session.set_allow_update(False)
-			self._zooming.set_allow_update(False)
-			self._config_button.send_value(40) #Set LP double buffering mode (investigate this)
-			self._config_button.send_value(1) #Set LP X-Y layout grid mapping mode
-
-			if self._main_mode_index == 0:
-				# session
-				if(self._pro_session_on):
-					self._control_surface.show_message("PRO SESSION MODE")
-				else:
-					self._control_surface.show_message("SESSION MODE")
-				self._setup_mixer(not as_active)
-				self._setup_device_controller(not as_active)
-				self._setup_step_sequencer(not as_active)
-				self._setup_step_sequencer2(not as_active)
-				self._setup_instrument_controller(not as_active)
-				self._setup_session(as_active, as_enabled)
-				self._update_control_channels()
-				self._mode_index = 0
-
-			elif self._main_mode_index == 1:
-				self._setup_sub_mode(Settings.USER_MODES_1[self._sub_mode_list[self._main_mode_index]])
-			elif self._main_mode_index == 2:
-				self._setup_sub_mode(Settings.USER_MODES_2[self._sub_mode_list[self._main_mode_index]])
-
-			elif self._main_mode_index == 3:
-				# mixer
-				self._control_surface.show_message("MIXER MODE")
-				self._setup_device_controller(not as_active)
-				self._setup_step_sequencer(not as_active)
-				self._setup_step_sequencer2(not as_active)
-				self._setup_instrument_controller(not as_active)
-				self._setup_session(not as_active, as_enabled)
-				self._setup_mixer(as_active)
-				self._update_control_channels()
-				self._mode_index = 3
-			else:
-				assert False
-
-			self._session.set_allow_update(True)
-			self._zooming.set_allow_update(True)
-	"""
-
-	"""def _setup_sub_mode(self, mode):
-		as_active = True
-		as_enabled = True
-		if mode == "instrument":
-			self._control_surface.show_message("INSTRUMENT MODE")
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_step_sequencer(not as_active)
-			self._setup_step_sequencer2(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_device_controller(not as_active)
-			self._update_control_channels()
-			self._setup_instrument_controller(as_active)
-			self._mode_index = 4
-		elif mode == "melodic stepseq":
-			self._control_surface.show_message("MELODIC SEQUENCER MODE")
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_instrument_controller(not as_active)
-			self._setup_device_controller(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_step_sequencer(not as_active)
-			self._setup_step_sequencer2(as_active)
-			self._update_control_channels()
-			self._mode_index = 7
-		elif mode == "user 1":
-			self._control_surface.show_message("USER 1 MODE" )
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_step_sequencer(not as_active)
-			self._setup_step_sequencer2(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_device_controller(not as_active)
-			self._setup_instrument_controller(not as_active)
-			self._setup_user_mode(True, True, False, True)
-			self._update_control_channels()
-			self._mode_index = 1
-			self._osd.clear()
-			self._osd.mode = "User 1"
-			self._osd.update()
-		elif mode == "drum stepseq":
-			self._control_surface.show_message("DRUM STEP SEQUENCER MODE")
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_instrument_controller(not as_active)
-			self._setup_device_controller(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_step_sequencer2(not as_active)
-			self._setup_step_sequencer(as_active)
-			self._update_control_channels()
-			self._mode_index = 6
-		elif mode == "device":
-			self._control_surface.show_message("DEVICE CONTROLLER MODE")
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_step_sequencer(not as_active)
-			self._setup_step_sequencer2(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_instrument_controller(not as_active)
-			self._setup_device_controller(as_active)
-			self._update_control_channels()
-			self._mode_index = 5
-		elif mode == "user 2":
-			self._control_surface.show_message("USER 2 MODE" )
-			self._setup_session(not as_active, not as_enabled)
-			self._setup_instrument_controller(not as_active)
-			self._setup_device_controller(not as_active)
-			self._setup_mixer(not as_active)
-			self._setup_step_sequencer(not as_active)
-			self._setup_step_sequencer2(not as_active)
-			self._setup_user_mode(False, False, False, False)
-			self._update_control_channels()
-			self._mode_index = 2
-			self._osd.clear()
-			self._osd.mode = "User 2"
-			self._osd.update()
-	"""
 	def _setup_session(self, as_active, as_navigation_enabled):
 		if getattr(self, "_session", None) is None:
 			return
@@ -616,12 +512,69 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._stepseq2.update()
 			else:
 				self._stepseq2.set_enabled(False)
-		# debug
-		# self.log_message(
-		# 	f"STEPSEQ2 active={as_active} "
-		# 	f"submodes={self._sub_modes.is_enabled()} "
-		# 	f"device={self._device_controller.is_enabled()}"
-		# )
+
+	def _trigger_manual_metadata_scan(self):
+		"""
+		Called from long-press on StepSequencer2 button.
+		Triggers full metadata cache rebuild from clip names.
+		"""
+		# Navigate to the actual method call chain:
+		# MainSelectorComponent -> StepSequencerComponent2 -> MelodicNoteEditorComponent -> manual_scan_all_clips()
+
+		if hasattr(self, '_stepseq2') and self._stepseq2:
+			if hasattr(self._stepseq2, '_note_editor') and self._stepseq2._note_editor:
+				# Call the manual scan method
+				if hasattr(self._stepseq2._note_editor, 'manual_scan_all_clips'):
+
+					# Schedule it to avoid blocking the button press handler
+					if hasattr(self._control_surface, 'schedule_message'):
+						self._control_surface.schedule_message(
+							1,
+							self._do_metadata_scan_callback
+						)
+					else:
+						# Fallback if schedule_message not available
+						self._do_metadata_scan_callback()
+				else:
+					self._control_surface.log_message("[SCAN_ERROR] manual_scan_all_clips not found")
+			else:
+				self._control_surface.log_message("[SCAN_ERROR] _note_editor not available")
+		else:
+			self._control_surface.log_message("[SCAN_ERROR] _stepseq2 not available")
+
+
+	def _do_metadata_scan_callback(self):
+		"""
+		Callback executed after button press handler completes.
+		Performs the actual metadata scan without blocking the UI.
+		"""
+		try:
+			if not hasattr(self, '_stepseq2') or not self._stepseq2:
+				self._control_surface.log_message("[SCAN_ERROR] _stepseq2 not available")
+				return
+
+			if not hasattr(self._stepseq2, '_note_editor') or not self._stepseq2._note_editor:
+				self._control_surface.log_message("[SCAN_ERROR] _note_editor not available")
+				return
+
+			if not hasattr(self._stepseq2._note_editor, 'manual_scan_all_clips'):
+				self._control_surface.log_message("[SCAN_ERROR] manual_scan_all_clips method missing")
+				return
+
+			# Execute the scan
+			total, found = self._stepseq2._note_editor.manual_scan_all_clips()
+
+			# Display results
+			msg = f"Scanned {total}, Found {found}"
+			self._control_surface.show_message(msg)
+			self._control_surface.log_message(f"[METADATA_SCAN] {msg}")
+
+		except Exception as e:
+			self._control_surface.log_message(f"[SCAN_ERROR] {e}")
+			import traceback
+			self._control_surface.log_message(traceback.format_exc())
+			self._control_surface.show_message("Scan failed")
+
 
 	def _setup_mixer(self, as_active):
 
@@ -656,23 +609,9 @@ class MainSelectorComponent(ModeSelectorComponent):
 		#	session_height = self._matrix.height()-1
 	
 		for scene_index in range(session_height):
-		#	scene = self._session.scene(scene_index)
-		#	scene.set_triggered_value("Session.SceneTriggered")
-		#	scene.name = 'Scene_' + str(scene_index)
 			for track_index in range(self._matrix.width()):
-		#		clip_slot = scene.clip_slot(track_index)
-		#		clip_slot.set_triggered_to_play_value("ProSession.ClipTriggeredPlay")
-		#		clip_slot.set_triggered_to_record_value("Session.ClipTriggeredRecord")
-		#		clip_slot.set_stopped_value("ProSession.ClipStopped")
-		#		clip_slot.set_started_value("ProSession.ClipStarted")
-		#		clip_slot.set_recording_value("Session.ClipRecording")
-		#		clip_slot.set_record_button_value("Session.RecordButton")
-		#		clip_slot.name = str(track_index) + '_Clip_Slot_' + str(scene_index)
 				self._all_buttons.append(self._matrix.get_button(track_index, scene_index))
 
-		#self._zooming.set_stopped_value("Zooming.Stopped")
-		#self._zooming.set_selected_value("Zooming.Selected")
-		#self._zooming.set_playing_value("Zooming.Playing")	 
 
 	def _activate_navigation_buttons(self, active):
 		for button in self._nav_buttons:
@@ -701,7 +640,3 @@ class MainSelectorComponent(ModeSelectorComponent):
 		for button in self._all_buttons:
 			button.set_channel(new_channel)
 			button.force_next_send()
-
-	#def _update_session_tempo_button(self):
-	#	if self._session != None:
-	#		self._session._update_session_tempo_button()

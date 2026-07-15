@@ -28,6 +28,8 @@ import re
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
 DEBUG_LOGGING = True  # Set to False for release
+METADATA_PREFIX = "[SUX:"
+METADATA_SUFFIX = "]"
 
 class ClipMetadataManager:
 	"""Manages persistent clip metadata storage in JSON."""
@@ -49,7 +51,8 @@ class ClipMetadataManager:
 			try:
 				test_path.touch()
 				test_path.unlink()
-				self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
+				if DEBUG_LOGGING:
+					self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
 			except Exception as path_err:
 				self._log(f"❌ Path NOT WRITABLE: {path_err}")
 				self._log(f"Trying alternate: ~/.Ableton/")
@@ -62,9 +65,180 @@ class ClipMetadataManager:
 		self._clip_refs = {}
 		self._undo_listener_registered = False
 		self._renamed_clips = {}
-
-		self._log(f"INIT: Cache path = {self.cache_path}")
+		if DEBUG_LOGGING:
+			self._log(f"INIT: Cache path = {self.cache_path}")
+		self._backup_and_reset_cache()
 		self._load_cache()
+		# Don't scan on init - do it on-demand
+		if DEBUG_LOGGING:
+			self._log("[META] Lazy loading enabled - no startup scan")
+
+	def _backup_and_reset_cache(self):
+		"""Backup existing cache and start fresh for new project."""
+		if not self.cache_path.exists():
+			if DEBUG_LOGGING:
+				self._log("[RESET] No existing cache file to backup")
+			return
+
+		try:
+			import shutil
+			# from datetime import datetime
+
+			# Create backup filename with timestamp
+			# timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+			# backup_path = self.cache_path.parent / f"launchpad_clip_metadata_BACKUP_{timestamp}.json"
+			# Create backup filename without timestamp
+			backup_path = self.cache_path.parent / f"launchpad_clip_metadata_BACKUP.json"
+
+			# Copy to backup
+			shutil.copy2(str(self.cache_path), str(backup_path))
+			if DEBUG_LOGGING:
+				self._log(f"✓ BACKUP CREATED: {backup_path.name}")
+
+			# Clear the original file
+			self.cache_path.unlink()
+			if DEBUG_LOGGING:
+				self._log(f"✓ CACHE CLEARED: Ready for fresh scan")
+
+		except Exception as e:
+			self._log(f"❌ BACKUP/RESET ERROR: {e}")
+
+	# Continue anyway - script can still function without metadata
+
+	def ensure_clip_in_cache(self, clip):
+		"""
+		LAZY LOADING: Ensures a specific clip is in cache by extracting SUX tag.
+		Call this when a clip is selected or modified.
+
+		Returns True if clip was added/updated, False if no tag found.
+		"""
+		if not clip or not self.cache_path:
+			return False
+
+		try:
+			# Get position
+			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
+			if track_idx < 0 or slot_idx < 0:
+				return False
+
+			# Extract tag from clip name
+			clip_name = getattr(clip, 'name', '')
+			params = self.extract_sux_params_from_name(clip_name)
+
+			if not params:
+				return False
+
+			# Build cache entry
+			content_hash = self._hash_clip_content(clip)
+			key_pos = f"POS_{track_idx}_{slot_idx}"
+
+			entry = {
+				"settings": params,
+				"track_index": track_idx,
+				"slot_index": slot_idx,
+				"content_hash": content_hash,
+				"updated_at": time.time()
+			}
+
+			self.cache.setdefault("clips", {})
+			self.cache["clips"][key_pos] = entry
+			self._save_cache()
+
+			return True
+
+		except Exception as e:
+			self._log(f"[ENSURE_CACHE_ERROR] {e}")
+			return False
+
+	def scan_all_clips(self):
+		"""
+		MANUAL FULL SCAN - Call this when user wants to rebuild entire cache.
+		Use sparingly on large projects.
+
+		Returns (total_scanned, tags_found) tuple.
+		"""
+		song = self.control_surface.song()
+		scanned_count = 0
+		found_tags = 0
+
+		if DEBUG_LOGGING:
+			self._log(f"[SCAN_ALL_START] Scanning {len(song.tracks)} tracks...")
+
+		for track_idx, track in enumerate(song.tracks):
+			for slot_idx, slot in enumerate(track.clip_slots):
+				if slot.has_clip:
+					clip = slot.clip
+					clip_name = getattr(clip, 'name', '')
+
+					params = self.extract_sux_params_from_name(clip_name)
+
+					if params:
+						found_tags += 1
+
+						# Add to cache (same logic as ensure_clip_in_cache)
+						content_hash = self._hash_clip_content(clip)
+						key_pos = f"POS_{track_idx}_{slot_idx}"
+
+						entry = {
+							"settings": params,
+							"track_index": track_idx,
+							"slot_index": slot_idx,
+							"content_hash": content_hash,
+							"updated_at": time.time()
+						}
+
+						self.cache.setdefault("clips", {})
+						self.cache["clips"][key_pos] = entry
+					scanned_count += 1
+
+		self._save_cache()
+		if DEBUG_LOGGING:
+			self._log(f"[SCAN_ALL_COMPLETE] Scanned {scanned_count} clips, found {found_tags} with SUX tags")
+
+		return scanned_count, found_tags
+
+	# def reload_from_clip_names(self):
+	# 	"""
+	# 	SCAN ALL CLIPS IN CURRENT SONG and rebuild cache from SUX tags in clip names.
+	# 	Call this after initializing the manager to populate it from the live set.
+	# 	"""
+	# 	song = self.control_surface.song()
+	# 	scanned_count = 0
+	# 	found_tags = 0
+	#
+	# 	self._log(f"[REBUILD_START] Scanning {len(song.tracks)} tracks for clip metadata")
+	#
+	# 	for track_idx, track in enumerate(song.tracks):
+	# 		for slot_idx, slot in enumerate(track.clip_slots):
+	# 			if slot.has_clip:
+	# 				clip = slot.clip
+	# 				clip_name = getattr(clip, 'name', '')
+	#
+	# 				# Extract metadata from clip name
+	# 				params = self.extract_sux_params_from_name(clip_name)
+	#
+	# 				if params:
+	# 					found_tags += 1
+	#
+	# 					# Build cache entry
+	# 					content_hash = self._hash_clip_content(clip)
+	# 					key_pos = f"POS_{track_idx}_{slot_idx}"
+	#
+	# 					entry = {
+	# 						"settings": params,
+	# 						"track_index": track_idx,
+	# 						"slot_index": slot_idx,
+	# 						"content_hash": content_hash,
+	# 						"updated_at": time.time()
+	# 					}
+	#
+	# 					self.cache.setdefault("clips", {})
+	# 					self.cache["clips"][key_pos] = entry
+	# 					scanned_count += 1
+	#
+	# 	self._save_cache()
+	#
+	# 	self._log(f"[REBUILD_COMPLETE] Scanned {scanned_count} clips, found {found_tags} with SUX tags")
 
 	def _log(self, msg):
 		"""Safe logging."""
@@ -76,35 +250,43 @@ class ClipMetadataManager:
 
 	def _load_cache(self):
 		"""Load JSON cache."""
-		self._log(f"_load_cache() called, checking {self.cache_path.exists()}")
+		if DEBUG_LOGGING:
+			self._log(f"_load_cache() called, checking {self.cache_path.exists()}")
 		try:
 			if self.cache_path.exists():
 				with open(self.cache_path, 'r') as f:
 					self.cache = json.load(f)
-				self._log(f"✓ Loaded: {len(self.cache.get('clips', {}))} entries")
+				if DEBUG_LOGGING:
+					self._log(f"✓ Loaded: {len(self.cache.get('clips', {}))} entries")
 			else:
-				self._log("✗ No existing cache file")
+				if DEBUG_LOGGING:
+					self._log("✗ No existing cache file")
 		except Exception as e:
 			self._log(f"❌ Load failed: {e}")
 			self.cache = {"clips": {}}
 
 	def _save_cache(self):
 		"""SAVE CACHE - WITH MAXIMUM DIAGNOSTICS."""
-		self._log(f"_save_cache() STARTED, cache has {len(self.cache.get('clips', {}))} clips")
-		self._log(f"cache_path = {self.cache_path}")
+		if DEBUG_LOGGING:
+			self._log(f"_save_cache() STARTED, cache has {len(self.cache.get('clips', {}))} clips")
+			self._log(f"cache_path = {self.cache_path}")
 
 		try:
-			self._log(f"Creating directory: {self.cache_path.parent}")
+			if DEBUG_LOGGING:
+				self._log(f"Creating directory: {self.cache_path.parent}")
 			self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-			self._log(f"Directory created OK")
+			if DEBUG_LOGGING:
+				self._log(f"Directory created OK")
 
 			entry_count = len(self.cache.get('clips', {}))
-			self._log(f"Writing {entry_count} entries to {self.cache_path}")
+			if DEBUG_LOGGING:
+				self._log(f"Writing {entry_count} entries to {self.cache_path}")
 
 			with open(self.cache_path, 'w') as f:
 				json.dump(self.cache, f, indent=2)
 
-			self._log(f"✓✅✅ SUCCESSFULLY SAVED {entry_count} ENTRIES to {self.cache_path}")
+			if DEBUG_LOGGING:
+				self._log(f"✓✅✅ SUCCESSFULLY SAVED {entry_count} ENTRIES to {self.cache_path}")
 
 		except Exception as e:
 			import traceback
@@ -114,11 +296,13 @@ class ClipMetadataManager:
 
 	def save_clip_to_json(self, clip, params_dict):
 		"""Save clip settings with maximum diagnostics."""
-		self._log(
+		if DEBUG_LOGGING:
+			self._log(
 			f"save_clip_to_json() CALLED with clip={clip}, params keys={list(params_dict.keys()) if params_dict else 'NONE'}")
 
 		if not clip:
-			self._log("✗ Clip is None, returning False")
+			if DEBUG_LOGGING:
+				self._log("✗ Clip is None, returning False")
 			return False
 
 		try:
@@ -151,7 +335,8 @@ class ClipMetadataManager:
 			self.cache["clips"][key_pos] = entry
 
 			self._save_cache()
-			self._log(f"Saved clip T{track_idx}:S{slot_idx} (hash={content_hash[:16]})")
+			if DEBUG_LOGGING:
+				self._log(f"Saved clip T{track_idx}:S{slot_idx} (hash={content_hash[:16]})")
 			return True
 
 		except Exception as e:
@@ -215,12 +400,62 @@ class ClipMetadataManager:
 			key_pos = f"POS_{track_idx}_{slot_idx}"
 			if key_pos in self.cache.get("clips", {}):
 				entry = self.cache["clips"][key_pos]
-				return entry.get("settings", {})
+				if DEBUG_LOGGING:
+					return entry.get("settings", {})
 			return None
 		except Exception as e:
 			self._log(f"recovery error: {e}")
 			return None
 
+	def extract_sux_params_from_name(self, clip_name):
+		"""
+		UNIFIED extraction method - used by ALL components.
+		This replaces duplicate code in MelodicNoteEditorComponent.
+		"""
+		if not clip_name:
+			return None
+
+		try:
+			start_idx = clip_name.find(self.METADATA_PREFIX)
+			if start_idx == -1:
+				return None
+
+			end_idx = clip_name.find(self.METADATA_SUFFIX, start_idx + len(self.METADATA_PREFIX))
+			if end_idx <= start_idx:
+				return None
+
+			param_start = start_idx + len(self.METADATA_PREFIX) + 1
+			param_string = clip_name[param_start:end_idx].strip()
+			if param_string.endswith('}'):
+				param_string = param_string[:-1]
+
+			if ";" not in param_string:
+				return None
+
+			values = param_string.split(";")
+
+			if len(values) < 8:
+				return None
+
+			params = {
+				'scale': int(values[0].strip()) % 12 if values[0].strip() else 0,
+				'root_note': int(values[1].strip()) % 12 if values[1].strip() else 0,
+				'display_octave': max(0, min(15, int(values[2].strip()))) if values[2].strip() else 2,
+				'resolution_index': max(0, min(7, int(values[3].strip()))) if values[3].strip() else 4,
+				'loop_block': int(values[4].strip()) if values[4].strip() else 0,
+				'loop_page_offset': int(values[5].strip()) if values[5].strip() else 0,
+				'clip_loop_start': float(values[6].strip()) if values[6].strip() else 0.0,
+				'clip_loop_end': float(values[7].strip()) if values[7].strip() else 16.0
+			}
+
+			return params
+		except Exception:
+			return None
+
+	# Accessiblity for backward compatibility
+	def extract_embedded_parameters(self, clip_name):
+		"""Alias for compatibility with existing MelodicNoteEditorComponent calls."""
+		return self.extract_sux_params_from_name(clip_name)
 
 	def _register_undo_listener(self):
 		"""Register to listen for undo stack changes."""
@@ -231,7 +466,8 @@ class ClipMetadataManager:
 			song = self.control_surface.song()
 			song.add_undo_stack_change_listener(self._on_undo_state_changed)
 			self._undo_listener_registered = True
-			self._log("Undo listener registered")
+			if DEBUG_LOGGING:
+				self._log("Undo listener registered")
 		except Exception as e:
 			self._log(f"Undo listener registration failed: {e}")
 
@@ -287,7 +523,8 @@ class ClipMetadataManager:
 				try:
 					clip_obj.name = target_name
 					processed.append(i)
-					self._log(f"Applied deferred rename: {target_name[:40]}...")
+					if DEBUG_LOGGING:
+						self._log(f"Applied deferred rename: {target_name[:40]}...")
 				except RuntimeError as re:
 					self._log(f"Still blocked: {re}")
 
@@ -314,8 +551,6 @@ class ClipMetadataManager:
 
 
 class MelodicNoteEditorComponent(ControlSurfaceComponent):
-	METADATA_PREFIX = "[SUX:"
-	METADATA_SUFFIX = "]"
 	def __init__(self, step_sequencer, matrix, side_buttons, control_surface):
 		self._initializing = True
 		ControlSurfaceComponent.__init__(self)
@@ -346,6 +581,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._control_surface.log_message(
 						f"[META_WARN] Path check failed: {path_test}"
 					)
+
+			# # ==========================================
+			# # NEW: REBUILD CACHE FROM CLIP NAMES AT STARTUP
+			# # ==========================================
+			# # Schedule rebuild after a short delay to ensure song is fully loaded
+			# if hasattr(self._control_surface, 'schedule_message'):
+			# 	self._control_surface.schedule_message(
+			# 		500,  # Wait 500ms for Live to finish initialization
+			# 		self._delayed_rebuild_from_clips
+			# 	)
+			# 	self._control_surface.log_message("[META] Scheduled cache rebuild from clip names")
+			# else:
+			# 	# Fallback if schedule_message not available
+			# 	self._delayed_rebuild_from_clips()
 
 			# Register observers for automatic sync
 			self._setup_observer_listeners()
@@ -914,7 +1163,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					potential_tag = original_name[start_bracket:end_bracket+1]
 
 					if "{" in potential_tag and ";" in potential_tag:
-						extract_from_old = self.extract_embedded_parameters(original_name)
+						extract_from_old = self._meta_manager.extract_embedded_parameters(original_name)
 
 						if extract_from_old:
 							tag_exists_and_valid = True
@@ -1298,7 +1547,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# Extra fallback: extract actual tag and compare
 			if not has_correct_params:
-				extracted = self.extract_embedded_parameters(actual_name)
+				extracted = self._meta_manager.extract_embedded_parameters(actual_name)
 				if extracted:
 					# Compare values directly
 					all_match = all(
@@ -1553,6 +1802,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(f"[CLIP_SKIP] Same clip already selected, nothing to do")
 			return
 
+		# ==========================================
+		# LAZY LOADING: Ensure this clip is in cache
+		# ==========================================
+		if self._meta_manager:
+			# Try to extract from SUX tag first
+			cache_populated = self._meta_manager.ensure_clip_in_cache(clip)
+
+			if not cache_populated:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[LAZY_LOAD] No SUX tag found, will use JSON recovery or defaults"
+					)
+
 		# ========== PHASE 1: TRY LOAD EMBEDDED PARAMETER TAG FROM CLIP NAME FIRST ==========
 		clip_params = None
 		settings_source = None
@@ -1562,7 +1824,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(f"[CLIP_LOAD_START] Examining clip name: '{clip_name[:60]}...'")
 
-		clip_params = self.extract_embedded_parameters(clip_name)
+		clip_params = self._meta_manager.extract_embedded_parameters(clip_name)
 
 		if clip_params:
 			settings_source = "EMBEDDED_TAG"
@@ -1690,42 +1952,84 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message(
 				f"[CLIP_SET_COMPLETE] '{cname}' @ T{tidx}:S{sidx} (source={settings_source})")
 
-
-	def manually_write_all_tags(self):
+	def manual_scan_all_clips(self):
 		"""
-		MANUAL DEBUGGING TOOL: Forces all current clip parameters to be written
-		immediately as tags. Useful for verifying tags persist across restarts.
+		MANUAL TRIGGER: Call from long-press on StepSequencer2 button or Python console.
 
-		Call from Python console:
-			from your_module import melodic_sequencer_instance
-			melodic_sequencer_instance.manually_write_all_tags()
+		Returns:
+			tuple: (total_clips_scanned, clips_with_sux_tags_found)
 		"""
-		if not self._clip:
-			self._control_surface.show_message("No clip selected")
-			return
+		if not self._meta_manager:
+			self._control_surface.show_message("No metadata manager available")
+			return 0, 0
 
-		try:
-			current_state = self._get_current_state_dict()
+		# Run synchronously via scheduled message
+		if hasattr(self._control_surface, 'schedule_message'):
+			# Use lambda wrapper for callback
+			result_container = {'total': 0, 'found': 0}
 
-			# Try direct write
-			success = self.update_clip_name_with_params(self._clip, current_state)
+			def scan_wrapper():
+				total, found = self._do_manual_scan()
+				result_container['total'] = total
+				result_container['found'] = found
 
-			if success:
-				# Verify it worked
-				clip_name = self._clip.name
-				if self.METADATA_PREFIX in clip_name:
-					self._control_surface.show_message("Tag wrote successfully!")
-					self._control_surface.log_message(f"[MANUAL_DEBUG] Tag present: {clip_name[:60]}...")
-				else:
-					self._control_surface.show_message("Tag attempted but not verified")
-					self._control_surface.log_message(f"[MANUAL_DEBUG] Warning: Tag may not have taken effect")
-			else:
-				self._control_surface.show_message("Tag write failed")
+			self._control_surface.schedule_message(1, scan_wrapper)
 
-		except Exception as e:
-			import traceback
-			self._control_surface.show_message("Error writing tag")
-			self._control_surface.log_message(f"[MANUAL_DEBUG ERROR] {e}\n{traceback.format_exc()}")
+			# Wait briefly for scan to complete (non-blocking in Live thread)
+			time.sleep(0.05)
+
+			return result_container['total'], result_container['found']
+		else:
+			# Fallback without scheduling
+			return self._do_manual_scan()
+
+	def _do_manual_scan(self):
+		if not self._meta_manager:
+			return 0, 0
+
+		total, found = self._meta_manager.scan_all_clips()
+
+		msg = f"Scanned {total}, Found {found} tagged clips"
+		self._control_surface.show_message(msg)
+		self._control_surface.log_message(f"[MANUAL_SCAN] {msg}")
+
+		return total, found
+
+	# def manually_write_all_tags(self):
+	# 	"""
+	# 	MANUAL DEBUGGING TOOL: Forces all current clip parameters to be written
+	# 	immediately as tags. Useful for verifying tags persist across restarts.
+	#
+	# 	Call from Python console:
+	# 		from your_module import melodic_sequencer_instance
+	# 		melodic_sequencer_instance.manually_write_all_tags()
+	# 	"""
+	# 	if not self._clip:
+	# 		self._control_surface.show_message("No clip selected")
+	# 		return
+	#
+	# 	try:
+	# 		current_state = self._get_current_state_dict()
+	#
+	# 		# Try direct write
+	# 		success = self.update_clip_name_with_params(self._clip, current_state)
+	#
+	# 		if success:
+	# 			# Verify it worked
+	# 			clip_name = self._clip.name
+	# 			if self.METADATA_PREFIX in clip_name:
+	# 				self._control_surface.show_message("Tag wrote successfully!")
+	# 				self._control_surface.log_message(f"[MANUAL_DEBUG] Tag present: {clip_name[:60]}...")
+	# 			else:
+	# 				self._control_surface.show_message("Tag attempted but not verified")
+	# 				self._control_surface.log_message(f"[MANUAL_DEBUG] Warning: Tag may not have taken effect")
+	# 		else:
+	# 			self._control_surface.show_message("Tag write failed")
+	#
+	# 	except Exception as e:
+	# 		import traceback
+	# 		self._control_surface.show_message("Error writing tag")
+	# 		self._control_surface.log_message(f"[MANUAL_DEBUG ERROR] {e}\n{traceback.format_exc()}")
 
 	def _get_simple_clip_key(self, clip):
 		"""Fallback: Simple key using object identity when get_key() fails."""
