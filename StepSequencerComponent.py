@@ -94,8 +94,9 @@ class StepSequencerComponent(CompoundComponent):
 		self._left_button = None
 		self._right_button = None
 		# scale
+		self._scale_selector_toggled = False
 		self._root_note = 36
-		self._chromatic_scale = []
+		#self._chromatic_scale = []
 		self._diatonic_scale = []
 		self._beat = 0
 		# Initialize _loop_page_offset
@@ -409,7 +410,7 @@ class StepSequencerComponent(CompoundComponent):
 		if self._mode != mode or number_of_lines_per_note != self._number_of_lines_per_note:
 			self._number_of_lines_per_note = number_of_lines_per_note
 			self._note_editor.set_multinote(mode == STEPSEQ_MODE_MULTINOTE, number_of_lines_per_note)
-			if mode == STEPSEQ_MODE_NORMAL:
+			if mode in (STEPSEQ_MODE_NORMAL, STEPSEQ_MODE_SCALE_EDIT):
 				if self._mode != mode:
 					# self._loop_selector._block = self._loop_selector._block * self._number_of_lines_per_note
 					self._note_editor.set_page(self._loop_selector._block)
@@ -1090,19 +1091,29 @@ class StepSequencerComponent(CompoundComponent):
 	def _scale_selector_button_value(self, value):
 		assert (value in range(128))
 		if self.is_enabled():
+			# Track toggle state (initialize this in __init__ or elsewhere)
+			if not hasattr(self, '_scale_selector_toggled'):
+				self._scale_selector_toggled = False
 
-			if value > 0:
-				self._mode_backup = self._mode
-				if self._scale_selector != None and self._note_selector != None:
-					self._scale_selector.set_octave(int(self._note_selector._root_note / 12))
-					self._scale_selector.set_key(self._note_selector._key)
-					self.set_mode(STEPSEQ_MODE_SCALE_EDIT)
-			else:
-				if self._scale_selector != None and self._note_selector != None:
-					self._note_selector.set_scale(self._scale_selector.notes, self._scale_selector._key)
-					self._note_selector.set_selected_note(self._scale_selector._octave * 12 + self._scale_selector._key)
-					self._scale_updated()
-				self.set_mode(self._mode_backup)
+			if value > 0:  # Button press
+				# Flip the toggle state
+				self._scale_selector_toggled = not self._scale_selector_toggled
+
+				if self._scale_selector_toggled:
+					# Entering scale edit mode (same as original value > 0 path)
+					self._mode_backup = self._mode
+					if self._scale_selector != None and self._note_selector != None:
+						#self._scale_selector.set_octave(int(self._note_selector._root_note / 12))
+						self._scale_selector.set_key(self._note_selector._key)
+						self.set_mode(STEPSEQ_MODE_SCALE_EDIT)
+				else:
+					# Exiting scale edit mode (same as original value <= 0 path)
+					if self._scale_selector != None and self._note_selector != None:
+						self._note_selector.set_scale(self._scale_selector.notes, self._scale_selector._key)
+						self._note_selector.set_selected_note(
+							self._scale_selector._octave * 12 + self._scale_selector._key)
+						self._scale_updated()
+						self.set_mode(self._mode_backup)
 
 
 # MUTE SHIFT Button

@@ -569,7 +569,7 @@ class Colors:
 
     class Note:
         FeedbackRecord = Rgb.RED
-        Feedback = Rgb.GREEN
+        Feedback = Rgb.PURPLE
 
         class Octave:
             On = Rgb.GREEN
@@ -581,8 +581,8 @@ class Colors:
 
         class Pads:
             Root = Rgb.BLUE
-            InScale = Rgb.LIGHT_BLUE_HALF
-            Highlight = Rgb.LIGHT_BLUE
+            InScale = Rgb.LIGHT_BLUE_THIRD
+            Highlight = Rgb.LIGHT_BLUE_HALF
             OutOfScale = Rgb.DARK_GREY
             Invalid = Rgb.BLACK
 
@@ -605,6 +605,9 @@ class Colors:
 
         CircleOfFifths = Rgb.BLUE
         RelativeScale = Rgb.BLUE
+        Empty = Rgb.BLACK
+        InactiveDark = Rgb.DARK_GREY
+        Inactive = Rgb.GREY
 
         class Octave:
             On = Rgb.RED

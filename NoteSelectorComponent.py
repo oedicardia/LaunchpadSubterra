@@ -65,9 +65,9 @@ class NoteSelectorComponent(ControlSurfaceComponent):
     def is_drumrack(self):
         return self._step_sequencer._scale_selector.is_drumrack and self._drum_group_device != None
 
-    @property
-    def is_chromatic(self):
-        return self._step_sequencer._scale_selector.is_chromatic
+    # @property
+    # def is_chromatic(self):
+    #     return self._step_sequencer._scale_selector.is_chromatic
 
     @property
     def is_diatonic(self):
