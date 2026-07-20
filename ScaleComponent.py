@@ -1,3 +1,4 @@
+# ScaleComponent.py
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 import Live
 #fix for python3
@@ -18,7 +19,7 @@ for name,notes in Live.Song.get_all_scales_ordered():
 
 TOP_OCTAVE = {"chromatic_gtr": 7, "diatonic_ns": 2, "diatonic_chords": 7, "diatonic": 6,  
 			"chromatic": 7}
-
+DEBUG_LOGGING =True
 
 class ScaleComponent(ControlSurfaceComponent):
 	
@@ -176,8 +177,12 @@ class ScaleComponent(ControlSurfaceComponent):
 			self._osd.attribute_names[2] = "Root Note"
 			self._osd.attributes[3] = self._octave
 			self._osd.attribute_names[3] = "Octave"
-			self._osd.attributes[4] = " "
-			self._osd.attribute_names[4] = " "
+			if self._is_absolute:
+				self._osd.attributes[4] = "Abs"
+			else:
+				self._osd.attributes[4] = "Rel"
+			self._osd.attribute_names[4] = "Root Pos"
+
 			self._osd.attributes[5] = " "
 			self._osd.attribute_names[5] = " "
 			self._osd.attributes[6] = " "
@@ -185,7 +190,7 @@ class ScaleComponent(ControlSurfaceComponent):
 			self._osd.attributes[7] = " "
 			self._osd.attribute_names[7] = " "
 			self._osd.update()
-			
+
 	def update(self):
 		if self.is_enabled() and self._matrix!=None:
 			#self._control_surface.log_message("update scale: "+str(self._matrix))
@@ -331,9 +336,10 @@ class ScaleComponent(ControlSurfaceComponent):
 					if x == 0:
 						self._is_absolute = not self._is_absolute
 						if self._is_absolute:
-							self._control_surface.show_message("absolute root")
+							self._control_surface.show_message("ABSOLUTE mode: Root on natural row")
 						else:
-							self._control_surface.show_message("relative root")
+							self._control_surface.show_message("RELATIVE mode: Root on bottom row")
+						message = False  # Don't trigger other actions
 					if x == 1:
 						if self.is_diatonic:
 							self._is_horizontal = not self._is_horizontal
@@ -485,7 +491,16 @@ class ScaleComponent(ControlSurfaceComponent):
 	@property
 	def is_quick_scale(self):
 		return self._quick_scale
-	
+
+	@property
+	def is_absolute(self):
+		"""Return True if root note should be on natural MIDI row."""
+		return self._is_absolute
+
+	@property
+	def is_relative(self):
+		"""Return True if root note should always be on bottom row (row 7)."""
+		return not self._is_absolute
 	
 	def get_pattern(self):
 		notes = self.notes

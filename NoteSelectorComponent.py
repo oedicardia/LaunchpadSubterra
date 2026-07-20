@@ -1,6 +1,7 @@
+# NoteSelectorComponent.py
 from _Framework.ButtonElement import ButtonElement
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
-
+DEBUG_LOGGING = True
 #Allows to note selection and navigation through note groups and pages
 class NoteSelectorComponent(ControlSurfaceComponent):
 
@@ -255,10 +256,8 @@ class NoteSelectorComponent(ControlSurfaceComponent):
     def set_scale(self, scale, key=-1):
         if key != -1:
             self._key = key
-        self._scale = scale
-        # relativise scale
-        for i in range(len(self._scale)):
-            self._scale[i] = self._scale[i] - self._key
+
+        self._scale = [n - self._key for n in scale]
 
     #Is the cursor in the current button range and contain a note
     def note_is_playing(self, clip, note_cache, midi_note, playhead):
@@ -354,6 +353,18 @@ class NoteSelectorComponent(ControlSurfaceComponent):
             self._offset = (selected_note + 12 - self._root_note) % 12
 
         self._step_sequencer._scale_updated()
+
+    def validate_root_note(self):
+        """Ensure _key is always a valid MIDI note (0-127), not just note class (0-11)."""
+        if hasattr(self, '_key'):
+            if self._key < 12:
+                # Convert note class to MIDI note using current octave
+                octave = getattr(self, '_root_note', 36) // 12 if hasattr(self, '_root_note') else 3
+                self._key = self._key + (octave * 12)
+                if DEBUG_LOGGING:
+                    self._control_surface.log_message(
+                        f"[VALIDATE_ROOT] Converted _key from {self._key - (octave * 12)} to {self._key}")
+        return getattr(self, '_key', 36)
 
     def set_key(self, key):
         self._key = key

@@ -918,13 +918,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message("[DISCONNECT_COMPLETE] All cleanup finished")
 	
 	
-	# def _remove_scale_listeners(self):
-	# 	try:
-	# 		if self.song():
-	# 			self.song().remove_root_note_listener(self.handle_root_note_changed)
-	# 			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
-	# 	except RuntimeError:
-	# 		pass
+	def _remove_scale_listeners(self):
+		try:
+			if self.song():
+				self.song().remove_root_note_listener(self.handle_root_note_changed)
+				self.song().remove_scale_name_listener(self.handle_scale_name_changed)
+		except RuntimeError:
+			pass
 
 	@property
 	def resolution_beats(self):
@@ -1698,36 +1698,36 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return processed_count
 
 
-	# def _register_scale_listeners(self):
-	# 	try:
-	# 		# Only register if we have access to the song object
-	# 		if self.song():
-	# 			self.song().add_root_note_listener(self.handle_root_note_changed)
-	# 			self.song().add_scale_name_listener(self.handle_scale_name_changed)
-	# 	except RuntimeError:
-	# 		pass
+	def _register_scale_listeners(self):
+		try:
+			# Only register if we have access to the song object
+			if self.song():
+				self.song().add_root_note_listener(self.handle_root_note_changed)
+				self.song().add_scale_name_listener(self.handle_scale_name_changed)
+		except RuntimeError:
+			pass
 
-	# def handle_root_note_changed(self):
-	# 	# Ensure we update the key indexes when root note changes
-	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
-	# 	                                                                         '_scale_selector'):
-	# 		self._step_sequencer._scale_selector.set_key(self.song().root_note, False, True)
-	# 		self._scale_updated()  # This updates _key_indexes
-	# 		self.update()  # Redraw matrix
+	def handle_root_note_changed(self):
+		# Ensure we update the key indexes when root note changes
+		if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+		                                                                         '_scale_selector'):
+			self._step_sequencer._scale_selector.set_key(self.song().root_note, False, True)
+			self._scale_updated()  # This updates _key_indexes
+			self.update()  # Redraw matrix
 
-	# def handle_scale_name_changed(self):
-	# 	# Ensure we update keys when scale mode changes
-	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
-	# 	                                                                         '_scale_selector'):
-	# 		try:
-	# 			song_scale = str(self.song().scale_name)
-	# 			if song_scale in self._step_sequencer._scale_selector._modus_names:
-	# 				mode_idx = self._step_sequencer._scale_selector._modus_names.index(song_scale)
-	# 				self._step_sequencer._scale_selector.set_modus(mode_idx, False, True)
-	# 				self._scale_updated()
-	# 				self.update()
-	# 		except (ValueError, AttributeError):
-	# 			pass
+	def handle_scale_name_changed(self):
+		# Ensure we update keys when scale mode changes
+		if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+		                                                                         '_scale_selector'):
+			try:
+				song_scale = str(self.song().scale_name)
+				if song_scale in self._step_sequencer._scale_selector._modus_names:
+					mode_idx = self._step_sequencer._scale_selector._modus_names.index(song_scale)
+					self._step_sequencer._scale_selector.set_modus(mode_idx, False, True)
+					self._scale_updated()
+					self.update()
+			except (ValueError, AttributeError):
+				pass
 
 
 	def _setup_observer_listeners(self):
@@ -2184,7 +2184,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			)
 
 		return result
-
 
 
 	def _restore_clip_metadata(self, metadata):

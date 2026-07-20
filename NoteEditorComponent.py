@@ -1,3 +1,4 @@
+# NoteEditorComponent.py
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonElement import ButtonElement
 import time
@@ -89,15 +90,15 @@ class NoteEditorComponent(ControlSurfaceComponent):
 	def resolution(self):
 		return self._resolution
 
-	@property
-	def quantization(self):
-		return self._quantization
+	# @property
+	# def quantization(self):
+	# 	return self._quantization
 
 	def set_resolution(self, resolution):
 		self._resolution = resolution
 
-	def set_quantization(self, quantization):
-		self._quantization = quantization
+	# def set_quantization(self, quantization):
+	# 	self._quantization = quantization
 
 
 
