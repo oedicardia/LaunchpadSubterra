@@ -367,7 +367,8 @@ class ClipMetadataManager:
 			# Extract ONLY settings from params_dict (filter out positional metadata)
 			settings_only = {}
 			settings_keys = [
-				'scale', 'root_note', 'display_octave', 'resolution_index',
+				'is_absolute',#'scale', 'root_note',
+		 		'display_octave', 'resolution_index',
 				'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end',
 				'timestamp', 'resolution_name'
 			]
@@ -494,14 +495,13 @@ class ClipMetadataManager:
 				return None
 
 			params = {
-				'scale': int(values[0].strip()) % 12 if values[0].strip() else 0,
-				'root_note': int(values[1].strip()) % 12 if values[1].strip() else 0,
-				'display_octave': max(0, min(15, int(values[2].strip()))) if values[2].strip() else 2,
-				'resolution_index': max(0, min(7, int(values[3].strip()))) if values[3].strip() else 4,
-				'loop_block': int(values[4].strip()) if values[4].strip() else 0,
-				'loop_page_offset': int(values[5].strip()) if values[5].strip() else 0,
-				'clip_loop_start': float(values[6].strip()) if values[6].strip() else 0.0,
-				'clip_loop_end': float(values[7].strip()) if values[7].strip() else 16.0
+				'is_absolute': int(values[0].strip()) if values[0].strip() else 12,
+				'display_octave': max(0, min(15, int(values[1].strip()))) if values[1].strip() else 2,
+				'resolution_index': max(0, min(7, int(values[2].strip()))) if values[2].strip() else 4,
+				'loop_block': int(values[3].strip()) if values[3].strip() else 0,
+				'loop_page_offset': int(values[4].strip()) if values[4].strip() else 0,
+				'clip_loop_start': float(values[5].strip()) if values[5].strip() else 0.0,
+				'clip_loop_end': float(values[6].strip()) if values[6].strip() else 16.0
 			}
 
 			return params
@@ -918,13 +918,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.log_message("[DISCONNECT_COMPLETE] All cleanup finished")
 	
 	
-	def _remove_scale_listeners(self):
-		try:
-			if self.song():
-				self.song().remove_root_note_listener(self.handle_root_note_changed)
-				self.song().remove_scale_name_listener(self.handle_scale_name_changed)
-		except RuntimeError:
-			pass
+	# def _remove_scale_listeners(self):
+	# 	try:
+	# 		if self.song():
+	# 			self.song().remove_root_note_listener(self.handle_root_note_changed)
+	# 			self.song().remove_scale_name_listener(self.handle_scale_name_changed)
+	# 	except RuntimeError:
+	# 		pass
 
 	@property
 	def resolution_beats(self):
@@ -1000,8 +1000,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
         Parse SUX tag from clip name. Extracts from FIRST valid tag only.
 
         Handles BOTH:
-        - Good format: [SUX:{0;0;3;3;0;0;0.0;24.0}]
-        - Corrupt format: [SUX:0;0;3;3;0;0;0.0;24.0] (missing {})
+        - Good format: [SUX:{0;3;3;0;0;0.0;24.0}]
 
         Returns None if no valid tag found.
         """
@@ -1036,19 +1035,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			values = param_string.split(";")
 
-			if len(values) < 8:
+			if len(values) < 7:
 				return None
 
 			# Parse each value - TRIM FIRST!
 			params = {
-				'scale': int(values[0].strip()) % 12 if values[0].strip() else 0,
-				'root_note': int(values[1].strip()) % 12 if values[1].strip() else 0,
-				'display_octave': max(0, min(15, int(values[2].strip()))) if values[2].strip() else 2,
-				'resolution_index': max(0, min(7, int(values[3].strip()))) if values[3].strip() else 4,
-				'loop_block': int(values[4].strip()) if values[4].strip() else 0,
-				'loop_page_offset': int(values[5].strip()) if values[5].strip() else 0,
-				'clip_loop_start': float(values[6].strip()) if values[6].strip() else 0.0,
-				'clip_loop_end': float(values[7].strip()) if values[7].strip() else 16.0
+				'is_absolute': int(values[0].strip()) if values[0].strip() else 12,
+				'display_octave': max(0, min(15, int(values[1].strip()))) if values[1].strip() else 2,
+				'resolution_index': max(0, min(7, int(values[2].strip()))) if values[2].strip() else 4,
+				'loop_block': int(values[3].strip()) if values[3].strip() else 0,
+				'loop_page_offset': int(values[4].strip()) if values[4].strip() else 0,
+				'clip_loop_start': float(values[5].strip()) if values[5].strip() else 0.0,
+				'clip_loop_end': float(values[6].strip()) if values[6].strip() else 16.0
 			}
 
 			if DEBUG_LOGGING:
@@ -1067,23 +1065,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
         Construct the SUX metadata tag from parameter dictionary.
 
-        Format: [SUX:{scale;root;oct;res;blk;off;start;end}]
+        Format: [SUX:{is_absolute;oct;res;blk;off;start;end}]
 
         CRITICAL: Must include BOTH opening '[' and closing ']' AND curly braces '{' '}'!
 
         Returns:
-            str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
+            str: Formatted tag like "[SUX:{0;2;4;0;0;0.0;16.0}]"
         """
 		try:
 			values = [
-				str(int(params_dict.get('scale', 0))),
-				str(int(params_dict.get('root_note', 0))),
-				str(int(params_dict.get('display_octave', 2))),
-				str(int(params_dict.get('resolution_index', 4))),
-				str(int(params_dict.get('loop_block', 0))),
-				str(int(params_dict.get('loop_page_offset', 0))),
-				str(round(float(params_dict.get('clip_loop_start', 0.0)), 1)),
-				str(round(float(params_dict.get('clip_loop_end', 16.0)), 1))
+				str(int(params_dict.get('is_absolute', 12))),  # NEW at index 0
+				str(int(params_dict.get('display_octave', 2))),  # Was index 2, now 1
+				str(int(params_dict.get('resolution_index', 4))),  # Was index 3, now 2
+				str(int(params_dict.get('loop_block', 0))),  # Was index 4, now 3
+				str(int(params_dict.get('loop_page_offset', 0))),  # Was index 5, now 4
+				str(round(float(params_dict.get('clip_loop_start', 0.0)), 1)),  # Was index 6, now 5
+				str(round(float(params_dict.get('clip_loop_end', 16.0)), 1))  # Was index 7, now 6
 			]
 
 			param_string = ";".join(values)
@@ -1104,7 +1101,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				import traceback
 				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}\n{traceback.format_exc()}")
 			# Return minimal valid tag with BOTH curly braces
-			return f"{METADATA_PREFIX}{{0;0;2;4;0;0;0.0;16.0}}{METADATA_SUFFIX}"
+			return f"{METADATA_PREFIX}{{0;2;4;0;0;0.0;16.0}}{METADATA_SUFFIX}"
 
 
 	def update_clip_name_with_params(self, clip, params_dict):
@@ -1231,7 +1228,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 							# Compare ALL parameters directly
 							keys_to_check = [
-								'scale', 'root_note', 'display_octave', 'resolution_index',
+								'is_absolute', 'display_octave', 'resolution_index',
 								'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end'
 							]
 
@@ -1608,7 +1605,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# Compare values directly
 					all_match = all(
 						extracted.get(key) == expected_state.get(key)
-						for key in ['display_octave', 'resolution_index', 'scale', 'root_note',
+						for key in ['display_octave', 'resolution_index', 'is_absolute',#'scale', 'root_note',
 						            'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end']
 					)
 					has_correct_params = all_match
@@ -1698,36 +1695,36 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return processed_count
 
 
-	def _register_scale_listeners(self):
-		try:
-			# Only register if we have access to the song object
-			if self.song():
-				self.song().add_root_note_listener(self.handle_root_note_changed)
-				self.song().add_scale_name_listener(self.handle_scale_name_changed)
-		except RuntimeError:
-			pass
-
-	def handle_root_note_changed(self):
-		# Ensure we update the key indexes when root note changes
-		if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
-		                                                                         '_scale_selector'):
-			self._step_sequencer._scale_selector.set_key(self.song().root_note, False, True)
-			self._scale_updated()  # This updates _key_indexes
-			self.update()  # Redraw matrix
-
-	def handle_scale_name_changed(self):
-		# Ensure we update keys when scale mode changes
-		if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
-		                                                                         '_scale_selector'):
-			try:
-				song_scale = str(self.song().scale_name)
-				if song_scale in self._step_sequencer._scale_selector._modus_names:
-					mode_idx = self._step_sequencer._scale_selector._modus_names.index(song_scale)
-					self._step_sequencer._scale_selector.set_modus(mode_idx, False, True)
-					self._scale_updated()
-					self.update()
-			except (ValueError, AttributeError):
-				pass
+	# def _register_scale_listeners(self):
+	# 	try:
+	# 		# Only register if we have access to the song object
+	# 		if self.song():
+	# 			self.song().add_root_note_listener(self.handle_root_note_changed)
+	# 			self.song().add_scale_name_listener(self.handle_scale_name_changed)
+	# 	except RuntimeError:
+	# 		pass
+	#
+	# def handle_root_note_changed(self):
+	# 	# Ensure we update the key indexes when root note changes
+	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+	# 	                                                                         '_scale_selector'):
+	# 		self._step_sequencer._scale_selector.set_key(self.song().root_note, False, True)
+	# 		self._scale_updated()  # This updates _key_indexes
+	# 		self.update()  # Redraw matrix
+	#
+	# def handle_scale_name_changed(self):
+	# 	# Ensure we update keys when scale mode changes
+	# 	if hasattr(self, '_step_sequencer') and self._step_sequencer and hasattr(self._step_sequencer,
+	# 	                                                                         '_scale_selector'):
+	# 		try:
+	# 			song_scale = str(self.song().scale_name)
+	# 			if song_scale in self._step_sequencer._scale_selector._modus_names:
+	# 				mode_idx = self._step_sequencer._scale_selector._modus_names.index(song_scale)
+	# 				self._step_sequencer._scale_selector.set_modus(mode_idx, False, True)
+	# 				self._scale_updated()
+	# 				self.update()
+	# 		except (ValueError, AttributeError):
+	# 			pass
 
 
 	def _setup_observer_listeners(self):
@@ -2096,15 +2093,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _get_current_state_dict(self):
 		"""Returns current settings as dictionary WITHOUT modifying them."""
-		scale_val = 0
-		root_val = 0
+		# scale_val = 0
+		# root_val = 0
 		resolution_index = 0
 
 		try:
+			# === ABSOLUTE SCALE == #
+			is_absolute = False
 			if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
 				selector = self._step_sequencer._scale_selector
-				scale_val = getattr(selector, '_modus', 0)
-				root_val = getattr(selector, '_key', 0)
+				# Read the public @property (no underscore when reading)
+				is_absolute = getattr(selector, 'is_absolute', False)
+
+			# if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
+			# 	selector = self._step_sequencer._scale_selector
+			# 	scale_val = getattr(selector, '_modus', 0)
+			# 	root_val = getattr(selector, '_key', 0)
 
 			# === RESOLUTION HANDLING USING RESOLUTION_MAP ===
 			current_resolution = getattr(self, '_resolution', 16)
@@ -2131,8 +2135,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					resolution_index = 0
 				res_label = RESOLUTION_NAMES[resolution_index]
 
+			# === OCTAVE == #
 			display_octave = getattr(self, '_display_octave', 2)
 
+			# === LOOP == #
 			loop_block = 0
 			loop_page_offset = 0
 			clip_loop_start = 0.0
@@ -2151,8 +2157,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[STATE_DICT ERROR] {e}")
 			return {
-				'scale': 0,
-				'root_note': 0,
+				'is_absolute': 0,
 				'display_octave': 2,
 				'resolution_index': 4,
 				'resolution_name': "1/16",
@@ -2164,11 +2169,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			}
 
 		result = {
-			'scale': scale_val,
-			'root_note': root_val,
+			'is_absolute': is_absolute,
 			'display_octave': int(display_octave),
-			'resolution_index': resolution_index,  # ← THIS LINE MUST ALWAYS BE PRESENT
-			'resolution_name': res_label,  # ← Human-readable label for reference
+			'resolution_index': resolution_index,
+			'resolution_name': res_label,
 			'loop_block': loop_block,
 			'loop_page_offset': loop_page_offset,
 			'clip_loop_start': clip_loop_start,
@@ -2178,7 +2182,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(
-				f"[SAVING_STATE] Scale={scale_val}, Root={root_val}, Oct={display_octave}, " +
+				f"[SAVING_STATE] AbsRange={is_absolute}, Oct={display_octave}, " +
 				f"ResIdx={resolution_index} ({res_label}), Offset={loop_page_offset}, " +
 				f"Loop={clip_loop_start:.2f}->{clip_loop_end:.2f}"
 			)
@@ -2186,102 +2190,102 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return result
 
 
-	def _restore_clip_metadata(self, metadata):
-		"""Applies saved metadata to the current session."""
-		if not metadata: return
-		try:
-			# === SCALE/ROOT/OCTAVE/RESOLUTION ===
-			if 'scale' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-				selector = self._step_sequencer._scale_selector
-				if metadata['scale'] in range(len(selector._modus_names)):
-					selector.set_modus(metadata['scale'], False, True)
-
-			if 'root_note' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-				selector = self._step_sequencer._scale_selector
-				root = int(metadata['root_note']) % 12
-				selector.set_key(root, False, True)
-
-			if 'display_octave' in metadata:
-				oct_val = int(metadata['display_octave'])
-				oct_val = max(0, min(15, oct_val))
-				self.set_display_octave(oct_val)
-
-			if 'resolution' in metadata:
-				res = int(metadata['resolution'])
-				if res in [8, 16, 32]:
-					self.set_resolution(res)
-
-			# === NEW: RESTORE LOOP PARAMETERS ==========
-			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-				ls = self._step_sequencer._loop_selector
-
-				# Restore selected block/index (row 7 selection)
-				if 'loop_block' in metadata:
-					new_block = int(metadata['loop_block'])
-					if hasattr(ls, '_block'):
-						ls._block = new_block
-						# Force update to reflect new selection visually
-						ls._force = True
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(f"[RESTORE_LOOP] Block={new_block}")
-
-				# Restore page offset (cycle/page position)
-				if 'loop_page_offset' in metadata:
-					offset = int(metadata['loop_page_offset'])
-					if hasattr(ls, '_loop_page_offset'):
-						old_offset = ls._loop_page_offset
-						ls._loop_page_offset = offset
-						# Update step sequencer page accordingly
-						if hasattr(self._step_sequencer, 'set_page'):
-							absolute_block = ls._block + (offset * 8)
-							self._step_sequencer.set_page(absolute_block)
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[RESTORE_LOOP] PageOffset={offset} (was {old_offset})")
-
-				# Restore clip loop bounds (marker start/end)
-				if 'clip_loop_start' in metadata and 'clip_loop_end' in metadata:
-					if self._clip:
-						start = float(metadata['clip_loop_start'])
-						end = float(metadata['clip_loop_end'])
-
-						# Safety check
-						if end <= start:
-							end = start + 1.0
-
-						# Apply to clip directly
-						try:
-							self._clip.loop_start = start
-							self._clip.loop_end = end
-							# Also update marker positions
-							self._clip.start_marker = start
-							self._clip.end_marker = end
-
-							# Tell LoopSelector to sync
-							if hasattr(ls, '_get_clip_loop'):
-								ls._get_clip_loop()
-								ls.update()
-
-							if DEBUG_LOGGING:
-								self._control_surface.log_message(f"[RESTORE_LOOP] ClipLoop: {start:.2f} -> {end:.2f}")
-
-						except RuntimeError as le:
-							if DEBUG_LOGGING:
-								self._control_surface.log_message(f"[RESTORE_ERROR] Failed to set clip loop: {le}")
-
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[RESTORE] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-					f"Block={metadata.get('loop_block')} Offset={metadata.get('loop_page_offset')}")
-
-		except Exception as e:
-			self._control_surface.log_message(f"[RESTORE ERROR] {e}")
-
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[RESTORE_VERIFICATION] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-				f"Block={metadata.get('loop_block', '?')} Offset={metadata.get('loop_page_offset', '?')}"
-			)
+	# def _restore_clip_metadata(self, metadata):
+	# 	"""Applies saved metadata to the current session."""
+	# 	if not metadata: return
+	# 	try:
+	# 		# === SCALE/ROOT/OCTAVE/RESOLUTION ===
+	# 		if 'scale' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
+	# 			selector = self._step_sequencer._scale_selector
+	# 			if metadata['scale'] in range(len(selector._modus_names)):
+	# 				selector.set_modus(metadata['scale'], False, True)
+	#
+	# 		if 'root_note' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
+	# 			selector = self._step_sequencer._scale_selector
+	# 			root = int(metadata['root_note']) % 12
+	# 			selector.set_key(root, False, True)
+	#
+	# 		if 'display_octave' in metadata:
+	# 			oct_val = int(metadata['display_octave'])
+	# 			oct_val = max(0, min(15, oct_val))
+	# 			self.set_display_octave(oct_val)
+	#
+	# 		if 'resolution' in metadata:
+	# 			res = int(metadata['resolution'])
+	# 			if res in [8, 16, 32]:
+	# 				self.set_resolution(res)
+	#
+	# 		# === NEW: RESTORE LOOP PARAMETERS ==========
+	# 		if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+	# 			ls = self._step_sequencer._loop_selector
+	#
+	# 			# Restore selected block/index (row 7 selection)
+	# 			if 'loop_block' in metadata:
+	# 				new_block = int(metadata['loop_block'])
+	# 				if hasattr(ls, '_block'):
+	# 					ls._block = new_block
+	# 					# Force update to reflect new selection visually
+	# 					ls._force = True
+	# 					if DEBUG_LOGGING:
+	# 						self._control_surface.log_message(f"[RESTORE_LOOP] Block={new_block}")
+	#
+	# 			# Restore page offset (cycle/page position)
+	# 			if 'loop_page_offset' in metadata:
+	# 				offset = int(metadata['loop_page_offset'])
+	# 				if hasattr(ls, '_loop_page_offset'):
+	# 					old_offset = ls._loop_page_offset
+	# 					ls._loop_page_offset = offset
+	# 					# Update step sequencer page accordingly
+	# 					if hasattr(self._step_sequencer, 'set_page'):
+	# 						absolute_block = ls._block + (offset * 8)
+	# 						self._step_sequencer.set_page(absolute_block)
+	# 					if DEBUG_LOGGING:
+	# 						self._control_surface.log_message(
+	# 							f"[RESTORE_LOOP] PageOffset={offset} (was {old_offset})")
+	#
+	# 			# Restore clip loop bounds (marker start/end)
+	# 			if 'clip_loop_start' in metadata and 'clip_loop_end' in metadata:
+	# 				if self._clip:
+	# 					start = float(metadata['clip_loop_start'])
+	# 					end = float(metadata['clip_loop_end'])
+	#
+	# 					# Safety check
+	# 					if end <= start:
+	# 						end = start + 1.0
+	#
+	# 					# Apply to clip directly
+	# 					try:
+	# 						self._clip.loop_start = start
+	# 						self._clip.loop_end = end
+	# 						# Also update marker positions
+	# 						self._clip.start_marker = start
+	# 						self._clip.end_marker = end
+	#
+	# 						# Tell LoopSelector to sync
+	# 						if hasattr(ls, '_get_clip_loop'):
+	# 							ls._get_clip_loop()
+	# 							ls.update()
+	#
+	# 						if DEBUG_LOGGING:
+	# 							self._control_surface.log_message(f"[RESTORE_LOOP] ClipLoop: {start:.2f} -> {end:.2f}")
+	#
+	# 					except RuntimeError as le:
+	# 						if DEBUG_LOGGING:
+	# 							self._control_surface.log_message(f"[RESTORE_ERROR] Failed to set clip loop: {le}")
+	#
+	# 		if DEBUG_LOGGING:
+	# 			self._control_surface.log_message(
+	# 				f"[RESTORE] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
+	# 				f"Block={metadata.get('loop_block')} Offset={metadata.get('loop_page_offset')}")
+	#
+	# 	except Exception as e:
+	# 		self._control_surface.log_message(f"[RESTORE ERROR] {e}")
+	#
+	# 	if DEBUG_LOGGING:
+	# 		self._control_surface.log_message(
+	# 			f"[RESTORE_VERIFICATION] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
+	# 			f"Block={metadata.get('loop_block', '?')} Offset={metadata.get('loop_page_offset', '?')}"
+	# 		)
 
 	def load_clip_settings(self, clip, settings_dict):
 		"""Loads settings from dictionary into active clip's UI state.
@@ -2307,17 +2311,29 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		self._loading_clip = True
 		try:
-			# === SCALE/ROOT ===
-			if 'scale' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
+			# === SCALE IS ABSOLUTE ===
+			if 'is_absolute' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
 				selector = self._step_sequencer._scale_selector
-				mode_idx = int(settings_dict.get('scale', 0))
-				if mode_idx < len(selector._modus_names):
-					selector.set_modus(mode_idx, False, True)
+				is_abs = bool(settings_dict.get('is_absolute', False))
 
-			if 'root_note' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
-				selector = self._step_sequencer._scale_selector
-				root_note = int(settings_dict['root_note']) % 12
-				selector.set_key(root_note, False, True)
+				# Direct assignment to backing variable (most reliable)
+				if hasattr(selector, '_is_absolute'):
+					selector._is_absolute = is_abs
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[LOAD_IS_ABSOLUTE] Set _is_absolute={is_abs} (direct assignment)"
+						)
+
+			# if 'scale' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
+			# 	selector = self._step_sequencer._scale_selector
+			# 	mode_idx = int(settings_dict.get('scale', 0))
+			# 	if mode_idx < len(selector._modus_names):
+			# 		selector.set_modus(mode_idx, False, True)
+			#
+			# if 'root_note' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
+			# 	selector = self._step_sequencer._scale_selector
+			# 	root_note = int(settings_dict['root_note']) % 12
+			# 	selector.set_key(root_note, False, True)
 
 			# === OCTAVE ===
 			if 'display_octave' in settings_dict:
@@ -2574,7 +2590,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
-					f"[SETTINGS_APPLIED] Oct={settings_dict.get('display_octave')} ResIdxOrBeats={settings_dict.get('resolution_index', settings_dict.get('resolution'))} Scale={settings_dict.get('scale')} LoopBlock={settings_dict.get('loop_block', 'MISSING')}"
+					f"[SETTINGS_APPLIED] Oct={settings_dict.get('display_octave')} "
+					f"ResIdxOrBeats={settings_dict.get('resolution_index', settings_dict.get('resolution'))} "
+					f"IsAbsolue={settings_dict.get('is_absolute')} "
+					#f"Scale={settings_dict.get('scale')} "
+					f"LoopBlock={settings_dict.get('loop_block', 'MISSING')}"
 				)
 
 		except Exception as e:
