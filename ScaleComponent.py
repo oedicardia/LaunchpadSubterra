@@ -350,6 +350,8 @@ class ScaleComponent(ControlSurfaceComponent):
 							self._control_surface.show_message("ABSOLUTE mode: Root on natural row")
 						else:
 							self._control_surface.show_message("RELATIVE mode: Root on bottom row")
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(f"[BUTTON_SYNC] Tag updated after absolute toggle")
 						message = False  # Don't trigger other actions
 					# if x == 1:
 					# 	if self.is_diatonic:

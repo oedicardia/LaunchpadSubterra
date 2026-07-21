@@ -147,7 +147,7 @@ class StepSequencerComponent(CompoundComponent):
 		self._instrument_controller = None
 		self._device_controller = None
 		#self._loop_page_offset = 0 we don't want to reiniialize
-		self._set_cycle_button(self._side_buttons[1])#Pan
+		self._set_cycle_button(self._side_buttons[5])#Pan
 
 
 	def _set_lock_function(self):
@@ -394,6 +394,24 @@ class StepSequencerComponent(CompoundComponent):
 			self._update_OSD()
 
 		else:
+			# Sync before disabling (catches case where user disabled while in scale mode)
+			if (self._mode == STEPSEQ_MODE_SCALE_EDIT and
+					hasattr(self, '_note_editor') and
+					self._note_editor and
+					hasattr(self._note_editor, '_clip') and
+					self._note_editor._clip and
+					hasattr(self._note_editor, '_meta_manager') and
+					self._note_editor._meta_manager):
+
+				try:
+					self._note_editor.sync_clip_with_json()
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[DISABLE_SYNC] Synced tag before disabling (was in scale mode)"
+						)
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(f"[DISABLE_SYNC_ERROR] {e}")
 			self._track_controller.set_enabled(enabled)
 			self._loop_selector.set_enabled(enabled)
 			self._note_selector.set_enabled(enabled)
@@ -801,6 +819,25 @@ class StepSequencerComponent(CompoundComponent):
 		self.update()
 
 	def on_clip_slot_changed(self, scheduled=False):
+		# EDGE CASE: Sync old clip if in scale mode before switch
+		if (self._clip is not None and
+				hasattr(self._clip, 'is_midi_clip') and
+				self._clip.is_midi_clip and
+				self._mode == STEPSEQ_MODE_SCALE_EDIT and
+				hasattr(self, '_note_editor') and
+				self._note_editor and
+				hasattr(self._note_editor, '_meta_manager') and
+				self._note_editor._meta_manager):
+
+			try:
+				self._note_editor.sync_clip_with_json()
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[CLIP_SWITCH_SYNC] Synced old clip '{self._clip.name[:30]}...' before switching (was in scale mode)"
+					)
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[CLIP_SWITCH_SYNC_ERROR] {e}")
 		# get old reference to clipslot
 		clip_slot = self._clip_slot
 		#self._update_clip_toggle_button()
@@ -1108,6 +1145,24 @@ class StepSequencerComponent(CompoundComponent):
 						self.set_mode(STEPSEQ_MODE_SCALE_EDIT)
 				else:
 					# Exiting scale edit mode (same as original value <= 0 path)
+					# Sync before exiting scale mode
+					if (hasattr(self, '_note_editor') and
+							self._note_editor and
+							hasattr(self._note_editor, '_clip') and
+							self._note_editor._clip and
+							hasattr(self._note_editor, '_meta_manager') and
+							self._note_editor._meta_manager):
+
+						try:
+							self._note_editor.sync_clip_with_json()
+							if DEBUG_LOGGING:
+								self._control_surface.log_message(
+									f"[EXIT_SCALE_SYNC] Synced tag after exiting scale mode"
+								)
+						except Exception as e:
+							if DEBUG_LOGGING:
+								self._control_surface.log_message(f"[EXIT_SCALE_SYNC_ERROR] {e}")
+
 					if self._scale_selector != None and self._note_selector != None:
 						self._note_selector.set_scale(self._scale_selector.notes, self._scale_selector._key)
 						self._note_selector.set_selected_note(

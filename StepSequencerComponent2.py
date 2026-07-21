@@ -28,6 +28,24 @@ import re
 LONG_BUTTON_PRESS = 1.0
 BASE_OCTAVE = 8
 DEBUG_LOGGING = True  # Set to False for release
+
+def _safe_bool(value):
+    """Convert string/int to bool safely (bool('0') would be True otherwise)."""
+    if isinstance(value, str):
+        return int(value) != 0
+    return bool(value)
+
+SUX_SCHEMA = [
+    ('is_absolute',       False, _safe_bool),
+	('display_octave',    2, int),
+	('resolution_index',  4, int),
+	('loop_block',        0, int),
+	('loop_page_offset',  0, int),
+	('clip_loop_start',   0.0, float),
+	('clip_loop_end',     16.0, float),
+]
+SUX_PARAM_COUNT = len(SUX_SCHEMA)
+#METADATA_SPACER = "          "
 METADATA_PREFIX = "[SUX:"
 METADATA_SUFFIX = "]"
 
@@ -366,12 +384,7 @@ class ClipMetadataManager:
 
 			# Extract ONLY settings from params_dict (filter out positional metadata)
 			settings_only = {}
-			settings_keys = [
-				'is_absolute',#'scale', 'root_note',
-		 		'display_octave', 'resolution_index',
-				'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end',
-				'timestamp', 'resolution_name'
-			]
+			settings_keys = [name for name, _, _ in SUX_SCHEMA] + ['timestamp', 'resolution_name']
 
 			for key in settings_keys:
 				if key in params_dict:
@@ -491,20 +504,17 @@ class ClipMetadataManager:
 
 			values = param_string.split(";")
 
-			if len(values) < 8:
+			if len(values) < SUX_PARAM_COUNT:
 				return None
 
-			params = {
-				'is_absolute': int(values[0].strip()) if values[0].strip() else 12,
-				'display_octave': max(0, min(15, int(values[1].strip()))) if values[1].strip() else 2,
-				'resolution_index': max(0, min(7, int(values[2].strip()))) if values[2].strip() else 4,
-				'loop_block': int(values[3].strip()) if values[3].strip() else 0,
-				'loop_page_offset': int(values[4].strip()) if values[4].strip() else 0,
-				'clip_loop_start': float(values[5].strip()) if values[5].strip() else 0.0,
-				'clip_loop_end': float(values[6].strip()) if values[6].strip() else 16.0
-			}
+			# Build params dict using schema (more maintainable)
+			params = {}
+			for i, (param_name, default_value, converter) in enumerate(SUX_SCHEMA):
+				raw_value = values[i].strip() if i < len(values) else ""
+				params[param_name] = converter(raw_value) if raw_value else default_value
 
 			return params
+
 		except Exception:
 			return None
 
@@ -726,11 +736,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		# Clip on/off
 		self._clip_toggle_button = None
-		self.set_clip_toggle_button(self._side_buttons[2])
+		self.set_clip_toggle_button(self._side_buttons[1])
 
 		# Copy/paste/delete
 		self._mode_copy_paste_button = None
-		self.set_mode_copy_paste_button(self._side_buttons[3])
+		self.set_mode_copy_paste_button(self._side_buttons[2])
 		self._copied_grid_data = None  # Stores (Pitch, Time) tuples when armed
 		self._paste_armed = False      # True if waiting for paste command
 		# if DEBUG_LOGGING:
@@ -744,13 +754,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		# Length mode
 		self._mode_notes_lengths_button = None
-		self.set_mode_notes_lengths_button(self._side_buttons[4])
+		self.set_mode_notes_lengths_button(self._side_buttons[3])
 		self._is_notes_lengths_shifted = False
 		self._last_notes_lengths_button_press = time.time()
 		self._mode_notes_velocities_button = None
 
 		# Velocity mode
-		self.set_mode_notes_velocities_button(self._side_buttons[5])
+		self.set_mode_notes_velocities_button(self._side_buttons[4])
 		self._is_notes_velocity_shifted = False
 		self._last_notes_velocity_button_press = time.time()
 		self._mode_notes_octaves_button = None
@@ -997,13 +1007,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def extract_embedded_parameters(self, clip_name):
 		"""
-        Parse SUX tag from clip name. Extracts from FIRST valid tag only.
+		Parse SUX tag from clip name. Extracts from FIRST valid tag only.
 
-        Handles BOTH:
-        - Good format: [SUX:{0;3;3;0;0;0.0;24.0}]
+		Handles BOTH:
+		- Good format: [SUX:{0;3;3;0;0;0.0;24.0}]
 
-        Returns None if no valid tag found.
-        """
+		Returns None if no valid tag found.
+		"""
 		if not clip_name:
 			return None
 
@@ -1039,15 +1049,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				return None
 
 			# Parse each value - TRIM FIRST!
-			params = {
-				'is_absolute': int(values[0].strip()) if values[0].strip() else 12,
-				'display_octave': max(0, min(15, int(values[1].strip()))) if values[1].strip() else 2,
-				'resolution_index': max(0, min(7, int(values[2].strip()))) if values[2].strip() else 4,
-				'loop_block': int(values[3].strip()) if values[3].strip() else 0,
-				'loop_page_offset': int(values[4].strip()) if values[4].strip() else 0,
-				'clip_loop_start': float(values[5].strip()) if values[5].strip() else 0.0,
-				'clip_loop_end': float(values[6].strip()) if values[6].strip() else 16.0
-			}
+			params = {}
+			for i, (param_name, default_value, converter) in enumerate(SUX_SCHEMA):
+				raw_value = values[i].strip() if i < len(values) else ""
+				params[param_name] = converter(raw_value) if raw_value else default_value
 
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(
@@ -1063,30 +1068,27 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def build_embedded_parameters_tag(self, params_dict):
 		"""
-        Construct the SUX metadata tag from parameter dictionary.
+		Construct the SUX metadata tag from parameter dictionary.
 
-        Format: [SUX:{is_absolute;oct;res;blk;off;start;end}]
+		Format: [SUX:{is_absolute;oct;res;blk;off;start;end}]
 
-        CRITICAL: Must include BOTH opening '[' and closing ']' AND curly braces '{' '}'!
+		CRITICAL: Must include BOTH opening '[' and closing ']' AND curly braces '{' '}'!
 
-        Returns:
-            str: Formatted tag like "[SUX:{0;2;4;0;0;0.0;16.0}]"
-        """
+		Returns:
+			str: Formatted tag like "[SUX:{0;2;4;0;0;0.0;16.0}]"
+		"""
 		try:
-			values = [
-				str(int(params_dict.get('is_absolute', 12))),  # NEW at index 0
-				str(int(params_dict.get('display_octave', 2))),  # Was index 2, now 1
-				str(int(params_dict.get('resolution_index', 4))),  # Was index 3, now 2
-				str(int(params_dict.get('loop_block', 0))),  # Was index 4, now 3
-				str(int(params_dict.get('loop_page_offset', 0))),  # Was index 5, now 4
-				str(round(float(params_dict.get('clip_loop_start', 0.0)), 1)),  # Was index 6, now 5
-				str(round(float(params_dict.get('clip_loop_end', 16.0)), 1))  # Was index 7, now 6
-			]
+			values = []
+			for param_name, default_value, converter in SUX_SCHEMA:
+				value = params_dict.get(param_name, default_value)
+
+				# Special handling for boolean → 0/1
+				if converter == bool:
+					values.append(str(1 if value else 0))
+				else:
+					values.append(str(converter(value)))
 
 			param_string = ";".join(values)
-
-			# ⭐⭐⭐ CRITICAL FIX: Include BOTH curly braces AND square brackets! ⭐⭐⭐
-			# Format: [SUX:{...}]
 			full_tag = f"{METADATA_PREFIX}{{{param_string}}}{METADATA_SUFFIX}"
 
 			if DEBUG_LOGGING:
@@ -1100,8 +1102,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if DEBUG_LOGGING:
 				import traceback
 				self._control_surface.log_message(f"[BUILD_TAG_ERROR] {e}\n{traceback.format_exc()}")
-			# Return minimal valid tag with BOTH curly braces
-			return f"{METADATA_PREFIX}{{0;2;4;0;0;0.0;16.0}}{METADATA_SUFFIX}"
+			# Fallback with schema defaults
+			default_values = []
+			for _, default_value, _ in SUX_SCHEMA:
+				if isinstance(default_value, bool):
+					default_values.append("0")
+				elif isinstance(default_value, float):
+					default_values.append(str(round(default_value, 1)))
+				else:
+					default_values.append(str(int(default_value)))
+
+			return f"{METADATA_PREFIX}{{{';'.join(default_values)}}}{METADATA_SUFFIX}"
 
 
 	def update_clip_name_with_params(self, clip, params_dict):
@@ -1202,9 +1213,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# ============================================
 			# STEP 2: DETERMINE IF UPDATE IS NEEDED
 			# ============================================
-			need_update = True
-
 			# Check if existing tag has correct content
+			need_update = True
 			tag_exists_and_valid = False
 			extract_from_old = None
 
@@ -1213,24 +1223,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				end_bracket = original_name.rfind(METADATA_SUFFIX)
 
 				if end_bracket > start_bracket:
-					potential_tag = original_name[start_bracket:end_bracket+1]
+					potential_tag = original_name[start_bracket:end_bracket + 1]
 
 					if "{" in potential_tag and ";" in potential_tag:
 						extract_from_old = self._meta_manager.extract_embedded_parameters(original_name)
 
 						if extract_from_old:
 							tag_exists_and_valid = True
-
 							if DEBUG_LOGGING:
 								self._control_surface.log_message(
 									f"[TAG_DETECT] Found existing tag: '{potential_tag}'"
 								)
 
-							# Compare ALL parameters directly
-							keys_to_check = [
-								'is_absolute', 'display_octave', 'resolution_index',
-								'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end'
-							]
+							# COMPARE USING SCHEMA
+							keys_to_check = [param_name for param_name, _, _ in SUX_SCHEMA]
 
 							all_match = True
 							for key in keys_to_check:
@@ -1538,17 +1544,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def strip_metadata_tags(self, clip_name):
 		"""
-        Remove ALL SUX tags from clip name (not just the last one).
+		Remove ALL SUX tags from clip name (not just the last one).
 
-        Handles any number of duplicate tags:
-        - Single: [SUX:{0;0;2;4;0;0;0.0;16.0}]
-        - Multiple: [SUX:{...}] [SUX:{...}] [SUX:{...}]
-        - Corrupt: [SUX:...] without {}
+		Handles any number of duplicate tags:
+		- Single: [SUX:{0;0;2;4;0;0;0.0;16.0}]
+		- Multiple: [SUX:{...}] [SUX:{...}] [SUX:{...}]
+		- Corrupt: [SUX:...] without {}
 
-        ALWAYS returns string (never None).
+		ALWAYS returns string (never None).
 
-        Uses METADATA_PREFIX and METADATA_SUFFIX constants.
-        """
+		Uses METADATA_PREFIX and METADATA_SUFFIX constants.
+		"""
 		if not clip_name:
 			return ""
 
@@ -1587,7 +1593,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					f"[VERIFY_DEBUG] Expected tag='{expected_tag}', Actual name='{actual_name[:50]}...'"
 				)
 
-			# FIX: Check for param VALUES, not exact string match
 			# Build param string WITHOUT brackets for flexible matching
 			expected_params_str = expected_tag.replace(METADATA_PREFIX, "").replace(METADATA_SUFFIX, "")  # Remove outer brackets
 			if DEBUG_LOGGING:
@@ -1595,18 +1600,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# Check if params exist anywhere in the tag (allowing { } variations)
 			has_correct_params = expected_params_str in actual_name or \
-			                     expected_tag in actual_name or \
-			                     expected_params_str.replace(";", ";") in actual_name
+								 expected_tag in actual_name or \
+								 expected_params_str.replace(";", ";") in actual_name
 
 			# Extra fallback: extract actual tag and compare
 			if not has_correct_params:
 				extracted = self._meta_manager.extract_embedded_parameters(actual_name)
 				if extracted:
-					# Compare values directly
+					# Compare using schema-defined keys only
 					all_match = all(
-						extracted.get(key) == expected_state.get(key)
-						for key in ['display_octave', 'resolution_index', 'is_absolute',#'scale', 'root_note',
-						            'loop_block', 'loop_page_offset', 'clip_loop_start', 'clip_loop_end']
+						extracted.get(param_name) == expected_state.get(param_name)
+						for param_name, _, _ in SUX_SCHEMA  # ← Schema drives comparison
 					)
 					has_correct_params = all_match
 
@@ -1884,7 +1888,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if DEBUG_LOGGING:
 				self._control_surface.log_message(f"[CLIP_NAME_HAS_SUX_TAG] Using embedded params")
 				self._control_surface.log_message(
-					f"[EXTRACTED_TAGS] Oct={clip_params.get('display_octave')}, Res={clip_params.get('resolution_index')}"
+					f"[EXTRACTED_TAGS] is_absolute={clip_params.get('is_absolute')}, Oct={clip_params.get('display_octave')}, Res={clip_params.get('resolution_index')}"
 				)
 		else:
 			if DEBUG_LOGGING:
@@ -2093,101 +2097,87 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _get_current_state_dict(self):
 		"""Returns current settings as dictionary WITHOUT modifying them."""
-		# scale_val = 0
-		# root_val = 0
-		resolution_index = 0
+		# USE SCHEMA TO KNOW WHAT TO COLLECT
+		state = {}
 
-		try:
-			# === ABSOLUTE SCALE == #
-			is_absolute = False
-			if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
-				selector = self._step_sequencer._scale_selector
-				# Read the public @property (no underscore when reading)
-				is_absolute = getattr(selector, 'is_absolute', False)
+		for param_name, default_value, converter in SUX_SCHEMA:
+			try:
+				if param_name == 'is_absolute':
+					if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
+						selector = self._step_sequencer._scale_selector
+						current_val = getattr(selector, 'is_absolute', default_value)
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[IS_ABSOLUTE_READ] from selector={current_val} (should match settings)"
+							)
 
-			# if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
-			# 	selector = self._step_sequencer._scale_selector
-			# 	scale_val = getattr(selector, '_modus', 0)
-			# 	root_val = getattr(selector, '_key', 0)
+						state[param_name] = current_val
+					else:
+						state[param_name] = default_value
 
-			# === RESOLUTION HANDLING USING RESOLUTION_MAP ===
-			current_resolution = getattr(self, '_resolution', 16)
+				elif param_name == 'display_octave':
+					state[param_name] = int(getattr(self, '_display_octave', default_value))
 
-			from .SequencerConstants import RESOLUTION_MAP
+				elif param_name == 'resolution_index':
+					current_resolution = getattr(self, '_resolution', 16)
 
-			if isinstance(current_resolution, float):
-				resolution_index = None
-				for i, map_value in enumerate(RESOLUTION_MAP):
-					if abs(map_value - current_resolution) < 0.0001:
-						resolution_index = i
-						break
+					from .SequencerConstants import RESOLUTION_MAP
+					if isinstance(current_resolution, float):
+						resolution_index = None
+						for i, map_value in enumerate(RESOLUTION_MAP):
+							if abs(map_value - current_resolution) < 0.0001:
+								resolution_index = i
+								break
+						state[param_name] = resolution_index if resolution_index is not None else len(RESOLUTION_MAP) // 2
+					else:
+						state[param_name] = int(min(max(current_resolution, 0), len(RESOLUTION_MAP) - 1))
 
-				if resolution_index is None:
-					resolution_index = len(RESOLUTION_MAP) // 2
+				elif param_name == 'loop_block':
+					if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+						ls = self._step_sequencer._loop_selector
+						state[param_name] = getattr(ls, '_block', default_value)
+					else:
+						state[param_name] = default_value
 
-				res_label = RESOLUTION_NAMES[resolution_index] if resolution_index < len(
-					RESOLUTION_NAMES) else "UNKNOWN"
-			else:
-				resolution_index = int(current_resolution)
-				if resolution_index >= len(RESOLUTION_MAP):
-					resolution_index = len(RESOLUTION_MAP) - 1
-				if resolution_index < 0:
-					resolution_index = 0
-				res_label = RESOLUTION_NAMES[resolution_index]
+				elif param_name == 'loop_page_offset':
+					if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+						ls = self._step_sequencer._loop_selector
+						state[param_name] = getattr(ls, '_loop_page_offset', default_value)
+					else:
+						state[param_name] = default_value
 
-			# === OCTAVE == #
-			display_octave = getattr(self, '_display_octave', 2)
+				elif param_name == 'clip_loop_start':
+					if self._clip:
+						state[param_name] = round(getattr(self._clip, 'loop_start', default_value), 4)
+					else:
+						state[param_name] = default_value
 
-			# === LOOP == #
-			loop_block = 0
-			loop_page_offset = 0
-			clip_loop_start = 0.0
-			clip_loop_end = 0.0
+				elif param_name == 'clip_loop_end':
+					if self._clip:
+						state[param_name] = round(getattr(self._clip, 'loop_end', default_value), 4)
+					else:
+						state[param_name] = default_value
 
-			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-				ls = self._step_sequencer._loop_selector
-				loop_block = getattr(ls, '_block', 0)
-				loop_page_offset = getattr(ls, '_loop_page_offset', 0)
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(f"[STATE_DICT_ERROR] {param_name}: {e}")
+				state[param_name] = default_value
 
-				if self._clip:
-					clip_loop_start = round(getattr(self._clip, 'loop_start', 0.0), 4)
-					clip_loop_end = round(getattr(self._clip, 'loop_end', 0.0), 4)
+			# elif param_name == 'resolution_name':
+			# Extra field not in schema - handle separately
+			# from .SequencerConstants import RESOLUTION_NAMES
+			# res_idx = state.get('resolution_index', 4)
+			# state['resolution_name'] = RESOLUTION_NAMES[res_idx] if res_idx < len(RESOLUTION_NAMES) else "UNKNOWN"
 
-		except Exception as e:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[STATE_DICT ERROR] {e}")
-			return {
-				'is_absolute': 0,
-				'display_octave': 2,
-				'resolution_index': 4,
-				'resolution_name': "1/16",
-				'loop_block': 0,
-				'loop_page_offset': 0,
-				'clip_loop_start': 0.0,
-				'clip_loop_end': 0.0,
-				'timestamp': time.time()
-			}
-
-		result = {
-			'is_absolute': is_absolute,
-			'display_octave': int(display_octave),
-			'resolution_index': resolution_index,
-			'resolution_name': res_label,
-			'loop_block': loop_block,
-			'loop_page_offset': loop_page_offset,
-			'clip_loop_start': clip_loop_start,
-			'clip_loop_end': clip_loop_end,
-			'timestamp': time.time()
-		}
+		# Add timestamp (not part of SUX schema - metadata only)
+		state['timestamp'] = time.time()
 
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(
-				f"[SAVING_STATE] AbsRange={is_absolute}, Oct={display_octave}, " +
-				f"ResIdx={resolution_index} ({res_label}), Offset={loop_page_offset}, " +
-				f"Loop={clip_loop_start:.2f}->{clip_loop_end:.2f}"
+				f"[SAVING_STATE] State built from {len(SUX_SCHEMA)} schema fields"
 			)
 
-		return result
+		return state
 
 
 	# def _restore_clip_metadata(self, metadata):
@@ -2296,6 +2286,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		3. Force Loop Selector visual update
 		4. Load loop_block onto ALL THREE COMPONENTS (Parent, Child, and Me)
 		"""
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[LOAD_SETTINGS_DEBUG] settings_dict keys={list(settings_dict.keys())}"
+			)
+			self._control_surface.log_message(
+				f"[LOAD_SETTINGS_DEBUG] is_absolute in dict={'is_absolute' in settings_dict}"
+			)
+			if 'is_absolute' in settings_dict:
+				self._control_surface.log_message(
+					f"[LOAD_SETTINGS_DEBUG] is_absolute value={settings_dict['is_absolute']}"
+				)
+
 		if DEBUG_LOGGING:
 			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
 				ls = self._step_sequencer._loop_selector
@@ -2637,7 +2639,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			)
 			# Check for mismatch between any components
 			if step_seq_block is not None and loop_sel_block is not None and note_editor_block not in [None,
-			                                                                                           "NOT DEFINED"]:
+																									   "NOT DEFINED"]:
 				try:
 					step_val = int(step_seq_block)
 					sel_val = int(loop_sel_block)
@@ -2716,9 +2718,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def apply_loaded_resolution(self, beats):
 		"""
-        Called only while loading a clip.
-        Updates the editor without triggering JSON sync.
-        """
+		Called only while loading a clip.
+		Updates the editor without triggering JSON sync.
+		"""
 		self._resolution = beats
 
 		if self._clip:
@@ -6263,11 +6265,11 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def sync_clip_with_json(self):
 		"""
-        CRITICAL: Call this EVERY TIME parameters change!
-        Saves to JSON AND updates SUX tag in clip name.
+		CRITICAL: Call this EVERY TIME parameters change!
+		Saves to JSON AND updates SUX tag in clip name.
 
-        This is called from LoopSelectorComponent, MelodicNoteEditorComponent, etc.
-        """
+		This is called from LoopSelectorComponent, MelodicNoteEditorComponent, etc.
+		"""
 		# Delegate to MelodicNoteEditorComponent if available
 
 		if hasattr(self, '_note_editor') and self._note_editor:
