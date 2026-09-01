@@ -37,15 +37,13 @@ def _safe_bool(value):
 
 SUX_SCHEMA = [
     ('is_absolute',       False, _safe_bool),
-    ('is_drumrack',       False, _safe_bool),
-    ('display_octave',    2, int),
-    ('resolution_index',  4, int),
-    ('loop_block',        0, int),
-    ('loop_page_offset',  0, int),
-    ('clip_loop_start',   0.0, float),
-    ('clip_loop_end',     16.0, float),
+	('display_octave',    2, int),
+	('resolution_index',  4, int),
+	('loop_block',        0, int),
+	('loop_page_offset',  0, int),
+	('clip_loop_start',   0.0, float),
+	('clip_loop_end',     16.0, float),
 ]
-
 SUX_PARAM_COUNT = len(SUX_SCHEMA)
 #METADATA_SPACER = "          "
 METADATA_PREFIX = "[SUX:"
