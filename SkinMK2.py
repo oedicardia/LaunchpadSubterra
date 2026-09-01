@@ -469,6 +469,10 @@ class Colors:
             OnBelow1 = Rgb.YELLOW_HALF
             OnBelow2 = Rgb.AMBER
             OnBelow3 = Rgb.RED
+            OnPlayBlock = Rgb.PURPLE # note present in playing block
+            OffPlayBlock = Rgb.BLACK # playhead column, no note
+            OnSelectedBlock = Rgb.PURPLE_PULSE
+            OffSelectedBlock = Rgb.DARK_GREY_PULSE
 
         class Velocity:
             On = Rgb.LIGHT_BLUE

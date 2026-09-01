@@ -6,7 +6,7 @@ from .LoopSelectorComponent import LoopSelectorComponent
 from .NoteSelectorComponent import NoteSelectorComponent
 from .SequencerConstants import (STEPSEQ_MODE_NORMAL, STEPSEQ_MODE_MULTINOTE,
 	RESOLUTION_MAP, RESOLUTION_NAMES, RESOLUTION_INIT,
-	STEPSEQ_MODE_OCTAVE_OVERVIEW,
+	STEPSEQ_MODE_NAV_OVERVIEW,
 	STEPSEQ_MODE_COPY_PASTE,
 	STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
 	STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -711,7 +711,7 @@ class StepSequencerComponent(CompoundComponent):
 		"""
 
 		# CRITICAL FIX: Check if we're in Octave Overview mode FIRST
-		if hasattr(self._note_editor, '_mode') and self._note_editor._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+		if hasattr(self._note_editor, '_mode') and self._note_editor._mode == STEPSEQ_MODE_NAV_OVERVIEW:
 			# DO NOT UPDATE LOOP SELECTOR AT ALL in this mode
 			# It will steal Row 7 from the Note Editor
 			self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - OCTAVE OVERVIEW MODE")
@@ -735,7 +735,6 @@ class StepSequencerComponent(CompoundComponent):
 						pass
 
 	def _loop_selector_should_be_enabled(self):
-
 		if self._mode == STEPSEQ_MODE_SCALE_EDIT:
 			return False
 
@@ -746,7 +745,7 @@ class StepSequencerComponent(CompoundComponent):
 				STEPSEQ_MODE_STEP_LENGTH_EDITOR,
 				STEPSEQ_MODE_VERTICAL_VELOCITY,
 				STEPSEQ_MODE_VERTICAL_LENGTH,
-				STEPSEQ_MODE_OCTAVE_OVERVIEW,
+				STEPSEQ_MODE_NAV_OVERVIEW,
 			)
 
 		return True
@@ -1358,6 +1357,12 @@ class StepSequencerComponent(CompoundComponent):
 		if self._loop_selector:
 			self._loop_selector.set_loop_page_offset(self._loop_page_offset)
 			self._loop_selector.update()  # This will redraw the buttons but NOT change _block
+
+		# repaint the melodic nav grid if the octave overview owns the matrix
+		if (hasattr(self, '_note_editor') and self._note_editor and
+				getattr(self._note_editor, '_mode', None) == STEPSEQ_MODE_NAV_OVERVIEW):
+			self._note_editor._force_update = True
+			self._note_editor.update()
 
 		self._control_surface.show_message("Page offset: %d" % self._loop_page_offset)
 		self._update_cycle_button()

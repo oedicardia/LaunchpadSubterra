@@ -5,7 +5,7 @@ from .StepSequencerComponent import StepSequencerComponent, ButtonElement
 from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	STEPSEQ_MODE_NOTES,
 	STEPSEQ_MODE_NOTES_OCTAVES,
-	STEPSEQ_MODE_OCTAVE_OVERVIEW,
+	STEPSEQ_MODE_NAV_OVERVIEW,
 	STEPSEQ_MODE_COPY_PASTE,
 	STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
 	STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -37,13 +37,15 @@ def _safe_bool(value):
 
 SUX_SCHEMA = [
     ('is_absolute',       False, _safe_bool),
-	('display_octave',    2, int),
-	('resolution_index',  4, int),
-	('loop_block',        0, int),
-	('loop_page_offset',  0, int),
-	('clip_loop_start',   0.0, float),
-	('clip_loop_end',     16.0, float),
+    ('is_drumrack',       False, _safe_bool),
+    ('display_octave',    2, int),
+    ('resolution_index',  4, int),
+    ('loop_block',        0, int),
+    ('loop_page_offset',  0, int),
+    ('clip_loop_start',   0.0, float),
+    ('clip_loop_end',     16.0, float),
 ]
+
 SUX_PARAM_COUNT = len(SUX_SCHEMA)
 #METADATA_SPACER = "          "
 METADATA_PREFIX = "[SUX:"
@@ -719,6 +721,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._key_index_is_in_scale = [True, False, True, True, False, True, False, True]
 		self._key_index_is_root_note = [True, False, False, False, False, False, False, False]
 		self._is_monophonic = False
+		self._is_drumrack_layout = False
 
 		# octaves
 		self._display_octave = 2
@@ -2180,103 +2183,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return state
 
 
-	# def _restore_clip_metadata(self, metadata):
-	# 	"""Applies saved metadata to the current session."""
-	# 	if not metadata: return
-	# 	try:
-	# 		# === SCALE/ROOT/OCTAVE/RESOLUTION ===
-	# 		if 'scale' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-	# 			selector = self._step_sequencer._scale_selector
-	# 			if metadata['scale'] in range(len(selector._modus_names)):
-	# 				selector.set_modus(metadata['scale'], False, True)
-	#
-	# 		if 'root_note' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-	# 			selector = self._step_sequencer._scale_selector
-	# 			root = int(metadata['root_note']) % 12
-	# 			selector.set_key(root, False, True)
-	#
-	# 		if 'display_octave' in metadata:
-	# 			oct_val = int(metadata['display_octave'])
-	# 			oct_val = max(0, min(15, oct_val))
-	# 			self.set_display_octave(oct_val)
-	#
-	# 		if 'resolution' in metadata:
-	# 			res = int(metadata['resolution'])
-	# 			if res in [8, 16, 32]:
-	# 				self.set_resolution(res)
-	#
-	# 		# === NEW: RESTORE LOOP PARAMETERS ==========
-	# 		if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-	# 			ls = self._step_sequencer._loop_selector
-	#
-	# 			# Restore selected block/index (row 7 selection)
-	# 			if 'loop_block' in metadata:
-	# 				new_block = int(metadata['loop_block'])
-	# 				if hasattr(ls, '_block'):
-	# 					ls._block = new_block
-	# 					# Force update to reflect new selection visually
-	# 					ls._force = True
-	# 					if DEBUG_LOGGING:
-	# 						self._control_surface.log_message(f"[RESTORE_LOOP] Block={new_block}")
-	#
-	# 			# Restore page offset (cycle/page position)
-	# 			if 'loop_page_offset' in metadata:
-	# 				offset = int(metadata['loop_page_offset'])
-	# 				if hasattr(ls, '_loop_page_offset'):
-	# 					old_offset = ls._loop_page_offset
-	# 					ls._loop_page_offset = offset
-	# 					# Update step sequencer page accordingly
-	# 					if hasattr(self._step_sequencer, 'set_page'):
-	# 						absolute_block = ls._block + (offset * 8)
-	# 						self._step_sequencer.set_page(absolute_block)
-	# 					if DEBUG_LOGGING:
-	# 						self._control_surface.log_message(
-	# 							f"[RESTORE_LOOP] PageOffset={offset} (was {old_offset})")
-	#
-	# 			# Restore clip loop bounds (marker start/end)
-	# 			if 'clip_loop_start' in metadata and 'clip_loop_end' in metadata:
-	# 				if self._clip:
-	# 					start = float(metadata['clip_loop_start'])
-	# 					end = float(metadata['clip_loop_end'])
-	#
-	# 					# Safety check
-	# 					if end <= start:
-	# 						end = start + 1.0
-	#
-	# 					# Apply to clip directly
-	# 					try:
-	# 						self._clip.loop_start = start
-	# 						self._clip.loop_end = end
-	# 						# Also update marker positions
-	# 						self._clip.start_marker = start
-	# 						self._clip.end_marker = end
-	#
-	# 						# Tell LoopSelector to sync
-	# 						if hasattr(ls, '_get_clip_loop'):
-	# 							ls._get_clip_loop()
-	# 							ls.update()
-	#
-	# 						if DEBUG_LOGGING:
-	# 							self._control_surface.log_message(f"[RESTORE_LOOP] ClipLoop: {start:.2f} -> {end:.2f}")
-	#
-	# 					except RuntimeError as le:
-	# 						if DEBUG_LOGGING:
-	# 							self._control_surface.log_message(f"[RESTORE_ERROR] Failed to set clip loop: {le}")
-	#
-	# 		if DEBUG_LOGGING:
-	# 			self._control_surface.log_message(
-	# 				f"[RESTORE] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-	# 				f"Block={metadata.get('loop_block')} Offset={metadata.get('loop_page_offset')}")
-	#
-	# 	except Exception as e:
-	# 		self._control_surface.log_message(f"[RESTORE ERROR] {e}")
-	#
-	# 	if DEBUG_LOGGING:
-	# 		self._control_surface.log_message(
-	# 			f"[RESTORE_VERIFICATION] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-	# 			f"Block={metadata.get('loop_block', '?')} Offset={metadata.get('loop_page_offset', '?')}"
-	# 		)
-
 	def load_clip_settings(self, clip, settings_dict):
 		"""Loads settings from dictionary into active clip's UI state.
 
@@ -2890,7 +2796,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._last_length_press_time = 0
 		self._last_length_press_pos = None
 		self._is_length_editor_vertical = False    # To track if we are in vertical mode
-		self._notes_pitches = [0] * (7 * pages)
+		rows = 8 if getattr(self, '_is_drumrack_layout', False) else 7
+		self._notes_pitches = [0] * (rows * pages)
 		self._notes_velocities = [4] * pages
 		self._display_octave = 2
 		self._notes_octaves = [2] * pages
@@ -2911,7 +2818,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			loop_selector = self._step_sequencer._loop_selector
 
 		# --- 1: DISABLE LOOP SELECTOR WHEN ENTERING OCTAVE OVERVIEW ---
-		if old_mode != STEPSEQ_MODE_OCTAVE_OVERVIEW and mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+		if old_mode != STEPSEQ_MODE_NAV_OVERVIEW and mode == STEPSEQ_MODE_NAV_OVERVIEW:
 			if loop_selector:
 				# 1. Reset internal logic cache to -1 (The component's true "off" state)
 				loop_selector.set_enabled(False)
@@ -2938,7 +2845,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 
 		# --- 2: RE-ENABLE LOOP SELECTOR WHEN LEAVING OCTAVE OVERVIEW ---
-		elif old_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW and mode != STEPSEQ_MODE_OCTAVE_OVERVIEW:
+		elif old_mode == STEPSEQ_MODE_NAV_OVERVIEW and mode != STEPSEQ_MODE_NAV_OVERVIEW:
 			if loop_selector:
 				if hasattr(self._step_sequencer, '_loop_selector_should_be_enabled'):
 					should_enable = self._step_sequencer._loop_selector_should_be_enabled()
@@ -2962,7 +2869,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			STEPSEQ_MODE_VERTICAL_VELOCITY,
 			STEPSEQ_MODE_VERTICAL_LENGTH,
 			STEPSEQ_MODE_COPY_PASTE,
-			STEPSEQ_MODE_OCTAVE_OVERVIEW
+			STEPSEQ_MODE_NAV_OVERVIEW
 		]) and (mode == STEPSEQ_MODE_NOTES):
 			if loop_selector:
 				# Clear cache and force update
@@ -3009,14 +2916,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# If entering any mode that owns bottom_row() via uses_bottom_row(), ensure Loop Selector knows
 		elif mode in [STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR,
 					  STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH,
-					  STEPSEQ_MODE_COPY_PASTE, STEPSEQ_MODE_OCTAVE_OVERVIEW]:
+					  STEPSEQ_MODE_COPY_PASTE, STEPSEQ_MODE_NAV_OVERVIEW]:
 			if loop_selector and self.uses_bottom_row():
 				# We now own Row 7, so tell Loop Selector to let go
 				if loop_selector.is_enabled():
 					loop_selector.set_enabled(False)
 					loop_selector._cache = [-1] * len(loop_selector._buttons)
 					loop_selector._force = True
-			if mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+			if mode == STEPSEQ_MODE_NAV_OVERVIEW:
 				# Capture the octave we are currently displaying before switching modes
 				self._last_displayed_octave = self._display_octave
 
@@ -3080,6 +2987,21 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if DEBUG_LOGGING:
 			self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
 		self.update()
+
+	def on_drumrack_mode_changed(self, is_drumrack):
+		self._is_drumrack_layout = is_drumrack
+		self._init_data()  # resize pitch buffers (stride changes 7→8)
+		self._parse_notes()
+		self._force_update = True
+		self.update()
+
+	@property
+	def _note_rows(self):
+		ss = getattr(self, '_step_sequencer', None)
+		if ss is not None and getattr(ss, '_scale_selector', None) is not None:
+			return 8 if ss._scale_selector.is_drumrack else 7
+		return 7
+
 
 	def _push_to_hardware(self):
 		"""Force ALL buffered LED values to hardware immediately, ignoring cache."""
@@ -3261,11 +3183,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._notes_lengths[i] = x
 
 				# Process pitch display
-				for j in range(min(7, len(self._key_indexes))):
+				rows = self._note_rows
+				for j in range(min(rows, len(self._key_indexes))):
 					display_pitch = (self._key_indexes[j] + 12 * (self._display_octave - 2))
 					if note_key == display_pitch:
 						# Another safety check for pitches array
-						pitch_idx = i * 7 + j
+						pitch_idx = i * rows + j
 						if pitch_idx < len(self._notes_pitches):
 							self._notes_pitches[pitch_idx] = 1
 
@@ -3275,7 +3198,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _toggle_note_at_grid_position(self, idx, y):
 		grid_time = idx * self.resolution_beats
-		pitch = (self._key_indexes[6 - y] + 12 * (self._display_octave - 2))
+		rows = self._note_rows
+		pitch = (self._key_indexes[rows - 1 - y] + 12 * (self._display_octave - 2))
 		notes = list(self._note_cache)
 		for note in notes:
 			if (
@@ -3315,9 +3239,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return
 		if self._clip != None and self._step_sequencer.is_enabled():
 			note_cache = list()
+			rows = self._note_rows
 			for x in range(len(self._notes_velocities)):
-				for note_index in range(7):
-					if self._notes_pitches[x * 7 + note_index] == 1:
+				for note_index in range(rows):
+					if self._notes_pitches[x * rows + note_index] == 1:
 						note_time = x * self.resolution_beats
 						#time = x * self._quantization
 						velocity = self._velocity_map[self._notes_velocities[x]]
@@ -3466,6 +3391,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		effective_page = self._get_effective_page()
 
 		# WAITING ANIMATION: Velocity
+		rows = self._note_rows
 		if self._velocity_wait_animation:
 			now = time.time()
 			for x in range(8):
@@ -3477,7 +3403,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# If this is the very first run or timer is in future, force "Waiting" state
 				if elapsed_col <= 0.0:
 					# Clear column only
-					for y in range(7):
+					for y in range(rows):
 						# if DEBUG_LOGGING:
 						# 	self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
@@ -3526,7 +3452,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				elapsed_col = now - delay
 
 				if elapsed_col <= 0.0:
-					for y in range(7):
+					for y in range(rows):
 						# self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
@@ -3547,7 +3473,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					head_pos = int(pos_float)
 					if head_pos > 7: head_pos = 7
 
-				for y in range(7):
+				for y in range(rows):
 					# self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
@@ -3564,7 +3490,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# clear back buffer
 				#self._control_surface.log_message("CLEAR BUFFER")
 				for x in range(8):
-					for y in range(7):
+					for y in range(rows):
 						#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
@@ -3590,8 +3516,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							end_time = start_time + self.resolution_beats
 							step_notes_list = self._get_notes_at_step(idx)
 
-							for y in range(7):
-								row_idx = 6 - y
+							for y in range(rows):
+								row_idx = (rows-1) - y
 								current_pitch = (self._key_indexes[row_idx] + 12 * (self._display_octave - 2))
 
 								is_midi_valid = (0 <= current_pitch <= 127)
@@ -3708,68 +3634,84 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						# 		#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_octave))
 						# 		self._grid_back_buffer[x][y] = color_octave
 
-
-						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+						elif self._mode == STEPSEQ_MODE_NAV_OVERVIEW:
 							start_octave = self._overview_start_octave
 							max_visible_octave = start_octave + 7
 							min_visible_octave = start_octave
 
-							# Pre-scan notes for this step
-							highest_note_octave = -1
-							lowest_note_octave = 128
-							step_notes = self._get_notes_at_step(self._get_step_index(x))
+							# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
+							page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
 
-							for n in step_notes:
-								octave = int(n[0] / 12)
-								if octave > highest_note_octave: highest_note_octave = octave
-								if octave < lowest_note_octave: lowest_note_octave = octave
+							# Playing block (column highlight), resolution-aware
+							play_block = None
+							if self._playhead is not None:
+								play_block = int(self._playhead / (8 * self.resolution_beats))
 
-							for y in range(8):
-								target_octave = start_octave + (7 - y)
-								has_note_here = False
+							# Currently selected block (absolute, from LoopSelector source of truth)
+							ls = getattr(self._step_sequencer, '_loop_selector', None)
+							selected_block = getattr(ls, '_block', None) if ls else None
 
-								# Check if note exists in this exact octave
+							for x in range(8):
+								block_index = x + page_offset * 8
+								step_notes = self._get_notes_in_block(block_index)
+
+								highest_note_octave = -1
+								lowest_note_octave = 128
 								for n in step_notes:
-									if int(n[0] / 12) == target_octave:
-										has_note_here = True
-										break
+									octave = int(n[0] / 12)
+									if octave > highest_note_octave: highest_note_octave = octave
+									if octave < lowest_note_octave: lowest_note_octave = octave
 
-								target_color = "StepSequencer2.Octave.Off" # Default
+								is_selected_col = (selected_block == block_index)
+								is_play_col = (play_block == block_index)
 
-								# --- PRIORITY 1: OVERFLOW INDICATORS (Edge Rows) ---
-								# These always take precedence
-								is_top_edge = (y == 0)
-								is_bottom_edge = (y == 7)
-								has_above_overflow = highest_note_octave > max_visible_octave
-								has_below_overflow = lowest_note_octave < min_visible_octave
+								for y in range(8):
+									target_octave = start_octave + (7 - y)
+									has_note_here = any(int(n[0] / 12) == target_octave for n in step_notes)
 
-								if is_top_edge and has_above_overflow:
-									diff = highest_note_octave - max_visible_octave
-									if diff >= 3: target_color = "StepSequencer2.Octave.OnAbove3"
-									elif diff == 2: target_color = "StepSequencer2.Octave.OnAbove2"
-									elif diff == 1: target_color = "StepSequencer2.Octave.OnAbove1"
+									target_color = "StepSequencer2.Octave.Off"
 
-								elif is_bottom_edge and has_below_overflow:
-									diff = min_visible_octave - lowest_note_octave
-									if diff >= 3: target_color = "StepSequencer2.Octave.OnBelow3"
-									elif diff == 2: target_color = "StepSequencer2.Octave.OnBelow2"
-									elif diff == 1: target_color = "StepSequencer2.Octave.OnBelow1"
+									# PRIORITY 1: overflow indicators (edge rows)
+									is_top_edge = (y == 0)
+									is_bottom_edge = (y == 7)
+									if is_top_edge and highest_note_octave > max_visible_octave:
+										diff = highest_note_octave - max_visible_octave
+										if diff >= 3:
+											target_color = "StepSequencer2.Octave.OnAbove3"
+										elif diff == 2:
+											target_color = "StepSequencer2.Octave.OnAbove2"
+										else:
+											target_color = "StepSequencer2.Octave.OnAbove1"
+									elif is_bottom_edge and (lowest_note_octave < min_visible_octave):
+										diff = min_visible_octave - lowest_note_octave
+										if diff >= 3:
+											target_color = "StepSequencer2.Octave.OnBelow3"
+										elif diff == 2:
+											target_color = "StepSequencer2.Octave.OnBelow2"
+										else:
+											target_color = "StepSequencer2.Octave.OnBelow1"
 
-								# --- PRIORITY 2: LAST DISPLAYED OCTAVE (Inside Range) ---
-								# Only applies if we are NOT using this row for overflow indication
-								elif target_octave == self._last_displayed_octave + 1: # need the +1 because otherwise we shoo one row lower
-									if has_note_here:
-										target_color = "StepSequencer2.Octave.OnDisplay"
+									# PRIORITY 2: currently displayed octave row
+									elif target_octave == self._last_displayed_octave + 1:
+										target_color = ("StepSequencer2.Octave.OnDisplay" if has_note_here
+														else "StepSequencer2.Octave.OffDisplay")
+
+									# PRIORITY 3: normal visuals, with selection / playhead column tint
+									elif has_note_here:
+										if is_play_col:
+											target_color = "StepSequencer2.Octave.OnPlayBlock"
+										elif is_selected_col:
+											target_color = "StepSequencer2.Octave.OnSelectedBlock"
+										else:
+											target_color = "StepSequencer2.Octave.On"
 									else:
-										target_color = "StepSequencer2.Octave.OffDisplay"
+										if is_selected_col:
+											target_color = "StepSequencer2.Octave.OffSelectedBlock"
+										elif is_play_col:
+											target_color = "StepSequencer2.Octave.OffPlayBlock"
 
-								# --- PRIORITY 3: NORMAL VISUALS ---
-								elif has_note_here:
-									target_color = "StepSequencer2.Octave.On"
+									self._grid_back_buffer[x][y] = target_color
 
-								# Else: remains "StepSequencer2.Octave.Off"
-
-								self._grid_back_buffer[x][y] = target_color
 
 						else:
 							for y in range(8):
@@ -3812,7 +3754,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 											mixed_velocity_pitches[pitch] = False
 
 									# --- DRAW THE GRID ---
-									for y in range(7):
+									for y in range(rows):
 										pitch = self._pitch_for_row(y)
 										note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
 
@@ -4091,16 +4033,16 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						metronome_color = "StepSequencer2.NoteEditor.MetronomeInPage"
 
 						# full column metronome
-						for y in range(7):
+						for y in range(rows):
 							self._grid_back_buffer[play_x_position][y] = metronome_color
 
-						for y in range(7):
-							if self._notes_pitches[play_position * 7 + 6 - y] == 1:
+						for y in range(rows):
+							if self._notes_pitches[play_position * rows + (rows - 1) - y] == 1:
 								self._grid_back_buffer[play_x_position][y] = "StepSequencer2.NoteEditor.PlayInPage"
 
 			else:
 				for x in range(8):
-					for y in range(7):
+					for y in range(rows):
 						#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, "DefaultButton.Disabled"))
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 
@@ -4262,8 +4204,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					return
 
 				# --- MAIN BUTTON PRESS HANDLING ---
-				allow_row7 = (self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY,STEPSEQ_MODE_VERTICAL_LENGTH, STEPSEQ_MODE_OCTAVE_OVERVIEW))
-
+				allow_row7 = (self._is_drumrack_layout or
+				              self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH, STEPSEQ_MODE_NAV_OVERVIEW))
+				rows = self._note_rows
 				if ((value != 0) or (not sender.is_momentary())):
 					if y == 7 and not allow_row7:
 						return
@@ -4271,14 +4214,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					if self._mode == STEPSEQ_MODE_NOTES:
 						# Toggle note at grid position
-						if self._notes_pitches[(idx) * 7 + 6 - y] == 1:
-							self._notes_pitches[(idx) * 7 + 6 - y] = 0
+						if self._notes_pitches[(idx) * rows + (rows - 1) - y] == 1:
+							self._notes_pitches[(idx) * rows + (rows - 1) - y] = 0
 						else:
 							# Clear step if monophonic mode
 							if self._is_monophonic:
 								for yy in range(7):
-									self._notes_pitches[(idx) * 7 + 6 - yy] = 0
-							self._notes_pitches[(idx) * 7 + 6 - y] = 1
+									self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 0
+							self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 1
 
 					# elif self._mode == STEPSEQ_MODE_NOTES_OCTAVES:
 					# 	if self._is_notes_octaves_shifted:
@@ -4294,17 +4237,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# 	else:
 					# 		self._notes_octaves[idx] = 6 - y
 
-					# --- OCTAVE OVERVIEW MODE: Click selects octave and returns to Notes ---
-					elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
-						# Calculate the absolute octave based on the clicked row and the current start offset
-						# Row 0 (Top) -> Start + 7
-						# Row 7 (Bottom) -> Start
+					# --- OCTAVE & BLOCK OVERVIEW MODE: Click selects octave and returns to Notes ---
+					elif self._mode == STEPSEQ_MODE_NAV_OVERVIEW:
+						page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
+						block_index = x + page_offset * 8
 						selected_octave = self._overview_start_octave + (6 - y)
 
+						# NEW: also jump to the block this column represents
+						self._select_block(block_index)
 						self.set_display_octave(selected_octave)
-						self._control_surface.show_message("Selected Octave %d" % (selected_octave - 1))
+						self._control_surface.show_message(
+							"Octave %d, Block %d" % (selected_octave - 1, block_index))
 
-						# Return to Normal Notes mode
 						self.set_mode(STEPSEQ_MODE_NOTES)
 						self._force_update = True
 						self.update()
@@ -4735,7 +4679,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
 		# Get all possible pitches on the grid
 		grid_pitches = []
-		for row_idx in range(7):
+		rows = self._note_rows
+		for row_idx in range(rows):
 			pitch = self._key_indexes[row_idx] + 12 * (self._display_octave - 2)
 			grid_pitches.append((pitch, row_idx))
 
@@ -4776,7 +4721,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._note_cache = tuple(notes)
 
 	def _pitch_for_row(self, y):
-		return (self._key_indexes[6 - y] + 12 * (self._display_octave - 2))
+		rows = self._note_rows
+		return (self._key_indexes[rows - 1 - y] + 12 * (self._display_octave - 2))
 
 	def _get_step_index(self, x):
 		return x + 8 * self._get_effective_page()
@@ -5152,7 +5098,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_velocity_shifted = True
 
 
-# OCTAVES
+# OCTAVES & BLOCKS
 	def set_display_octave(self, octave):
 		self._display_octave = octave
 		# debug
@@ -5170,7 +5116,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if (self._mode_notes_octaves_button != None):
 				if self._clip != None:
 					self._mode_notes_octaves_button.set_on_off_values("StepSequencer2.Octave.On", "StepSequencer2.Octave.Dim")
-					if self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+					if self._mode == STEPSEQ_MODE_NAV_OVERVIEW:
 						self._mode_notes_octaves_button.turn_on()
 					else:
 						self._mode_notes_octaves_button.turn_off()
@@ -5196,7 +5142,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				now = time.time()
 				current_mode = self._mode
 
-				if current_mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
+				if current_mode == STEPSEQ_MODE_NAV_OVERVIEW:
 					time_delta = now - self._last_notes_octaves_button_press
 
 					# --- DOUBLE CLICK ---
@@ -5250,7 +5196,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._scroll_pending_action = False
 
 					# Set Mode
-					self.set_mode(STEPSEQ_MODE_OCTAVE_OVERVIEW)
+					self.set_mode(STEPSEQ_MODE_NAV_OVERVIEW)
 
 					# Show message with the calculated range
 					self._control_surface.show_message("Octave Overview ") #% (self._overview_start_octave, self._overview_start_octave + 7)
@@ -5272,7 +5218,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	 Checks if a double-click cancelled it.
 		"""
 		# If we are not in overview mode, do nothing
-		if self._mode != STEPSEQ_MODE_OCTAVE_OVERVIEW:
+		if self._mode != STEPSEQ_MODE_NAV_OVERVIEW:
 			self._scroll_pending_action = False
 			return
 
@@ -5296,6 +5242,52 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Reset flag
 		self._scroll_pending_action = False
 
+	def _get_notes_in_block(self, block_index):
+		"""All unmuted notes whose onset falls inside block_index (8 steps)."""
+		block_start = block_index * 8 * self.resolution_beats
+		block_end = block_start + 8 * self.resolution_beats
+		return [n for n in self._note_cache
+		        if block_start <= n[1] < block_end and not n[4]]
+
+	def _select_block(self, block_index):
+		"""
+        Jump the sequencer to an absolute block: syncs page offset,
+        LoopSelector._block (ABSOLUTE), parent + editor mirrors, and _page.
+        Does NOT touch the clip loop — selection is editing position only.
+        """
+		ss = self._step_sequencer
+		ls = getattr(ss, '_loop_selector', None)
+		if ls is None or self._clip is None:
+			return
+
+		# Clamp to the clip's block extent
+		total_steps = int((self._clip.loop_end - self._clip.loop_start) / ss._resolution)
+		total_blocks = max(1, (total_steps + 7) // 8)
+		block_index = max(0, min(block_index, total_blocks - 1))
+
+		new_offset = block_index // 8
+
+		# 1. Offset everywhere (cycle button reads ss._loop_page_offset)
+		ss._loop_page_offset = new_offset
+		ls._loop_page_offset = new_offset
+		if hasattr(ls, '_last_known_offset'):
+			ls._last_known_offset = new_offset - 1  # force cache clear in update()
+
+		# 2. Three-way block sync — note _block is ABSOLUTE here
+		ss._loop_block = block_index
+		ls._block = block_index
+		ls._force = True
+		self._loop_block = block_index
+
+		# 3. Melodic editor page = absolute block (metronome/copy-paste correctness)
+		self._page = block_index
+		ss.set_page(block_index)
+
+		ss._update_cycle_button()
+		self._force_update = True
+		self.update()
+		if not getattr(self, "_loading_clip", False):
+			self.sync_clip_with_json()
 
 # VELOCITIES
 	def _set_velocity_at_step(self, idx, velocity_index):
@@ -6036,25 +6028,34 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._control_surface.show_message("Duplication Failed")
 
 	# UTILS
+
 	def uses_bottom_row(self):
+		if getattr(self, '_is_drumrack_layout', False):
+			return True  # editor owns all 8 rows in drumrack mode, even in plain Notes mode
 		return self._mode in (
 			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
 			STEPSEQ_MODE_STEP_LENGTH_EDITOR,
 			STEPSEQ_MODE_VERTICAL_VELOCITY,
 			STEPSEQ_MODE_VERTICAL_LENGTH,
 			STEPSEQ_MODE_COPY_PASTE,
-			STEPSEQ_MODE_OCTAVE_OVERVIEW,
+			STEPSEQ_MODE_NAV_OVERVIEW,
 		)
 
 class StepSequencerComponent2(StepSequencerComponent):
 
 	def __init__(self, matrix, side_buttons, top_buttons, control_surface):
 		# Initialization of _loop_page_offset is done in StepSequencerComponent
+		self._is_drumrack_mode = False
 		self._new_clip_pages = 1
 		self._name = "melodic step sequencer"
 		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
 		# loop selector
 		self._loop_block = 0
+
+	def _loop_selector_should_be_enabled(self):
+		if getattr(self, '_is_drumrack_mode', False):
+			return False
+		return super(StepSequencerComponent2, self)._loop_selector_should_be_enabled()
 
 	def _search_and_relink_clip(self, target_hash, cached_entry):
 		"""Find clip that matched this hash anywhere in the song."""
@@ -6154,6 +6155,140 @@ class StepSequencerComponent2(StepSequencerComponent):
 	def _update_drum_group_device(self):
 		# no drum rack mode for me. i am a melodic step seq.
 		self._drum_group_device = None
+
+	def _loop_selector_should_be_enabled(self):
+		"""
+        Row-7 ownership policy.
+
+        The Scale Selector is the authoritative source for Drum Rack mode.
+        This deliberately does not rely only on _is_drumrack_mode, because
+        that flag can become stale during initialization or a mode transition.
+        """
+		if hasattr(self, '_scale_selector') and self._scale_selector:
+			if self._scale_selector.is_drumrack:
+				return False
+
+		if getattr(self, '_is_drumrack_mode', False):
+			return False
+
+		return super(StepSequencerComponent2, self)._loop_selector_should_be_enabled()
+
+
+	def _detect_scale_mode(self):
+		# Manual mode: no device sniffing. Drumrack layout is whatever the
+		# user chose in the scale selector — never overwrite it from here.
+		self._sync_editor_layout()
+
+
+	def _sync_editor_layout(self):
+		"""
+        Synchronize row-7 ownership with the Scale Selector's Drum Rack state.
+
+        Drum Rack mode:
+            - Note editor owns all 8 rows.
+            - Loop selector must be disabled completely.
+
+        Normal melodic mode:
+            - Note editor owns rows 0-6.
+            - Loop selector may own row 7, unless another editor mode
+              temporarily owns the bottom row.
+        """
+		is_dr = bool(self._scale_selector.is_drumrack)
+
+		# ---------------------------------------------------------
+		# 1. Keep the StepSequencerComponent2 state synchronized.
+		#    This is important because _loop_selector_should_be_enabled()
+		#    uses this flag.
+		# ---------------------------------------------------------
+		old_is_dr = getattr(self, '_is_drumrack_mode', False)
+		self._is_drumrack_mode = is_dr
+
+		# ---------------------------------------------------------
+		# 2. Synchronize the note editor layout.
+		# ---------------------------------------------------------
+		if hasattr(self, '_note_editor') and self._note_editor:
+			editor_is_dr = getattr(
+				self._note_editor,
+				'_is_drumrack_layout',
+				False
+			)
+
+			if editor_is_dr != is_dr:
+				self._note_editor.on_drumrack_mode_changed(is_dr)
+
+		# ---------------------------------------------------------
+		# 3. Synchronize Loop Selector ownership of row 7.
+		# ---------------------------------------------------------
+		loop_selector = getattr(self, '_loop_selector', None)
+
+		if loop_selector:
+			if is_dr:
+				# Drum Rack owns ALL 8 rows.
+				# Loop Selector must completely release row 7.
+				loop_selector.set_enabled(False)
+
+				if hasattr(loop_selector, '_buttons'):
+					loop_selector._cache = [-1] * len(loop_selector._buttons)
+
+					for button in loop_selector._buttons:
+						if button:
+							try:
+								button.turn_off()
+							except RuntimeError:
+								pass
+
+				if hasattr(loop_selector, '_force'):
+					loop_selector._force = True
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						"[ROW7] Drum Rack mode -> Note Editor owns row 7; "
+						"Loop Selector disabled"
+					)
+
+			elif old_is_dr:
+				# We are leaving Drum Rack mode.
+				# Give row 7 back to the Loop Selector only if the
+				# current editor mode permits it.
+				if self._loop_selector_should_be_enabled():
+					loop_selector.set_enabled(True)
+
+					if hasattr(loop_selector, '_get_clip_loop'):
+						loop_selector._get_clip_loop()
+
+					if hasattr(loop_selector, '_force'):
+						loop_selector._force = True
+
+					loop_selector.update()
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							"[ROW7] Leaving Drum Rack mode -> "
+							"Loop Selector may reclaim row 7"
+						)
+
+				else:
+					loop_selector.set_enabled(False)
+
+		# ---------------------------------------------------------
+		# 4. Force the layout change onto the hardware.
+		# ---------------------------------------------------------
+		if old_is_dr != is_dr:
+			self._force_update = True
+
+			if hasattr(self, '_note_editor') and self._note_editor:
+				self._note_editor._force_update = True
+
+			self.update()
+
+	def _scale_updated(self):
+		# Synchronize the ownership BEFORE the parent update runs.
+		#
+		# This is important: if super()._scale_updated() causes an update,
+		# the parent must already know that Drum Rack owns row 7.
+		self._sync_editor_layout()
+		super(StepSequencerComponent2, self)._scale_updated()
+
 
 	def _update_OSD(self):
 		if self._osd != None:
