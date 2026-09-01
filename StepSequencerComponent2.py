@@ -2180,103 +2180,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return state
 
 
-	# def _restore_clip_metadata(self, metadata):
-	# 	"""Applies saved metadata to the current session."""
-	# 	if not metadata: return
-	# 	try:
-	# 		# === SCALE/ROOT/OCTAVE/RESOLUTION ===
-	# 		if 'scale' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-	# 			selector = self._step_sequencer._scale_selector
-	# 			if metadata['scale'] in range(len(selector._modus_names)):
-	# 				selector.set_modus(metadata['scale'], False, True)
-	#
-	# 		if 'root_note' in metadata and hasattr(self._step_sequencer, '_scale_selector'):
-	# 			selector = self._step_sequencer._scale_selector
-	# 			root = int(metadata['root_note']) % 12
-	# 			selector.set_key(root, False, True)
-	#
-	# 		if 'display_octave' in metadata:
-	# 			oct_val = int(metadata['display_octave'])
-	# 			oct_val = max(0, min(15, oct_val))
-	# 			self.set_display_octave(oct_val)
-	#
-	# 		if 'resolution' in metadata:
-	# 			res = int(metadata['resolution'])
-	# 			if res in [8, 16, 32]:
-	# 				self.set_resolution(res)
-	#
-	# 		# === NEW: RESTORE LOOP PARAMETERS ==========
-	# 		if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-	# 			ls = self._step_sequencer._loop_selector
-	#
-	# 			# Restore selected block/index (row 7 selection)
-	# 			if 'loop_block' in metadata:
-	# 				new_block = int(metadata['loop_block'])
-	# 				if hasattr(ls, '_block'):
-	# 					ls._block = new_block
-	# 					# Force update to reflect new selection visually
-	# 					ls._force = True
-	# 					if DEBUG_LOGGING:
-	# 						self._control_surface.log_message(f"[RESTORE_LOOP] Block={new_block}")
-	#
-	# 			# Restore page offset (cycle/page position)
-	# 			if 'loop_page_offset' in metadata:
-	# 				offset = int(metadata['loop_page_offset'])
-	# 				if hasattr(ls, '_loop_page_offset'):
-	# 					old_offset = ls._loop_page_offset
-	# 					ls._loop_page_offset = offset
-	# 					# Update step sequencer page accordingly
-	# 					if hasattr(self._step_sequencer, 'set_page'):
-	# 						absolute_block = ls._block + (offset * 8)
-	# 						self._step_sequencer.set_page(absolute_block)
-	# 					if DEBUG_LOGGING:
-	# 						self._control_surface.log_message(
-	# 							f"[RESTORE_LOOP] PageOffset={offset} (was {old_offset})")
-	#
-	# 			# Restore clip loop bounds (marker start/end)
-	# 			if 'clip_loop_start' in metadata and 'clip_loop_end' in metadata:
-	# 				if self._clip:
-	# 					start = float(metadata['clip_loop_start'])
-	# 					end = float(metadata['clip_loop_end'])
-	#
-	# 					# Safety check
-	# 					if end <= start:
-	# 						end = start + 1.0
-	#
-	# 					# Apply to clip directly
-	# 					try:
-	# 						self._clip.loop_start = start
-	# 						self._clip.loop_end = end
-	# 						# Also update marker positions
-	# 						self._clip.start_marker = start
-	# 						self._clip.end_marker = end
-	#
-	# 						# Tell LoopSelector to sync
-	# 						if hasattr(ls, '_get_clip_loop'):
-	# 							ls._get_clip_loop()
-	# 							ls.update()
-	#
-	# 						if DEBUG_LOGGING:
-	# 							self._control_surface.log_message(f"[RESTORE_LOOP] ClipLoop: {start:.2f} -> {end:.2f}")
-	#
-	# 					except RuntimeError as le:
-	# 						if DEBUG_LOGGING:
-	# 							self._control_surface.log_message(f"[RESTORE_ERROR] Failed to set clip loop: {le}")
-	#
-	# 		if DEBUG_LOGGING:
-	# 			self._control_surface.log_message(
-	# 				f"[RESTORE] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-	# 				f"Block={metadata.get('loop_block')} Offset={metadata.get('loop_page_offset')}")
-	#
-	# 	except Exception as e:
-	# 		self._control_surface.log_message(f"[RESTORE ERROR] {e}")
-	#
-	# 	if DEBUG_LOGGING:
-	# 		self._control_surface.log_message(
-	# 			f"[RESTORE_VERIFICATION] Octave={metadata.get('display_octave')}, Res={metadata.get('resolution')}, " +
-	# 			f"Block={metadata.get('loop_block', '?')} Offset={metadata.get('loop_page_offset', '?')}"
-	# 		)
-
 	def load_clip_settings(self, clip, settings_dict):
 		"""Loads settings from dictionary into active clip's UI state.
 
@@ -3708,68 +3611,84 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						# 		#self._control_surface.log_message("WRITE (%d,%d) <- %s" % (x, y, color_octave))
 						# 		self._grid_back_buffer[x][y] = color_octave
 
-
 						elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
 							start_octave = self._overview_start_octave
 							max_visible_octave = start_octave + 7
 							min_visible_octave = start_octave
 
-							# Pre-scan notes for this step
-							highest_note_octave = -1
-							lowest_note_octave = 128
-							step_notes = self._get_notes_at_step(self._get_step_index(x))
+							# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
+							page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
 
-							for n in step_notes:
-								octave = int(n[0] / 12)
-								if octave > highest_note_octave: highest_note_octave = octave
-								if octave < lowest_note_octave: lowest_note_octave = octave
+							# Playing block (column highlight), resolution-aware
+							play_block = None
+							if self._playhead is not None:
+								play_block = int(self._playhead / (8 * self.resolution_beats))
 
-							for y in range(8):
-								target_octave = start_octave + (7 - y)
-								has_note_here = False
+							# Currently selected block (absolute, from LoopSelector source of truth)
+							ls = getattr(self._step_sequencer, '_loop_selector', None)
+							selected_block = getattr(ls, '_block', None) if ls else None
 
-								# Check if note exists in this exact octave
+							for x in range(8):
+								block_index = x + page_offset * 8
+								step_notes = self._get_notes_in_block(block_index)
+
+								highest_note_octave = -1
+								lowest_note_octave = 128
 								for n in step_notes:
-									if int(n[0] / 12) == target_octave:
-										has_note_here = True
-										break
+									octave = int(n[0] / 12)
+									if octave > highest_note_octave: highest_note_octave = octave
+									if octave < lowest_note_octave: lowest_note_octave = octave
 
-								target_color = "StepSequencer2.Octave.Off" # Default
+								is_selected_col = (selected_block == block_index)
+								is_play_col = (play_block == block_index)
 
-								# --- PRIORITY 1: OVERFLOW INDICATORS (Edge Rows) ---
-								# These always take precedence
-								is_top_edge = (y == 0)
-								is_bottom_edge = (y == 7)
-								has_above_overflow = highest_note_octave > max_visible_octave
-								has_below_overflow = lowest_note_octave < min_visible_octave
+								for y in range(8):
+									target_octave = start_octave + (7 - y)
+									has_note_here = any(int(n[0] / 12) == target_octave for n in step_notes)
 
-								if is_top_edge and has_above_overflow:
-									diff = highest_note_octave - max_visible_octave
-									if diff >= 3: target_color = "StepSequencer2.Octave.OnAbove3"
-									elif diff == 2: target_color = "StepSequencer2.Octave.OnAbove2"
-									elif diff == 1: target_color = "StepSequencer2.Octave.OnAbove1"
+									target_color = "StepSequencer2.Octave.Off"
 
-								elif is_bottom_edge and has_below_overflow:
-									diff = min_visible_octave - lowest_note_octave
-									if diff >= 3: target_color = "StepSequencer2.Octave.OnBelow3"
-									elif diff == 2: target_color = "StepSequencer2.Octave.OnBelow2"
-									elif diff == 1: target_color = "StepSequencer2.Octave.OnBelow1"
+									# PRIORITY 1: overflow indicators (edge rows)
+									is_top_edge = (y == 0)
+									is_bottom_edge = (y == 7)
+									if is_top_edge and highest_note_octave > max_visible_octave:
+										diff = highest_note_octave - max_visible_octave
+										if diff >= 3:
+											target_color = "StepSequencer2.Octave.OnAbove3"
+										elif diff == 2:
+											target_color = "StepSequencer2.Octave.OnAbove2"
+										else:
+											target_color = "StepSequencer2.Octave.OnAbove1"
+									elif is_bottom_edge and (lowest_note_octave < min_visible_octave):
+										diff = min_visible_octave - lowest_note_octave
+										if diff >= 3:
+											target_color = "StepSequencer2.Octave.OnBelow3"
+										elif diff == 2:
+											target_color = "StepSequencer2.Octave.OnBelow2"
+										else:
+											target_color = "StepSequencer2.Octave.OnBelow1"
 
-								# --- PRIORITY 2: LAST DISPLAYED OCTAVE (Inside Range) ---
-								# Only applies if we are NOT using this row for overflow indication
-								elif target_octave == self._last_displayed_octave + 1: # need the +1 because otherwise we shoo one row lower
-									if has_note_here:
-										target_color = "StepSequencer2.Octave.OnDisplay"
+									# PRIORITY 2: currently displayed octave row
+									elif target_octave == self._last_displayed_octave + 1:
+										target_color = ("StepSequencer2.Octave.OnDisplay" if has_note_here
+														else "StepSequencer2.Octave.OffDisplay")
+
+									# PRIORITY 3: normal visuals, with selection / playhead column tint
+									elif has_note_here:
+										if is_play_col:
+											target_color = "StepSequencer2.Octave.OnPlayBlock"
+										elif is_selected_col:
+											target_color = "StepSequencer2.Octave.OnSelectedBlock"
+										else:
+											target_color = "StepSequencer2.Octave.On"
 									else:
-										target_color = "StepSequencer2.Octave.OffDisplay"
+										if is_selected_col:
+											target_color = "StepSequencer2.Octave.OffSelectedBlock"
+										elif is_play_col:
+											target_color = "StepSequencer2.Octave.OffPlayBlock"
 
-								# --- PRIORITY 3: NORMAL VISUALS ---
-								elif has_note_here:
-									target_color = "StepSequencer2.Octave.On"
+									self._grid_back_buffer[x][y] = target_color
 
-								# Else: remains "StepSequencer2.Octave.Off"
-
-								self._grid_back_buffer[x][y] = target_color
 
 						else:
 							for y in range(8):
@@ -4294,17 +4213,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# 	else:
 					# 		self._notes_octaves[idx] = 6 - y
 
-					# --- OCTAVE OVERVIEW MODE: Click selects octave and returns to Notes ---
+					# --- OCTAVE & BLOCK OVERVIEW MODE: Click selects octave and returns to Notes ---
 					elif self._mode == STEPSEQ_MODE_OCTAVE_OVERVIEW:
-						# Calculate the absolute octave based on the clicked row and the current start offset
-						# Row 0 (Top) -> Start + 7
-						# Row 7 (Bottom) -> Start
+						page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
+						block_index = x + page_offset * 8
 						selected_octave = self._overview_start_octave + (6 - y)
 
+						# NEW: also jump to the block this column represents
+						self._select_block(block_index)
 						self.set_display_octave(selected_octave)
-						self._control_surface.show_message("Selected Octave %d" % (selected_octave - 1))
+						self._control_surface.show_message(
+							"Octave %d, Block %d" % (selected_octave - 1, block_index))
 
-						# Return to Normal Notes mode
 						self.set_mode(STEPSEQ_MODE_NOTES)
 						self._force_update = True
 						self.update()
@@ -5152,7 +5072,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_velocity_shifted = True
 
 
-# OCTAVES
+# OCTAVES & BLOCKS
 	def set_display_octave(self, octave):
 		self._display_octave = octave
 		# debug
@@ -5296,6 +5216,52 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Reset flag
 		self._scroll_pending_action = False
 
+	def _get_notes_in_block(self, block_index):
+		"""All unmuted notes whose onset falls inside block_index (8 steps)."""
+		block_start = block_index * 8 * self.resolution_beats
+		block_end = block_start + 8 * self.resolution_beats
+		return [n for n in self._note_cache
+		        if block_start <= n[1] < block_end and not n[4]]
+
+	def _select_block(self, block_index):
+		"""
+        Jump the sequencer to an absolute block: syncs page offset,
+        LoopSelector._block (ABSOLUTE), parent + editor mirrors, and _page.
+        Does NOT touch the clip loop — selection is editing position only.
+        """
+		ss = self._step_sequencer
+		ls = getattr(ss, '_loop_selector', None)
+		if ls is None or self._clip is None:
+			return
+
+		# Clamp to the clip's block extent
+		total_steps = int((self._clip.loop_end - self._clip.loop_start) / ss._resolution)
+		total_blocks = max(1, (total_steps + 7) // 8)
+		block_index = max(0, min(block_index, total_blocks - 1))
+
+		new_offset = block_index // 8
+
+		# 1. Offset everywhere (cycle button reads ss._loop_page_offset)
+		ss._loop_page_offset = new_offset
+		ls._loop_page_offset = new_offset
+		if hasattr(ls, '_last_known_offset'):
+			ls._last_known_offset = new_offset - 1  # force cache clear in update()
+
+		# 2. Three-way block sync — note _block is ABSOLUTE here
+		ss._loop_block = block_index
+		ls._block = block_index
+		ls._force = True
+		self._loop_block = block_index
+
+		# 3. Melodic editor page = absolute block (metronome/copy-paste correctness)
+		self._page = block_index
+		ss.set_page(block_index)
+
+		ss._update_cycle_button()
+		self._force_update = True
+		self.update()
+		if not getattr(self, "_loading_clip", False):
+			self.sync_clip_with_json()
 
 # VELOCITIES
 	def _set_velocity_at_step(self, idx, velocity_index):

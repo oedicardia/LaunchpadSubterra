@@ -1359,6 +1359,12 @@ class StepSequencerComponent(CompoundComponent):
 			self._loop_selector.set_loop_page_offset(self._loop_page_offset)
 			self._loop_selector.update()  # This will redraw the buttons but NOT change _block
 
+		# repaint the melodic nav grid if the octave overview owns the matrix
+		if (hasattr(self, '_note_editor') and self._note_editor and
+				getattr(self._note_editor, '_mode', None) == STEPSEQ_MODE_OCTAVE_OVERVIEW):
+			self._note_editor._force_update = True
+			self._note_editor.update()
+
 		self._control_surface.show_message("Page offset: %d" % self._loop_page_offset)
 		self._update_cycle_button()
 
