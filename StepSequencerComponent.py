@@ -714,7 +714,7 @@ class StepSequencerComponent(CompoundComponent):
 		if hasattr(self._note_editor, '_mode') and self._note_editor._mode == STEPSEQ_MODE_NAV_OVERVIEW:
 			# DO NOT UPDATE LOOP SELECTOR AT ALL in this mode
 			# It will steal Row 7 from the Note Editor
-			self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - OCTAVE OVERVIEW MODE")
+			self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - NAV OVERVIEW MODE")
 			return
 
 		enable = self._loop_selector_should_be_enabled()
@@ -810,33 +810,84 @@ class StepSequencerComponent(CompoundComponent):
 		if self.is_enabled() and self._clip != None:
 			self._loop_selector._get_clip_loop()
 
+
 	def on_clip_slot_has_clip_changed(self):
-		# the clip was deleted. unlock.
+		# Clip was deleted.
 		if not self._clip_slot.has_clip:
 			self._is_locked = False
+
+			# on_clip_slot_changed() is responsible for propagating
+			# the None clip to the child components.
+			self.on_clip_slot_changed()
+
+			# Do not immediately call update() here.
+			# The child components may still be transitioning away
+			# from the deleted Ableton Clip object.
+			return
+
 		self.on_clip_slot_changed()
 		self.update()
 
+
 	def on_clip_slot_changed(self, scheduled=False):
 		# EDGE CASE: Sync old clip if in scale mode before switch
-		if (self._clip is not None and
-				hasattr(self._clip, 'is_midi_clip') and
-				self._clip.is_midi_clip and
-				self._mode == STEPSEQ_MODE_SCALE_EDIT and
-				hasattr(self, '_note_editor') and
-				self._note_editor and
-				hasattr(self._note_editor, '_meta_manager') and
-				self._note_editor._meta_manager):
+		#
+		# IMPORTANT:
+		# During Live clip move/reorder notifications, self._clip may still
+		# contain a Python proxy to a Clip whose underlying Live object has
+		# already been invalidated. In that situation even:
+		#
+		#     hasattr(self._clip, 'is_midi_clip')
+		#
+		# can raise a Boost.Python.ArgumentError.
+		#
+		# Therefore the entire inspection of self._clip must be protected.
+		# If Live has already invalidated the old clip, simply skip this
+		# pre-switch sync. The clip's embedded SUX tag remains the primary
+		# source of truth.
 
-			try:
-				self._note_editor.sync_clip_with_json()
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[CLIP_SWITCH_SYNC] Synced old clip '{self._clip.name[:30]}...' before switching (was in scale mode)"
-					)
-			except Exception as e:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[CLIP_SWITCH_SYNC_ERROR] {e}")
+		# if self._clip is not None:
+		#
+		# 	try:
+		# 		old_clip = self._clip
+		#
+		# 		# Test the Live object inside the protected block.
+		# 		is_midi = old_clip.is_midi_clip
+		#
+		# 		if (
+		# 				is_midi and
+		# 				self._mode == STEPSEQ_MODE_SCALE_EDIT and
+		# 				hasattr(self, '_note_editor') and
+		# 				self._note_editor is not None and
+		# 				hasattr(self._note_editor, '_meta_manager') and
+		# 				self._note_editor._meta_manager is not None
+		# 		):
+		#
+		# 			self._note_editor.sync_clip_with_json()
+		#
+		# 			if DEBUG_LOGGING:
+		# 				try:
+		# 					old_name = old_clip.name[:30]
+		# 				except Exception:
+		# 					old_name = "<invalidated clip>"
+		#
+		# 				self._control_surface.log_message(
+		# 					f"[CLIP_SWITCH_SYNC] "
+		# 					f"Synced old clip '{old_name}...' "
+		# 					f"before switching (was in scale mode)"
+		# 				)
+		#
+		# 	except Exception as e:
+		#
+		# 		# Live can invalidate the old Clip proxy while processing
+		# 		# clip movement. This is expected and must not abort the
+		# 		# clip-slot change callback.
+		# 		if DEBUG_LOGGING:
+		# 			self._control_surface.log_message(
+		# 				f"[CLIP_SWITCH_SYNC_SKIPPED] "
+		# 				f"Old clip unavailable during slot change: {e}"
+		# 			)
+
 		# get old reference to clipslot
 		clip_slot = self._clip_slot
 		#self._update_clip_toggle_button()

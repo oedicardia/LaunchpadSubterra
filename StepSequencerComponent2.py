@@ -30,19 +30,34 @@ BASE_OCTAVE = 8
 DEBUG_LOGGING = True  # Set to False for release
 
 def _safe_bool(value):
-    """Convert string/int to bool safely (bool('0') would be True otherwise)."""
+    """Convert common string/int/bool representations safely."""
+    if isinstance(value, bool):
+        return value
+
     if isinstance(value, str):
-        return int(value) != 0
+        value = value.strip().lower()
+
+        if value in ('true', '1', 'yes', 'on'):
+            return True
+
+        if value in ('false', '0', 'no', 'off', ''):
+            return False
+
+        # Invalid boolean text should fail loudly so the tag is
+        # treated as invalid and JSON recovery can take over.
+        raise ValueError(f"Invalid boolean value: {value!r}")
+
     return bool(value)
 
 SUX_SCHEMA = [
     ('is_absolute',       False, _safe_bool),
-	('display_octave',    2, int),
-	('resolution_index',  4, int),
-	('loop_block',        0, int),
-	('loop_page_offset',  0, int),
-	('clip_loop_start',   0.0, float),
-	('clip_loop_end',     16.0, float),
+    ('is_drumrack',       False, _safe_bool),
+    ('display_octave',    2, int),
+    ('resolution_index',  5, int),
+    ('loop_block',        0, int),
+    ('loop_page_offset',  0, int),
+    ('clip_loop_start',   0.0, float),
+    ('clip_loop_end',     16.0, float),
 ]
 SUX_PARAM_COUNT = len(SUX_SCHEMA)
 #METADATA_SPACER = "          "
@@ -479,9 +494,16 @@ class ClipMetadataManager:
 
 	def extract_sux_params_from_name(self, clip_name):
 		"""
-		UNIFIED extraction method - used by ALL components.
-		This replaces duplicate code in MelodicNoteEditorComponent.
-		"""
+        Extract and validate the first SUX metadata tag.
+
+        Canonical format:
+            [SUX:{is_absolute;is_drumrack;octave;resolution;
+                  loop_block;page_offset;loop_start;loop_end}]
+
+        Boolean fields accept both:
+            0 / 1
+            False / True
+        """
 		if not clip_name:
 			return None
 
@@ -490,32 +512,65 @@ class ClipMetadataManager:
 			if start_idx == -1:
 				return None
 
-			end_idx = clip_name.find(METADATA_SUFFIX, start_idx + len(METADATA_PREFIX))
-			if end_idx <= start_idx:
+			# Find the closing ] belonging to this tag.
+			end_idx = clip_name.find(
+				METADATA_SUFFIX,
+				start_idx + len(METADATA_PREFIX)
+			)
+
+			if end_idx == -1:
 				return None
 
+			# Extract:
+			# [SUX:{ ... }]
+			#
+			# Start immediately after "[SUX:{"
 			param_start = start_idx + len(METADATA_PREFIX) + 1
 			param_string = clip_name[param_start:end_idx].strip()
-			if param_string.endswith('}'):
-				param_string = param_string[:-1]
 
-			if ";" not in param_string:
+			# Remove closing }
+			if param_string.endswith("}"):
+				param_string = param_string[:-1].strip()
+
+			if not param_string:
 				return None
 
-			values = param_string.split(";")
+			values = [value.strip() for value in param_string.split(";")]
 
+			# Current format must contain all fields.
 			if len(values) < SUX_PARAM_COUNT:
+				if DEBUG_LOGGING:
+					self._log(
+						f"[TAG_PARSE_FAILED] Expected {SUX_PARAM_COUNT} "
+						f"fields, found {len(values)}: {values}"
+					)
 				return None
 
-			# Build params dict using schema (more maintainable)
 			params = {}
+
 			for i, (param_name, default_value, converter) in enumerate(SUX_SCHEMA):
-				raw_value = values[i].strip() if i < len(values) else ""
-				params[param_name] = converter(raw_value) if raw_value else default_value
+				raw_value = values[i]
+
+				if raw_value == "":
+					params[param_name] = default_value
+				else:
+					params[param_name] = converter(raw_value)
+
+			if DEBUG_LOGGING:
+				self._log(
+					f"[TAG_PARSED] "
+					f"is_absolute={params.get('is_absolute')} "
+					f"is_drumrack={params.get('is_drumrack')} "
+					f"oct={params.get('display_octave')} "
+					f"res={params.get('resolution_index')} "
+					f"block={params.get('loop_block')}"
+				)
 
 			return params
 
-		except Exception:
+		except Exception as e:
+			if DEBUG_LOGGING:
+				self._log(f"[TAG_PARSE_ERROR] {e}")
 			return None
 
 	# Accessiblity for backward compatibility
@@ -613,6 +668,47 @@ class ClipMetadataManager:
 
 		for key in stale_keys:
 			del self._renamed_clips[key]
+
+
+	def remove_clip_from_json_by_position(self, track_idx, slot_idx):
+		"""Remove the JSON metadata entry for an emptied clip slot."""
+		try:
+			if track_idx is None or slot_idx is None:
+				return False
+
+			if track_idx < 0 or slot_idx < 0:
+				return False
+
+			key_pos = f"POS_{track_idx}_{slot_idx}"
+			clips = self.cache.setdefault("clips", {})
+
+			if key_pos not in clips:
+				if DEBUG_LOGGING:
+					self._log(
+						f"[JSON_CLEANUP] No entry for T{track_idx}:S{slot_idx}"
+					)
+				return False
+
+			del clips[key_pos]
+			self._save_cache()
+
+			if DEBUG_LOGGING:
+				self._log(
+					f"[JSON_CLEANUP] Removed stale metadata for "
+					f"T{track_idx}:S{slot_idx}"
+				)
+
+			return True
+
+		except Exception as e:
+			if DEBUG_LOGGING:
+				import traceback
+				self._log(
+					f"[JSON_CLEANUP_ERROR] {e}\n"
+					f"{traceback.format_exc()}"
+				)
+			return False
+
 
 
 
@@ -1080,12 +1176,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
 		try:
 			values = []
+
 			for param_name, default_value, converter in SUX_SCHEMA:
 				value = params_dict.get(param_name, default_value)
 
-				# Special handling for boolean → 0/1
-				if converter == bool:
-					values.append(str(1 if value else 0))
+				if converter == _safe_bool:
+					values.append("1" if bool(value) else "0")
 				else:
 					values.append(str(converter(value)))
 
@@ -1796,219 +1892,632 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
 
 	def set_clip(self, clip):
-		"""Set current clip and load/restore its settings."""
-		# Normalize input (could be ClipSlot or Clip)
+		"""Set current clip and load/restore its settings.
+
+        Metadata priority:
+           1. Embedded [SUX:{...}] tag on the clip
+           2. Temporary JSON backup
+           3. Factory defaults for genuinely new clips
+
+        The clip tag is the source of truth whenever it can be parsed.
+        JSON is only a recovery mechanism when the tag is missing/corrupt.
+        """
+
+		# ============================================================
+		# NORMALIZE INPUT
+		# ============================================================
+
 		clip = self._normalize_clip(clip)
 
+		# ============================================================
+		# HANDLE EMPTY SLOT
+		# ============================================================
+
 		if clip is None:
-			# ========== HANDLE EMPTY SLOT ==========
-			# Save previous clip state BEFORE clearing
-			if self._meta_manager and self._clip:
-				try:
-					old_state = self._get_current_state_dict()
-					self._meta_manager.save_clip_to_json(self._clip, old_state)
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[EMPTY_SLOT] Saved previous clip '{self._clip.name[:30]}...' to JSON"
-						)
-				except Exception as e:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[PREV_CLIP_SAVE_ERROR] {e}")
 
-			# Clean up stale tags if _clip is VALID
-			if self._clip is not None:
+			if self._meta_manager:
 				try:
-					prev_name = getattr(self._clip, 'name', None)
-					if prev_name is None:
+					track_idx = -1
+					slot_idx = -1
+
+					# Prefer the currently tracked ClipSlot.
+					clip_slot = getattr(self, '_clip_slot', None)
+
+					if clip_slot is not None:
+						song = self.song()
+
+						if song is not None:
+							for t_idx, track in enumerate(song.tracks):
+								for s_idx, slot in enumerate(track.clip_slots):
+									if slot == clip_slot:
+										track_idx = t_idx
+										slot_idx = s_idx
+										break
+
+								if track_idx >= 0:
+									break
+
+					# Fallback: highlighted clip slot.
+					if track_idx < 0:
+						try:
+							clip_slot = self.song().view.highlighted_clip_slot
+
+							if clip_slot is not None:
+								song = self.song()
+
+								for t_idx, track in enumerate(song.tracks):
+									for s_idx, slot in enumerate(track.clip_slots):
+										if slot == clip_slot:
+											track_idx = t_idx
+											slot_idx = s_idx
+											break
+
+									if track_idx >= 0:
+										break
+
+						except Exception:
+							pass
+
+					if track_idx >= 0 and slot_idx >= 0:
+
+						removed = (
+							self._meta_manager
+							.remove_clip_from_json_by_position(
+								track_idx,
+								slot_idx
+							)
+						)
+
 						if DEBUG_LOGGING:
-							self._control_surface.log_message("[CLEANUP_SKIP] Previous clip name unavailable")
+							self._control_surface.log_message(
+								f"[EMPTY_SLOT_JSON_CLEANUP] "
+								f"T{track_idx}:S{slot_idx} "
+								f"removed={removed}"
+							)
+
 					else:
-						clean_name = self.strip_metadata_tags(prev_name)
-						if isinstance(clean_name, str) and clean_name != prev_name:
-							try:
-								self._clip.name = clean_name
-								if DEBUG_LOGGING:
-									self._control_surface.log_message(
-										f"[CLEANED_STALE_TAG] Removed orphaned tag from '{prev_name[:30]}...'"
-									)
-							except RuntimeError as re:
-								if DEBUG_LOGGING:
-									self._control_surface.log_message(
-										f"[CLEAN_FAIL] Could not rename clip: {re}"
-									)
-				except AttributeError as ae:
+
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								"[EMPTY_SLOT_JSON_CLEANUP] "
+								"Could not determine emptied slot position"
+							)
+
+				except Exception as e:
+
 					if DEBUG_LOGGING:
+						import traceback
+
 						self._control_surface.log_message(
-							f"[CLEANUP_WARN] Previous clip object corrupted: {ae}"
+							f"[EMPTY_SLOT_JSON_CLEANUP_ERROR] "
+							f"{e}\n{traceback.format_exc()}"
 						)
 
-			# Clear internal state
-			if self._clip:
+			# --------------------------------------------------------
+			# The old Clip may already be an invalid Ableton handle.
+			# Do not inspect or compare it here.
+			# --------------------------------------------------------
+
+			try:
 				self._init_data()
+			except Exception:
+				pass
 
 			self._clip = None
 			self._force_update = True
-			self.update()
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[CLIP_SET] Cleared - no clip selected")
-			return
+			try:
+				self.update()
 
-		# Skip if same clip already selected
-		if self._clip == clip:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[CLIP_SKIP] Same clip already selected, nothing to do")
-			return
+			except Exception as e:
 
-		# ==========================================
-		# LAZY LOADING: Ensure this clip is in cache
-		# ==========================================
-		if self._meta_manager:
-			# Try to extract from SUX tag first
-			cache_populated = self._meta_manager.ensure_clip_in_cache(clip)
-
-			if not cache_populated:
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
-						f"[LAZY_LOAD] No SUX tag found, will use JSON recovery or defaults"
+						f"[EMPTY_SLOT_UPDATE_ERROR] {e}"
 					)
 
-		# ========== PHASE 1: TRY LOAD EMBEDDED PARAMETER TAG FROM CLIP NAME FIRST ==========
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[CLIP_SET] Cleared - no clip selected"
+				)
+
+			return
+
+		# ============================================================
+		# SAME CLIP - NOTHING TO DO
+		# ============================================================
+
+		if self._clip == clip:
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[CLIP_SKIP] "
+					"Same clip already selected, nothing to do"
+				)
+
+			return
+
+		# ============================================================
+		# PHASE 1
+		# READ NEW CLIP METADATA
+		#
+		# Tag is checked BEFORE JSON.
+		# ============================================================
+
 		clip_params = None
 		settings_source = None
 
-		# Log the exact clip name we're examining
-		clip_name = getattr(clip, 'name', '<NO_NAME>')
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(f"[CLIP_LOAD_START] Examining clip name: '{clip_name[:60]}...'")
+		clip_name = getattr(
+			clip,
+			'name',
+			'<NO_NAME>'
+		)
 
-		clip_params = self._meta_manager.extract_embedded_parameters(clip_name)
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[CLIP_LOAD_START] "
+				f"Examining clip name: '{clip_name[:100]}...'"
+			)
+
+		# ------------------------------------------------------------
+		# 1A. EMBEDDED SUX TAG
+		# ------------------------------------------------------------
+
+		if self._meta_manager:
+
+			try:
+
+				clip_params = (
+					self._meta_manager
+					.extract_embedded_parameters(
+						clip_name
+					)
+				)
+
+			except Exception as e:
+
+				clip_params = None
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[TAG_EXTRACTION_ERROR] {e}"
+					)
 
 		if clip_params:
-			settings_source = "EMBEDDED_TAG"
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[CLIP_NAME_HAS_SUX_TAG] Using embedded params")
-				self._control_surface.log_message(
-					f"[EXTRACTED_TAGS] is_absolute={clip_params.get('is_absolute')}, Oct={clip_params.get('display_octave')}, Res={clip_params.get('resolution_index')}"
-				)
-		else:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[TAG_EXTRACTION_FAILED] No valid tag found in clip name")
 
-			# ========== PHASE 2: FALLBACK TO JSON RECOVERY ==========
-			if hasattr(self._meta_manager, 'recover_clip_settings_from_json'):
-				json_result = self._meta_manager.recover_clip_settings_from_json(clip)
+			settings_source = "EMBEDDED_TAG"
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[CLIP_TAG_SOURCE] "
+					"Using embedded clip tag as source of truth"
+				)
+
+				self._control_surface.log_message(
+					f"[EXTRACTED_TAG] "
+					f"is_absolute={clip_params.get('is_absolute')} "
+					f"is_drumrack={clip_params.get('is_drumrack')} "
+					f"oct={clip_params.get('display_octave')} "
+					f"res={clip_params.get('resolution_index')} "
+					f"block={clip_params.get('loop_block')} "
+					f"offset={clip_params.get('loop_page_offset')} "
+					f"start={clip_params.get('clip_loop_start')} "
+					f"end={clip_params.get('clip_loop_end')}"
+				)
+
+		else:
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[TAG_EXTRACTION_FAILED] "
+					"No valid SUX tag - trying JSON recovery"
+				)
+
+			# ========================================================
+			# PHASE 2
+			# JSON RECOVERY
+			# ========================================================
+
+			if (
+					self._meta_manager
+					and hasattr(
+				self._meta_manager,
+				'recover_clip_settings_from_json'
+			)
+			):
+
+				try:
+
+					json_result = (
+						self._meta_manager
+						.recover_clip_settings_from_json(
+							clip
+						)
+					)
+
+				except Exception as e:
+
+					json_result = None
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[JSON_RECOVERY_ERROR] {e}"
+						)
 
 				if json_result:
-					if isinstance(json_result, dict) and json_result.get("requires_verification"):
+
+					if (
+							isinstance(json_result, dict)
+							and json_result.get(
+						'requires_verification'
+					)
+					):
+
+						clip_params = json_result.get(
+							'settings'
+						)
+
+						settings_source = "JSON_UNVERIFIED"
+
 						if DEBUG_LOGGING:
 							self._control_surface.log_message(
-								f"[USER_ACTION_NEEDED] Settings recovered but need verification.")
-						clip_params = json_result.get("settings")
-						settings_source = "JSON_UNVERIFIED"
+								"[JSON_RECOVERY] "
+								"Recovered settings require verification"
+							)
+
 					else:
+
 						clip_params = json_result
 						settings_source = "JSON_MATCHED"
 
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								"[JSON_RECOVERY] "
+								"Recovered settings from JSON backup"
+							)
+
+			# ========================================================
+			# PHASE 3
+			# GENUINELY NEW CLIP
+			#
+			# IMPORTANT:
+			#
+			# DO NOT use _get_current_state_dict() here.
+			#
+			# That function reflects the PREVIOUSLY SELECTED CLIP
+			# and would therefore leak its settings into the new clip.
+			# ========================================================
+
 			if not clip_params:
-				# Completely new clip - use defaults
-				clip_params = self._get_current_state_dict()
+
+				# ----------------------------------------------------
+				# FACTORY DEFAULTS
+				#
+				# These values are intentionally independent from
+				# the currently selected clip.
+				# ----------------------------------------------------
+
+				default_loop_start = 0.0
+
+				try:
+					default_loop_start = float(
+						getattr(
+							clip,
+							'loop_start',
+							0.0
+						)
+					)
+				except Exception:
+					default_loop_start = 0.0
+
+				default_loop_end = 4.0
+
+				try:
+					default_loop_end = float(
+						getattr(
+							clip,
+							'loop_end',
+							4.0
+						)
+					)
+				except Exception:
+					default_loop_end = 4.0
+
+				# Build factory defaults directly from SUX_SCHEMA.
+				# SUX_SCHEMA is the single source of truth for default values.
+				sux_defaults = {
+					field_name: default_value
+					for field_name, default_value, _validator in SUX_SCHEMA
+				}
+
+				clip_params = {
+					'is_absolute': sux_defaults['is_absolute'],
+					'is_drumrack': sux_defaults['is_drumrack'],
+					'display_octave': sux_defaults['display_octave'],
+					'resolution_index': sux_defaults['resolution_index'],
+					'loop_block': sux_defaults['loop_block'],
+					'loop_page_offset': sux_defaults['loop_page_offset'],
+
+					# Keep the actual newly-created clip's loop boundaries.
+					'clip_loop_start': default_loop_start,
+					'clip_loop_end': default_loop_end,
+				}
+
 				settings_source = "DEFAULTS"
 
-		# ========== PHASE 3: SAVE PREVIOUS CLIP STATE TO JSON ==========
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						"[NO_METADATA] "
+						"No valid tag or JSON backup - using "
+						"SUX_SCHEMA FACTORY DEFAULTS"
+					)
+
+					self._control_surface.log_message(
+						f"[FACTORY_DEFAULTS] "
+						f"is_absolute={sux_defaults['is_absolute']} "
+						f"is_drumrack={sux_defaults['is_drumrack']} "
+						f"display_octave={sux_defaults['display_octave']} "
+						f"resolution_index={sux_defaults['resolution_index']} "
+						f"loop_block={sux_defaults['loop_block']} "
+						f"loop_page_offset={sux_defaults['loop_page_offset']} "
+						f"loop_start={default_loop_start} "
+						f"loop_end={default_loop_end}"
+					)
+
+		# ============================================================
+		# PHASE 4
+		# SAVE PREVIOUS CLIP
+		#
+		# Only save the previous clip AFTER the NEW clip's metadata
+		# has already been resolved.
+		# ============================================================
+
 		if self._meta_manager and self._clip:
+
 			try:
-				# Get settings only (no position)
+
 				settings_only = self._get_current_state_dict()
 
-				# Get position separately
-				track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
+				track_idx, slot_idx = (
+					self._meta_manager
+					._get_current_track_slot_indices_safe(
+						self._clip
+					)
+				)
 
-				# Combine for saving
 				save_payload = {
 					**settings_only,
 					'track_index': track_idx,
 					'slot_index': slot_idx
 				}
 
-				self._meta_manager.save_clip_to_json(self._clip, save_payload)
+				self._meta_manager.save_clip_to_json(
+					self._clip,
+					save_payload
+				)
 
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
-						f"[PHASE3] Saved previous clip to JSON (T{track_idx}:S{slot_idx})"
+						f"[PREVIOUS_CLIP_SAVED] "
+						f"T{track_idx}:S{slot_idx}"
 					)
-			except Exception as e:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[PREV_STATE_SAVE_ERROR] {e}")
 
-		# ========== PHASE 4: INITIALIZE NEW CLIP AND APPLY SETTINGS ==========
+			except Exception as e:
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[PREV_STATE_SAVE_ERROR] {e}"
+					)
+
+		# ============================================================
+		# PHASE 5
+		# ACTIVATE NEW CLIP
+		# ============================================================
+
 		self._clip = clip
+
+		# Reset clip-local state before loading the new clip.
+		# Never allow the previous clip's Drum Rack state to survive.
+
 		self._init_data()
 
 		if clip_params:
+
 			try:
-				self.load_clip_settings(clip, clip_params)
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[RESTORED_FROM] {settings_source}")
-			except Exception as e:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[LOAD_SETTINGS_ERROR] {e}")
-		else:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[DEFAULTS] Using factory defaults for new clip")
 
-		# ========== FINAL VALIDATION & FORCE TAG WRITE ==========
-		# This ensures tag is written even if it appeared "up to date"
-		try:
-			if self._meta_manager:
-				final_state = self._get_current_state_dict()
-
-				# CRITICAL FIX: Get indices on the NEW clip (passed as param, not self._clip)
-				added_track_slot_info = self._meta_manager._get_current_track_slot_indices_safe(clip)
-				final_state['track_index'] = added_track_slot_info[0]
-				final_state['slot_index'] = added_track_slot_info[1]
+				self.load_clip_settings(
+					clip,
+					clip_params
+				)
 
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
-						f"[INDEX_LOOKUP] T{added_track_slot_info[0]}:S{added_track_slot_info[1]} for new clip"
+						f"[RESTORED_FROM] {settings_source}"
 					)
 
-				# Force write to guarantee synchronization
-				self.update_clip_name_with_params(clip, final_state)
+			except Exception as e:
 
-				# DON'T VERIFY IMMEDIATELY - SCHEDULE FOR LATER (defers until callback chain complete)
-				if hasattr(self._control_surface, 'schedule_message'):
-					try:
-						self._control_surface.schedule_message(
-							10,
-							lambda c=clip, s=final_state: self._verify_final_tag(c, s)
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[LOAD_SETTINGS_ERROR] {e}"
+					)
+
+		else:
+
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[DEFAULTS] "
+					"Using factory defaults for new clip"
+				)
+
+		# ============================================================
+		# PHASE 6
+		# FINAL STATE / TAG / JSON SYNCHRONIZATION
+		# ============================================================
+
+		try:
+
+			if self._meta_manager:
+
+				final_state = self._get_current_state_dict()
+
+				# Position of NEW clip
+				track_idx, slot_idx = (
+					self._meta_manager
+					._get_current_track_slot_indices_safe(
+						clip
+					)
+				)
+
+				final_state['track_index'] = track_idx
+				final_state['slot_index'] = slot_idx
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[FINAL_STATE] "
+						f"source={settings_source} "
+						f"T{track_idx}:S{slot_idx}"
+					)
+
+				# ----------------------------------------------------
+				# EMBEDDED TAG = AUTHORITATIVE
+				# ----------------------------------------------------
+
+				if settings_source == "EMBEDDED_TAG":
+
+					# Do not rewrite a valid tag.
+					self._meta_manager.save_clip_to_json(
+						clip,
+						final_state
+					)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							"[SYNC] "
+							"Embedded tag was source of truth -> "
+							"JSON backup updated"
 						)
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[TAG_VERIFY_DELAYED] Scheduled verification for 10ms later")
-					except Exception:
-						pass  # Ignore scheduling errors
+
+				# ----------------------------------------------------
+				# JSON = RECOVERY SOURCE
+				# ----------------------------------------------------
+
+				elif settings_source == "JSON_MATCHED":
+
+					self.update_clip_name_with_params(
+						clip,
+						final_state
+					)
+
+					self._meta_manager.save_clip_to_json(
+						clip,
+						final_state
+					)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							"[SYNC] "
+							"JSON was recovery source -> "
+							"clip tag repaired and JSON refreshed"
+						)
+
+				# ----------------------------------------------------
+				# JSON UNVERIFIED
+				# ----------------------------------------------------
+
+				elif settings_source == "JSON_UNVERIFIED":
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							"[SYNC] "
+							"JSON_UNVERIFIED -> "
+							"clip tag left untouched"
+						)
+
+				# ----------------------------------------------------
+				# GENUINELY NEW CLIP
+				# ----------------------------------------------------
+
+				elif settings_source == "DEFAULTS":
+
+					# The state was explicitly initialized from
+					# FACTORY DEFAULTS above, so this no longer
+					# inherits the previous clip's settings.
+
+					self.update_clip_name_with_params(
+						clip,
+						final_state
+					)
+
+					self._meta_manager.save_clip_to_json(
+						clip,
+						final_state
+					)
+
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							"[SYNC] "
+							"New clip -> initialized from "
+							"FACTORY DEFAULTS"
+						)
 
 		except Exception as e:
+
 			if DEBUG_LOGGING:
 				import traceback
-				self._control_surface.log_message(f"[TAG_WRITE_ERROR] {e}\n{traceback.format_exc()}")
 
-		# Mark initialization complete
+				self._control_surface.log_message(
+					f"[TAG_JSON_SYNC_ERROR] "
+					f"{e}\n{traceback.format_exc()}"
+				)
+
+		# ============================================================
+		# INITIALIZATION COMPLETE
+		# ============================================================
+
 		self._initializing = False
 
-		# Register listeners and force UI refresh
 		self._register_clip_slot_listener()
+
 		self._force_update = True
+
 		self.update()
 
-		# Final debug logging
-		cname = getattr(clip, 'name', '(unnamed)').split(' [')[0][:30] if clip and clip.name else "(unnamed)"
-		tidx, sidx = self._meta_manager._get_current_track_slot_indices_safe(clip) if self._meta_manager else (-1, -1)
+		# ============================================================
+		# FINAL DEBUG LOGGING
+		# ============================================================
+
+		cname = (getattr(clip,'name','(unnamed)').split(' [')[0][:30] if clip and clip.name else "(unnamed)")
+
+		if self._meta_manager:
+
+			tidx, sidx = (self._meta_manager._get_current_track_slot_indices_safe(clip))
+
+		else:
+
+			tidx, sidx = (-1, -1)
 
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(
-				f"[CLIP_SET_COMPLETE] '{cname}' @ T{tidx}:S{sidx} (source={settings_source})")
+				f"[CLIP_SET_COMPLETE] "
+				f"'{cname}' @ T{tidx}:S{sidx} "
+				f"(source={settings_source})"
+			)
+
+		if DEBUG_LOGGING:
+			selector_value = (
+				self._step_sequencer._scale_selector.is_drumrack
+				if hasattr(self._step_sequencer, '_scale_selector')
+				else None
+			)
+
+			self._control_surface.log_message(
+				f"[DRUMRACK_VERIFY] "
+				f"clip_is_drumrack "
+				f"selector={selector_value} "
+				f"clip={getattr(self._clip, 'name', '<none>')[:40]}"
+			)
+
 
 	def manual_scan_all_clips(self):
 		"""
@@ -2116,6 +2625,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					else:
 						state[param_name] = default_value
 
+				elif param_name == 'is_drumrack':
+					if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
+						selector = self._step_sequencer._scale_selector
+						current_val = getattr(selector, 'is_drumrack', default_value)
+						if DEBUG_LOGGING:
+							self._control_surface.log_message(
+								f"[IS_DRUMRACK_READ] from selector={current_val} (should match settings)"
+							)
+
+						state[param_name] = current_val
+					else:
+						state[param_name] = default_value
+
 				elif param_name == 'display_octave':
 					state[param_name] = int(getattr(self, '_display_octave', default_value))
 
@@ -2195,7 +2717,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				f"[LOAD_SETTINGS_DEBUG] settings_dict keys={list(settings_dict.keys())}"
 			)
 			self._control_surface.log_message(
-				f"[LOAD_SETTINGS_DEBUG] is_absolute in dict={'is_absolute' in settings_dict}"
+				f"[LOAD_SETTINGS_DEBUG] "
+				f"is_absolute={settings_dict.get('is_absolute')}, "
+				f"is_drumrack={settings_dict.get('is_drumrack')}"
 			)
 			if 'is_absolute' in settings_dict:
 				self._control_surface.log_message(
@@ -2230,16 +2754,31 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							f"[LOAD_IS_ABSOLUTE] Set _is_absolute={is_abs} (direct assignment)"
 						)
 
-			# if 'scale' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
-			# 	selector = self._step_sequencer._scale_selector
-			# 	mode_idx = int(settings_dict.get('scale', 0))
-			# 	if mode_idx < len(selector._modus_names):
-			# 		selector.set_modus(mode_idx, False, True)
-			#
-			# if 'root_note' in settings_dict and hasattr(self._step_sequencer, '_scale_selector'):
-			# 	selector = self._step_sequencer._scale_selector
-			# 	root_note = int(settings_dict['root_note']) % 12
-			# 	selector.set_key(root_note, False, True)
+			# === SCALE IS DRUMRACK ===
+			if (
+					'is_drumrack' in settings_dict
+					and hasattr(self._step_sequencer, '_scale_selector')
+			):
+				selector = self._step_sequencer._scale_selector
+				is_dr = bool(settings_dict.get('is_drumrack', False))
+
+				# IMPORTANT:
+				# Clip loading restores state; it is NOT a user action.
+				# Therefore do not call set_drumrack(), because that invokes
+				# _drumrack_changed_callback.
+
+				selector._is_drumrack = is_dr
+
+				# Recalculate dependent ScaleComponent state.
+				selector._set_top_octave(False)
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[LOAD_IS_DRUMRACK] "
+						f"clip={getattr(clip, 'name', '?')} "
+						f"stored={is_dr} "
+						f"selector_now={selector.is_drumrack}"
+					)
 
 			# === OCTAVE ===
 			if 'display_octave' in settings_dict:
@@ -2507,6 +3046,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			import traceback
 			self._control_surface.log_message(f"[SET_LOADING ERROR] {e}\n{traceback.format_exc()}")
 
+		if hasattr(self._step_sequencer, '_sync_editor_layout'):
+			self._step_sequencer._sync_editor_layout()
 		self._loading_clip = False
 
 		# ⭐⭐⭐ VERIFY loop_block sync across ALL THREE COMPONENTS ⭐⭐⭐
@@ -2586,6 +3127,34 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if expected_beats is not None and abs(float(final_res) - expected_beats) > 0.001:
 				self._control_surface.log_message(
 					f"[WARNING_RES_MISMATCH] Expected Beats={expected_beats:.2f} Got={final_res:.2f}"
+				)
+		# ============================================================
+		# FINAL CLIP LAYOUT SYNC
+		# ============================================================
+		# At this point ALL clip settings have been restored.
+		# Now synchronize the note editor's physical layout with
+		# the newly loaded clip's stored drumrack state.
+
+		if hasattr(self._step_sequencer, '_sync_editor_layout'):
+			self._step_sequencer._sync_editor_layout()
+
+			if DEBUG_LOGGING:
+				selector_dr = bool(
+					self._step_sequencer._scale_selector.is_drumrack
+				)
+				editor_dr = bool(
+					getattr(
+						self._step_sequencer._note_editor,
+						'_is_drumrack_layout',
+						False
+					)
+				)
+
+				self._control_surface.log_message(
+					f"[FINAL_LAYOUT_SYNC] "
+					f"clip={getattr(clip, 'name', '?')} "
+					f"selector={selector_dr} "
+					f"editor={editor_dr}"
 				)
 
 		# Force refresh
@@ -2797,9 +3366,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		rows = 8 if getattr(self, '_is_drumrack_layout', False) else 7
 		self._notes_pitches = [0] * (rows * pages)
 		self._notes_velocities = [4] * pages
-		self._display_octave = 2
 		self._notes_octaves = [2] * pages
 		self._notes_lengths = [3] * pages
+		# IMPORTANT:
+		# _display_octave is persistent clip state.
+		# Initialize it only if this component has never had one.
+		if not hasattr(self, '_display_octave'):
+			self._display_octave = 2
 
 	def set_mode(self, mode):
 		old_mode = self._mode
@@ -2987,8 +3560,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self.update()
 
 	def on_drumrack_mode_changed(self, is_drumrack):
-		self._is_drumrack_layout = is_drumrack
-		self._init_data()  # resize pitch buffers (stride changes 7→8)
+		old_octave = self._display_octave
+		self._is_drumrack_layout = bool(is_drumrack)
+		self._init_data()
+		# _init_data must never change clip-local display state,
+		# but keep this assignment as an additional safety net.
+		self._display_octave = old_octave
+
 		self._parse_notes()
 		self._force_update = True
 		self.update()
@@ -4990,15 +5568,30 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# CLIP PLAYING
 			if self._clip_slot.has_clip:
 
-				# self._clip = self._clip_slot.clip --> removed because it otherwise empties top slot's clip.
+				# IMPORTANT:
+				# During clip moves/reorders Live can notify us while
+				# self._clip still points to the old clip (or is None),
+				# even though the current slot already contains a clip.
+				#
+				# Register the listener on the clip belonging to the slot.
+				# Do NOT assign it to self._clip here, because _clip is the
+				# StepSequencer's active metadata clip and changing it here
+				# interferes with clip selection/move handling.
 
 				try:
-					if not self._clip.playing_status_has_listener(
-							self._on_clip_playing_changed):
-						self._clip.add_playing_status_listener(
-							self._on_clip_playing_changed)
-				except:
-					pass
+					slot_clip = self._clip_slot.clip
+
+					if slot_clip is not None:
+						if not slot_clip.playing_status_has_listener(
+								self._on_clip_playing_changed):
+							slot_clip.add_playing_status_listener(
+								self._on_clip_playing_changed)
+
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[CLIP_PLAYING_LISTENER_ERROR] {e}"
+						)
 
 		self._update_clip_toggle_button()
 
@@ -6109,8 +6702,60 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def _set_scale_selector(self):
 		super(StepSequencerComponent2, self)._set_scale_selector()
+
 		self._scale_selector._mode = "diatonic"
-		self._scale_selector._drumrack = False
+		self._scale_selector._is_drumrack = False
+
+		self._scale_selector._drumrack_changed_callback = (
+			self._on_drumrack_changed
+		)
+
+	def _on_drumrack_changed(self, is_drumrack):
+		"""
+        Called by ScaleComponent when the USER changes Drum Rack mode.
+
+        This is deliberately separate from clip loading:
+          - loading a clip directly assigns selector._drumrack
+          - user interaction calls set_drumrack(), which reaches here
+        """
+		is_drumrack = bool(is_drumrack)
+
+		if DEBUG_LOGGING:
+			self._control_surface.log_message(
+				f"[DRUMRACK_CHANGED] User changed Drum Rack -> {is_drumrack}"
+			)
+
+		# Keep the StepSequencer/UI layout synchronized immediately.
+		self._sync_editor_layout()
+
+		# Never save while a clip is being loaded.
+		if getattr(self._note_editor, '_loading_clip', False):
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					"[DRUMRACK_CHANGED] Suppressed sync during clip load"
+				)
+			return
+
+		# Persist the user's change to the currently selected clip.
+		if (hasattr(self, '_note_editor') and
+				self._note_editor and
+				getattr(self._note_editor, '_clip', None) and
+				getattr(self._note_editor, '_meta_manager', None)):
+
+			try:
+				self._note_editor.sync_clip_with_json()
+
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[DRUMRACK_CHANGED] Clip metadata synced "
+						f"is_drumrack={is_drumrack}"
+					)
+
+			except Exception as e:
+				if DEBUG_LOGGING:
+					self._control_surface.log_message(
+						f"[DRUMRACK_CHANGED_SYNC_ERROR] {e}"
+					)
 
 	def _set_track_controller(self):
 		self._track_controller = self.register_component(TrackControllerComponent(self._control_surface, implicit_arm = False))
@@ -6177,52 +6822,49 @@ class StepSequencerComponent2(StepSequencerComponent):
 		# user chose in the scale selector — never overwrite it from here.
 		self._sync_editor_layout()
 
-
 	def _sync_editor_layout(self):
 		"""
-        Synchronize row-7 ownership with the Scale Selector's Drum Rack state.
+        Synchronize the entire editor layout with the Scale Selector's
+        current drumrack state.
 
-        Drum Rack mode:
-            - Note editor owns all 8 rows.
-            - Loop selector must be disabled completely.
-
-        Normal melodic mode:
-            - Note editor owns rows 0-6.
-            - Loop selector may own row 7, unless another editor mode
-              temporarily owns the bottom row.
+        ScaleComponent.is_drumrack is the source of truth.
         """
+
 		is_dr = bool(self._scale_selector.is_drumrack)
 
 		# ---------------------------------------------------------
-		# 1. Keep the StepSequencerComponent2 state synchronized.
-		#    This is important because _loop_selector_should_be_enabled()
-		#    uses this flag.
+		# 1. Update StepSequencer's cached state
 		# ---------------------------------------------------------
 		old_is_dr = getattr(self, '_is_drumrack_mode', False)
 		self._is_drumrack_mode = is_dr
 
 		# ---------------------------------------------------------
-		# 2. Synchronize the note editor layout.
+		# 2. Synchronize Note Editor layout
 		# ---------------------------------------------------------
-		if hasattr(self, '_note_editor') and self._note_editor:
-			editor_is_dr = getattr(
-				self._note_editor,
-				'_is_drumrack_layout',
-				False
+		note_editor = getattr(self, '_note_editor', None)
+
+		if note_editor:
+			editor_is_dr = bool(
+				getattr(note_editor, '_is_drumrack_layout', False)
 			)
 
-			if editor_is_dr != is_dr:
-				self._note_editor.on_drumrack_mode_changed(is_dr)
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[LAYOUT_SYNC] "
+					f"NoteEditor {editor_is_dr} -> {is_dr}"
+				)
 
+			# Always apply the layout explicitly.
+			# Clip switching must not depend on the previous clip's editor state.
+			if editor_is_dr != is_dr:
+				note_editor.on_drumrack_mode_changed(is_dr)
 		# ---------------------------------------------------------
-		# 3. Synchronize Loop Selector ownership of row 7.
+		# 3. Synchronize Loop Selector ownership
 		# ---------------------------------------------------------
 		loop_selector = getattr(self, '_loop_selector', None)
 
 		if loop_selector:
 			if is_dr:
-				# Drum Rack owns ALL 8 rows.
-				# Loop Selector must completely release row 7.
 				loop_selector.set_enabled(False)
 
 				if hasattr(loop_selector, '_buttons'):
@@ -6235,49 +6877,29 @@ class StepSequencerComponent2(StepSequencerComponent):
 							except RuntimeError:
 								pass
 
-				if hasattr(loop_selector, '_force'):
-					loop_selector._force = True
+				loop_selector._force = True
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						"[ROW7] Drum Rack mode -> Note Editor owns row 7; "
-						"Loop Selector disabled"
-					)
-
-			elif old_is_dr:
-				# We are leaving Drum Rack mode.
-				# Give row 7 back to the Loop Selector only if the
-				# current editor mode permits it.
+			else:
 				if self._loop_selector_should_be_enabled():
 					loop_selector.set_enabled(True)
 
 					if hasattr(loop_selector, '_get_clip_loop'):
 						loop_selector._get_clip_loop()
 
-					if hasattr(loop_selector, '_force'):
-						loop_selector._force = True
-
+					loop_selector._force = True
 					loop_selector.update()
-
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							"[ROW7] Leaving Drum Rack mode -> "
-							"Loop Selector may reclaim row 7"
-						)
-
 				else:
 					loop_selector.set_enabled(False)
 
 		# ---------------------------------------------------------
-		# 4. Force the layout change onto the hardware.
+		# 4. Force parent/editor redraw
 		# ---------------------------------------------------------
-		if old_is_dr != is_dr:
-			self._force_update = True
+		self._force_update = True
 
-			if hasattr(self, '_note_editor') and self._note_editor:
-				self._note_editor._force_update = True
+		if note_editor:
+			note_editor._force_update = True
 
-			self.update()
+		self.update()
 
 	def _scale_updated(self):
 		# Synchronize the ownership BEFORE the parent update runs.

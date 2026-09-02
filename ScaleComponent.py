@@ -137,10 +137,26 @@ class ScaleComponent(ControlSurfaceComponent):
 				self.song().scale_name = self._modus_names[self._modus]
 			if message:
 				self._control_surface.show_message(str("selected scale: " + KEY_NAMES[self._key])+" "+str(self._modus_names[self._modus]))
-	
+
 	def set_drumrack(self, drumrack):
-		self._is_drumrack = drumrack
+		old_value = self._is_drumrack
+		self._is_drumrack = bool(drumrack)
 		self._set_top_octave(True)
+
+		# Notify the owner when the USER changes Drum Rack mode.
+		# Clip loading uses direct assignment to _is_drumrack and
+		# therefore does not trigger this callback.
+		if old_value != self._is_drumrack:
+			callback = getattr(self, '_drumrack_changed_callback', None)
+
+			if callback is not None:
+				try:
+					callback(self._is_drumrack)
+				except Exception as e:
+					if DEBUG_LOGGING:
+						self._control_surface.log_message(
+							f"[DRUMRACK_CALLBACK_ERROR] {e}"
+						)
 		
 	#def set_matrix(self, matrix):
 	#	if not matrix or not self._layout_set:
