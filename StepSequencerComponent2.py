@@ -80,15 +80,15 @@ class ClipMetadataManager:
 		self._undo_listener_registered = False
 		self._renamed_clips = {}
 
-		if DEBUG_LOGGING:
-			self._log(f"INIT: Cache path = {self.cache_path}")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"INIT: Cache path = {self.cache_path}")
 		# Backup and clear on initialization
 		self._backup_and_reset_cache()
 		# Load fresh cache (will be empty after reset)
 		self._load_cache()
 		# Don't scan on init - do it on-demand
-		if DEBUG_LOGGING:
-			self._log("[META] Lazy loading enabled - no startup scan")
+		# if DEBUG_LOGGING:
+		# 	self._log("[META] Lazy loading enabled - no startup scan")
 
 	def _cross_platform_cache_path_detect(self):
 		user_home = Path.home()
@@ -98,8 +98,8 @@ class ClipMetadataManager:
 		is_windows = sys.platform.startswith('win')
 		is_mac = sys.platform == 'darwin'
 
-		if DEBUG_LOGGING:
-			self._log(f"[PATH_INIT] Platform: {sys.platform} | Home: {user_home}")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"[PATH_INIT] Platform: {sys.platform} | Home: {user_home}")
 
 		# Define candidate paths for different platforms
 		candidate_paths = []
@@ -134,9 +134,8 @@ class ClipMetadataManager:
 				# Success! Use this path
 				self.cache_path = test_path / "launchpad_clip_metadata.json"
 
-				if DEBUG_LOGGING:
-					self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
-
+				# if DEBUG_LOGGING:
+				# 	self._log(f"✓ Cache path WRITABLE: {self.cache_path}")
 				break  # Found valid path
 
 			except Exception as path_err:
@@ -146,8 +145,8 @@ class ClipMetadataManager:
 
 		# Fallback if no path worked
 		if self.cache_path is None:
-			if DEBUG_LOGGING:
-				self._log("❌ All primary paths failed! Using temp directory fallback...")
+			# if DEBUG_LOGGING:
+			# 	self._log("❌ All primary paths failed! Using temp directory fallback...")
 
 			# Last resort: use OS temp directory
 			import tempfile
@@ -156,15 +155,15 @@ class ClipMetadataManager:
 			ableton_temp.mkdir(parents=True, exist_ok=True)
 			self.cache_path = ableton_temp / "launchpad_clip_metadata.json"
 
-			if DEBUG_LOGGING:
-				self._log(f"⚠️ Using TEMP fallback: {self.cache_path}")
-				self._log(f"⚠️ Metadata may be cleared on system reboot!")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"⚠️ Using TEMP fallback: {self.cache_path}")
+			# 	self._log(f"⚠️ Metadata may be cleared on system reboot!")
 
 	def _backup_and_reset_cache(self):
 		"""Backup existing cache and start fresh for new project (cross-platform)."""
 		if not self.cache_path or not self.cache_path.exists():
-			if DEBUG_LOGGING:
-				self._log("[RESET] No existing cache file to backup")
+			# if DEBUG_LOGGING:
+			# 	self._log("[RESET] No existing cache file to backup")
 			return
 
 		try:
@@ -179,13 +178,13 @@ class ClipMetadataManager:
 
 			# Copy to backup
 			shutil.copy2(str(self.cache_path), str(backup_path))
-			if DEBUG_LOGGING:
-				self._log(f"✓ BACKUP CREATED: {backup_path.name}")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"✓ BACKUP CREATED: {backup_path.name}")
 
 			# Clear the original file
 			self.cache_path.unlink()
-			self._log(f"✓ CACHE CLEARED: Ready for fresh scan")
-			self._log(f"   Location: {self.cache_path}")
+			# self._log(f"✓ CACHE CLEARED: Ready for fresh scan")
+			# self._log(f"   Location: {self.cache_path}")
 
 		except Exception as e:
 			if DEBUG_LOGGING:
@@ -250,8 +249,8 @@ class ClipMetadataManager:
 		scanned_count = 0
 		found_tags = 0
 
-		if DEBUG_LOGGING:
-			self._log(f"[SCAN_ALL_START] Scanning {len(song.tracks)} tracks...")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"[SCAN_ALL_START] Scanning {len(song.tracks)} tracks...")
 
 		for track_idx, track in enumerate(song.tracks):
 			for slot_idx, slot in enumerate(track.clip_slots):
@@ -281,8 +280,8 @@ class ClipMetadataManager:
 					scanned_count += 1
 
 		self._save_cache()
-		if DEBUG_LOGGING:
-			self._log(f"[SCAN_ALL_COMPLETE] Scanned {scanned_count} clips, found {found_tags} with SUX tags")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"[SCAN_ALL_COMPLETE] Scanned {scanned_count} clips, found {found_tags} with SUX tags")
 
 		return scanned_count, found_tags
 
@@ -339,43 +338,43 @@ class ClipMetadataManager:
 
 	def _load_cache(self):
 		"""Load JSON cache."""
-		if DEBUG_LOGGING:
-			self._log(f"_load_cache() called, checking {self.cache_path.exists()}")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"_load_cache() called, checking {self.cache_path.exists()}")
 		try:
 			if self.cache_path.exists():
 				with open(self.cache_path, 'r') as f:
 					self.cache = json.load(f)
-				if DEBUG_LOGGING:
-					self._log(f"✓ Loaded: {len(self.cache.get('clips', {}))} entries")
-			else:
-				if DEBUG_LOGGING:
-					self._log("✗ No existing cache file")
+				# if DEBUG_LOGGING:
+				# 	self._log(f"✓ Loaded: {len(self.cache.get('clips', {}))} entries")
+			# else:
+			# 	if DEBUG_LOGGING:
+			# 		self._log("✗ No existing cache file")
 		except Exception as e:
 			self._log(f"❌ Load failed: {e}")
 			self.cache = {"clips": {}}
 
 	def _save_cache(self):
 		"""SAVE CACHE - WITH MAXIMUM DIAGNOSTICS."""
-		if DEBUG_LOGGING:
-			self._log(f"_save_cache() STARTED, cache has {len(self.cache.get('clips', {}))} clips")
-			self._log(f"cache_path = {self.cache_path}")
+		# if DEBUG_LOGGING:
+		# 	self._log(f"_save_cache() STARTED, cache has {len(self.cache.get('clips', {}))} clips")
+		# 	self._log(f"cache_path = {self.cache_path}")
 
 		try:
-			if DEBUG_LOGGING:
-				self._log(f"Creating directory: {self.cache_path.parent}")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"Creating directory: {self.cache_path.parent}")
 			self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-			if DEBUG_LOGGING:
-				self._log(f"Directory created OK")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"Directory created OK")
 
 			entry_count = len(self.cache.get('clips', {}))
-			if DEBUG_LOGGING:
-				self._log(f"Writing {entry_count} entries to {self.cache_path}")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"Writing {entry_count} entries to {self.cache_path}")
 
 			with open(self.cache_path, 'w') as f:
 				json.dump(self.cache, f, indent=2)
 
-			if DEBUG_LOGGING:
-				self._log(f"✓✅✅ SUCCESSFULLY SAVED {entry_count} ENTRIES to {self.cache_path}")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"✓✅✅ SUCCESSFULLY SAVED {entry_count} ENTRIES to {self.cache_path}")
 
 		except Exception as e:
 			import traceback
@@ -385,13 +384,13 @@ class ClipMetadataManager:
 
 	def save_clip_to_json(self, clip, params_dict):
 		"""Save clip settings with maximum diagnostics."""
-		if DEBUG_LOGGING:
-			self._log(
-			f"save_clip_to_json() CALLED with clip={clip}, params keys={list(params_dict.keys()) if params_dict else 'NONE'}")
+		# if DEBUG_LOGGING:
+		# 	self._log(
+		# 	f"save_clip_to_json() CALLED with clip={clip}, params keys={list(params_dict.keys()) if params_dict else 'NONE'}")
 
 		if not clip:
-			if DEBUG_LOGGING:
-				self._log("✗ Clip is None, returning False")
+			# if DEBUG_LOGGING:
+			# 	self._log("✗ Clip is None, returning False")
 			return False
 
 		try:
@@ -420,8 +419,8 @@ class ClipMetadataManager:
 			self.cache["clips"][key_pos] = entry
 
 			self._save_cache()
-			if DEBUG_LOGGING:
-				self._log(f"Saved clip T{track_idx}:S{slot_idx} (hash={content_hash[:16]})")
+			# if DEBUG_LOGGING:
+			# 	self._log(f"Saved clip T{track_idx}:S{slot_idx} (hash={content_hash[:16]})")
 			return True
 
 		except Exception as e:
@@ -480,7 +479,7 @@ class ClipMetadataManager:
 		try:
 			track_idx, slot_idx = self._get_current_track_slot_indices_safe(clip)
 			if track_idx < 0 or slot_idx < 0:
-				self._log(f"invalid indices T{track_idx}:S{slot_idx}")
+				# self._log(f"invalid indices T{track_idx}:S{slot_idx}")
 				return None
 			key_pos = f"POS_{track_idx}_{slot_idx}"
 			if key_pos in self.cache.get("clips", {}):
@@ -539,11 +538,11 @@ class ClipMetadataManager:
 
 			# Current format must contain all fields.
 			if len(values) < SUX_PARAM_COUNT:
-				if DEBUG_LOGGING:
-					self._log(
-						f"[TAG_PARSE_FAILED] Expected {SUX_PARAM_COUNT} "
-						f"fields, found {len(values)}: {values}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._log(
+				# 		f"[TAG_PARSE_FAILED] Expected {SUX_PARAM_COUNT} "
+				# 		f"fields, found {len(values)}: {values}"
+				# 	)
 				return None
 
 			params = {}
@@ -556,15 +555,15 @@ class ClipMetadataManager:
 				else:
 					params[param_name] = converter(raw_value)
 
-			if DEBUG_LOGGING:
-				self._log(
-					f"[TAG_PARSED] "
-					f"is_absolute={params.get('is_absolute')} "
-					f"is_drumrack={params.get('is_drumrack')} "
-					f"oct={params.get('display_octave')} "
-					f"res={params.get('resolution_index')} "
-					f"block={params.get('loop_block')}"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._log(
+			# 		f"[TAG_PARSED] "
+			# 		f"is_absolute={params.get('is_absolute')} "
+			# 		f"is_drumrack={params.get('is_drumrack')} "
+			# 		f"oct={params.get('display_octave')} "
+			# 		f"res={params.get('resolution_index')} "
+			# 		f"block={params.get('loop_block')}"
+			# 	)
 
 			return params
 
@@ -587,8 +586,8 @@ class ClipMetadataManager:
 			song = self.control_surface.song()
 			song.add_undo_stack_change_listener(self._on_undo_state_changed)
 			self._undo_listener_registered = True
-			if DEBUG_LOGGING:
-				self._log("Undo listener registered")
+			# if DEBUG_LOGGING:
+			# 	self._log("Undo listener registered")
 		except Exception as e:
 			self._log(f"Undo listener registration failed: {e}")
 
@@ -644,8 +643,8 @@ class ClipMetadataManager:
 				try:
 					clip_obj.name = target_name
 					processed.append(i)
-					if DEBUG_LOGGING:
-						self._log(f"Applied deferred rename: {target_name[:40]}...")
+					# if DEBUG_LOGGING:
+					# 	self._log(f"Applied deferred rename: {target_name[:40]}...")
 				except RuntimeError as re:
 					self._log(f"Still blocked: {re}")
 
@@ -683,20 +682,20 @@ class ClipMetadataManager:
 			clips = self.cache.setdefault("clips", {})
 
 			if key_pos not in clips:
-				if DEBUG_LOGGING:
-					self._log(
-						f"[JSON_CLEANUP] No entry for T{track_idx}:S{slot_idx}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._log(
+				# 		f"[JSON_CLEANUP] No entry for T{track_idx}:S{slot_idx}"
+				# 	)
 				return False
 
 			del clips[key_pos]
 			self._save_cache()
 
-			if DEBUG_LOGGING:
-				self._log(
-					f"[JSON_CLEANUP] Removed stale metadata for "
-					f"T{track_idx}:S{slot_idx}"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._log(
+			# 		f"[JSON_CLEANUP] Removed stale metadata for "
+			# 		f"T{track_idx}:S{slot_idx}"
+			# 	)
 
 			return True
 
@@ -727,22 +726,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# CRITICAL: Pass control_surface so manager can log
 			self._meta_manager = ClipMetadataManager(control_surface)
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[META] Manager initialized. Cache size: {len(self._meta_manager.cache)}"
-				)
-				# TEST JSON PATH WRITABILITY
-				try:
-					test_entry = {"test_init": time.time()}
-					# Verify path exists and is writable
-					if hasattr(self._meta_manager, 'cache_path'):
-						self._control_surface.log_message(
-							f"[META] Cache path: {self._meta_manager.cache_path}"
-						)
-				except Exception as path_test:
-					self._control_surface.log_message(
-						f"[META_WARN] Path check failed: {path_test}"
-					)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[META] Manager initialized. Cache size: {len(self._meta_manager.cache)}"
+			# 	)
+			# 	# TEST JSON PATH WRITABILITY
+			# 	try:
+			# 		test_entry = {"test_init": time.time()}
+			# 		# Verify path exists and is writable
+			# 		if hasattr(self._meta_manager, 'cache_path'):
+			# 			self._control_surface.log_message(
+			# 				f"[META] Cache path: {self._meta_manager.cache_path}"
+			# 			)
+			# 	except Exception as path_test:
+			# 		self._control_surface.log_message(
+			# 			f"[META_WARN] Path check failed: {path_test}"
+			# 		)
 
 			# # ==========================================
 			# # NEW: REBUILD CACHE FROM CLIP NAMES AT STARTUP
@@ -923,6 +922,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# 						pass  # _update_matrix will handle this
 		# 					except RuntimeError:
 		# 						pass
+ 		# for set_clip() debugging
+		self._sel_seq = 0
 
 		# end init
 		self._initializing = False
@@ -942,8 +943,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if hasattr(self, '_flush_timer_active'):
 			self._flush_timer_active = False
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message("[DISCONNECT_START] Stopping timers and beginning cleanup sequence")
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message("[DISCONNECT_START] Stopping timers and beginning cleanup sequence")
 
 		# ============================================
 		# PHASE 1: SAVE ACTIVE CLIP STATE TO JSON
@@ -952,8 +953,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			try:
 				old_state = self._get_current_state_dict()
 				self._meta_manager.save_clip_to_json(self._clip, old_state)
-				if DEBUG_LOGGING:
-					self._control_surface.log_message("[DISCONNECT] Saved active clip state to JSON")
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message("[DISCONNECT] Saved active clip state to JSON")
 			except Exception as e:
 				self._control_surface.log_message(f"[PREV_CLIP_SAVE_ERROR] {e}")
 
@@ -1021,9 +1022,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Finalize meta manager
 		self._meta_manager = None
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message("[DISCONNECT_COMPLETE] All cleanup finished")
-	
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message("[DISCONNECT_COMPLETE] All cleanup finished")
+
 	
 	# def _remove_scale_listeners(self):
 	# 	try:
@@ -1188,10 +1189,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			param_string = ";".join(values)
 			full_tag = f"{METADATA_PREFIX}{{{param_string}}}{METADATA_SUFFIX}"
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[BUILD_TAG] Built tag: '{full_tag}'"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[BUILD_TAG] Built tag: '{full_tag}'"
+			# 	)
 
 			return full_tag
 
@@ -1270,16 +1271,16 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					)
 				new_tag = new_tag + METADATA_SUFFIX
 			# ⭐⭐⭐ CONFIRM TAG HAS CURLY BRACES ⭐⭐⭐
-			if DEBUG_LOGGING:
-				has_curly = "{" in new_tag and "}" in new_tag
-				status = "✓" if has_curly else "✗"
-				self._control_surface.log_message(
-					f"[TAG_DEBUG] Tag format check: {status} '{new_tag}'"
-				)
-				if not has_curly:
-					self._control_surface.log_message(
-						f"[TAG_ERROR] Tag is missing curly braces! Critical bug!"
-					)
+			# if DEBUG_LOGGING:
+			# 	has_curly = "{" in new_tag and "}" in new_tag
+			# 	status = "✓" if has_curly else "✗"
+			# 	self._control_surface.log_message(
+			# 		f"[TAG_DEBUG] Tag format check: {status} '{new_tag}'"
+			# 	)
+			# 	if not has_curly:
+			# 		self._control_surface.log_message(
+			# 			f"[TAG_ERROR] Tag is missing curly braces! Critical bug!"
+			# 		)
 
 			# Verify tag format before proceeding
 			if not new_tag.startswith(METADATA_PREFIX):
@@ -1299,11 +1300,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			original_name = getattr(clip, 'name', '')
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[TAG_DEBUG] Original clip name: '{original_name[:60]}'" +
-					("..." if len(original_name) > 60 else "")
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[TAG_DEBUG] Original clip name: '{original_name[:60]}'" +
+			# 		("..." if len(original_name) > 60 else "")
+			# 	)
 
 			clean_name = self.strip_metadata_tags(original_name)
 
@@ -1327,10 +1328,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 						if extract_from_old:
 							tag_exists_and_valid = True
-							if DEBUG_LOGGING:
-								self._control_surface.log_message(
-									f"[TAG_DETECT] Found existing tag: '{potential_tag}'"
-								)
+							# if DEBUG_LOGGING:
+							# 	self._control_surface.log_message(
+							# 		f"[TAG_DETECT] Found existing tag: '{potential_tag}'"
+							# 	)
 
 							# COMPARE USING SCHEMA
 							keys_to_check = [param_name for param_name, _, _ in SUX_SCHEMA]
@@ -1343,18 +1344,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								if old_val != new_val:
 									all_match = False
 
-									if DEBUG_LOGGING:
-										self._control_surface.log_message(
-											f"[PARAM_DIFF] {key}: old={old_val}, new={new_val}"
-										)
+									# if DEBUG_LOGGING:
+									# 	self._control_surface.log_message(
+									# 		f"[PARAM_DIFF] {key}: old={old_val}, new={new_val}"
+									# 	)
 
 							if all_match:
 								need_update = False
 
-								if DEBUG_LOGGING:
-									self._control_surface.log_message(
-										f"[TAG_UP_TO_DATE] All parameters match, skipping write"
-									)
+								# if DEBUG_LOGGING:
+								# 	self._control_surface.log_message(
+								# 		f"[TAG_UP_TO_DATE] All parameters match, skipping write"
+								# 	)
 
 							else:
 								if DEBUG_LOGGING:
@@ -1381,11 +1382,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			else:
 				new_full_name = new_tag
 
-			if DEBUG_LOGGING:
-				display_new = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
-				self._control_surface.log_message(
-					f"[TAG_PREPARED] Building name: '{display_new}'"
-				)
+			# if DEBUG_LOGGING:
+			# 	display_new = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
+			# 	self._control_surface.log_message(
+			# 		f"[TAG_PREPARED] Building name: '{display_new}'"
+			# 	)
 
 			# ============================================
 			# STEP 4: ATTEMPT IMMEDIATE WRITE FIRST
@@ -1396,30 +1397,30 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				clip.name = new_full_name
 				immediate_success = True
 
-				if DEBUG_LOGGING:
-					display_written = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
-					self._control_surface.log_message(
-						f"[TAG_IMMEDIATE_SUCCESS] Written directly: '{display_written}'"
-					)
+				# if DEBUG_LOGGING:
+				# 	display_written = new_full_name[:50] + ('...' if len(new_full_name) > 50 else '')
+				# 	self._control_surface.log_message(
+				# 		f"[TAG_IMMEDIATE_SUCCESS] Written directly: '{display_written}'"
+				# 	)
 
 				# VERIFY it actually took effect - CRITICAL!
 				actual_name = getattr(clip, 'name', '')
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[TAG_VERIFY] Actual clip name after write: '{actual_name[:60]}'" +
-						("..." if len(actual_name) > 60 else "")
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[TAG_VERIFY] Actual clip name after write: '{actual_name[:60]}'" +
+				# 		("..." if len(actual_name) > 60 else "")
+				# 	)
 
 				# Check if tag is present in result
 				if new_tag in actual_name:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[TAG_VERIFIED] ✓ Tag confirmed in clip name")
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(f"[TAG_VERIFIED] ✓ Tag confirmed in clip name")
 					return True  # Success, done!
 
 				elif METADATA_PREFIX in actual_name and METADATA_SUFFIX in actual_name:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(f"[TAG_PARTIAL] Tag exists but may vary slightly")
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(f"[TAG_PARTIAL] Tag exists but may vary slightly")
 					return True  # Acceptable success
 
 				else:
@@ -1560,18 +1561,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		CRITICAL FIX: Read loop_block from LoopSelector (LATEST value), NOT from self._loop_block!
 		"""
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SYNC] clip={self._clip.name if self._clip else None}"
-			)
-			import traceback
-
-			self._control_surface.log_message(
-				"".join(traceback.format_stack(limit=6))
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SYNC] clip={self._clip.name if self._clip else None}"
+		# 	)
+		# 	import traceback
+		#
+		# 	self._control_surface.log_message(
+		# 		"".join(traceback.format_stack(limit=6))
+		# 	)
 		if not self._clip or not self._meta_manager:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[SYNC_SKIP] No clip or meta_manager")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[SYNC_SKIP] No clip or meta_manager")
 			return
 
 		try:
@@ -1585,12 +1586,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if hasattr(ls, '_block'):
 					latest_block = ls._block  # ← READ DIRECTLY FROM LOOP SELECTOR!
 
-					if DEBUG_LOGGING:
-						old_block = settings_only.get('loop_block', 'NOT SET')
-						self._control_surface.log_message(
-							f"[SYNC_LOOP_BLOCK] Reading from LoopSelector._block={latest_block} " +
-							f"(was {old_block} in settings)"
-						)
+					# if DEBUG_LOGGING:
+					# 	old_block = settings_only.get('loop_block', 'NOT SET')
+					# 	self._control_surface.log_message(
+					# 		f"[SYNC_LOOP_BLOCK] Reading from LoopSelector._block={latest_block} " +
+					# 		f"(was {old_block} in settings)"
+					# 	)
 
 					settings_only['loop_block'] = latest_block  # ← OVERRIDE WITH ACTUAL VALUE
 				else:
@@ -1607,12 +1608,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# 3. Get POSITION SEPARATELY (not stored in settings dict!)
 			track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[SYNC_JSON] Preparing sync: T{track_idx}:S{slot_idx}" +
-					f" Oct={settings_only['display_octave']} Res={settings_only['resolution_index']} " +
-					f"LoopBlock={settings_only['loop_block']}"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[SYNC_JSON] Preparing sync: T{track_idx}:S{slot_idx}" +
+			# 		f" Oct={settings_only['display_octave']} Res={settings_only['resolution_index']} " +
+			# 		f"LoopBlock={settings_only['loop_block']}"
+			# 	)
 
 			# 4. Add positional data to metadata, NOT settings
 			# Create a copy for saving (don't modify original settings dict!)
@@ -1629,10 +1630,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# Make sure we pass the same settings_only (with corrected loop_block)
 			self.update_clip_name_with_params(self._clip, settings_only)
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={settings_only['display_octave']}, Res={settings_only['resolution_index']}, LoopBlock={settings_only['loop_block']})"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[SYNC_JSON] Saved T{track_idx}:S{slot_idx} (Oct={settings_only['display_octave']}, Res={settings_only['resolution_index']}, LoopBlock={settings_only['loop_block']})"
+			# 	)
 
 		except Exception as e:
 			import traceback
@@ -1839,8 +1840,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# Scene structure changes (affect clip slot indexing)
 			song.add_scenes_listener(self._on_scenes_changed)
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[OBSERVERS] Registered track/scene listeners")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[OBSERVERS] Registered track/scene listeners")
 
 		except Exception as e:
 			self._control_surface.log_message(f"[OBSERVER_REGISTRATION_ERROR] {e}")
@@ -1852,8 +1853,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			song.remove_tracks_listener(self._on_tracks_changed)
 			song.remove_scenes_listener(self._on_scenes_changed)
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[OBSERVERS] Unregistered listeners")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[OBSERVERS] Unregistered listeners")
 
 		except:
 			pass  # Ignore errors during shutdown
@@ -1902,6 +1903,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
         The clip tag is the source of truth whenever it can be parsed.
         JSON is only a recovery mechanism when the tag is missing/corrupt.
         """
+		if DEBUG_LOGGING:
+			self._sel_seq += 1
+			tag = "[SEL#%d]" % self._sel_seq
+			self._control_surface.log_message(f"{tag} set_clip called")
 
 		# ============================================================
 		# NORMALIZE INPUT
@@ -2087,23 +2092,23 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			settings_source = "EMBEDDED_TAG"
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					"[CLIP_TAG_SOURCE] "
-					"Using embedded clip tag as source of truth"
-				)
-
-				self._control_surface.log_message(
-					f"[EXTRACTED_TAG] "
-					f"is_absolute={clip_params.get('is_absolute')} "
-					f"is_drumrack={clip_params.get('is_drumrack')} "
-					f"oct={clip_params.get('display_octave')} "
-					f"res={clip_params.get('resolution_index')} "
-					f"block={clip_params.get('loop_block')} "
-					f"offset={clip_params.get('loop_page_offset')} "
-					f"start={clip_params.get('clip_loop_start')} "
-					f"end={clip_params.get('clip_loop_end')}"
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		"[CLIP_TAG_SOURCE] "
+			# 		"Using embedded clip tag as source of truth"
+			# 	)
+			#
+			# 	self._control_surface.log_message(
+			# 		f"[EXTRACTED_TAG] "
+			# 		f"is_absolute={clip_params.get('is_absolute')} "
+			# 		f"is_drumrack={clip_params.get('is_drumrack')} "
+			# 		f"oct={clip_params.get('display_octave')} "
+			# 		f"res={clip_params.get('resolution_index')} "
+			# 		f"block={clip_params.get('loop_block')} "
+			# 		f"offset={clip_params.get('loop_page_offset')} "
+			# 		f"start={clip_params.get('clip_loop_start')} "
+			# 		f"end={clip_params.get('clip_loop_end')}"
+			# 	)
 
 		else:
 
@@ -2264,6 +2269,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						f"loop_end={default_loop_end}"
 					)
 
+		self._expected_drumrack = (
+			bool(clip_params.get('is_drumrack', False))
+			if clip_params else False
+		)
+		self._mode_settle_pending = True
+
 		# ============================================================
 		# PHASE 4
 		# SAVE PREVIOUS CLIP
@@ -2330,13 +2341,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					clip_params
 				)
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[RESTORED_FROM] {settings_source}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[RESTORED_FROM] {settings_source}"
+				# 	)
 
 			except Exception as e:
-
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[LOAD_SETTINGS_ERROR] {e}"
@@ -2372,12 +2382,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				final_state['track_index'] = track_idx
 				final_state['slot_index'] = slot_idx
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[FINAL_STATE] "
-						f"source={settings_source} "
-						f"T{track_idx}:S{slot_idx}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[FINAL_STATE] "
+				# 		f"source={settings_source} "
+				# 		f"T{track_idx}:S{slot_idx}"
+				# 	)
 
 				# ----------------------------------------------------
 				# EMBEDDED TAG = AUTHORITATIVE
@@ -2391,12 +2401,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						final_state
 					)
 
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							"[SYNC] "
-							"Embedded tag was source of truth -> "
-							"JSON backup updated"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		"[SYNC] "
+					# 		"Embedded tag was source of truth -> "
+					# 		"JSON backup updated"
+					# 	)
 
 				# ----------------------------------------------------
 				# JSON = RECOVERY SOURCE
@@ -2414,25 +2424,25 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						final_state
 					)
 
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							"[SYNC] "
-							"JSON was recovery source -> "
-							"clip tag repaired and JSON refreshed"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		"[SYNC] "
+					# 		"JSON was recovery source -> "
+					# 		"clip tag repaired and JSON refreshed"
+					# 	)
 
 				# ----------------------------------------------------
 				# JSON UNVERIFIED
 				# ----------------------------------------------------
 
 				elif settings_source == "JSON_UNVERIFIED":
-
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							"[SYNC] "
-							"JSON_UNVERIFIED -> "
-							"clip tag left untouched"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		"[SYNC] "
+					# 		"JSON_UNVERIFIED -> "
+					# 		"clip tag left untouched"
+					# 	)
+					pass
 
 				# ----------------------------------------------------
 				# GENUINELY NEW CLIP
@@ -2454,12 +2464,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						final_state
 					)
 
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							"[SYNC] "
-							"New clip -> initialized from "
-							"FACTORY DEFAULTS"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		"[SYNC] "
+					# 		"New clip -> initialized from "
+					# 		"FACTORY DEFAULTS"
+					# 	)
 
 		except Exception as e:
 
@@ -2476,11 +2486,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# ============================================================
 
 		self._initializing = False
-
 		self._register_clip_slot_listener()
-
 		self._force_update = True
-
 		self.update()
 
 		# ============================================================
@@ -2488,21 +2495,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# ============================================================
 
 		cname = (getattr(clip,'name','(unnamed)').split(' [')[0][:30] if clip and clip.name else "(unnamed)")
-
 		if self._meta_manager:
-
 			tidx, sidx = (self._meta_manager._get_current_track_slot_indices_safe(clip))
 
 		else:
-
 			tidx, sidx = (-1, -1)
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[CLIP_SET_COMPLETE] "
-				f"'{cname}' @ T{tidx}:S{sidx} "
-				f"(source={settings_source})"
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[CLIP_SET_COMPLETE] "
+		# 		f"'{cname}' @ T{tidx}:S{sidx} "
+		# 		f"(source={settings_source})"
+		# 	)
 
 		if DEBUG_LOGGING:
 			selector_value = (
@@ -2517,6 +2521,35 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				f"selector={selector_value} "
 				f"clip={getattr(self._clip, 'name', '<none>')[:40]}"
 			)
+		if hasattr(self._control_surface, 'schedule_message'):
+			self._control_surface.schedule_message(2, self._settle_clip_mode)
+			
+
+	def _settle_clip_mode(self):
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[TRACE] _settle_clip_mode fired")
+		if self._clip is None or not hasattr(self, '_expected_drumrack'):
+			return
+		expected = bool(self._expected_drumrack)
+
+		selector_dr = None
+		selector = getattr(self._step_sequencer, '_scale_selector', None)
+		if selector is not None:
+			selector_dr = bool(getattr(selector, '_is_drumrack', False))
+
+		if selector_dr is not None and selector_dr != expected:
+			if DEBUG_LOGGING:
+				self._control_surface.log_message(
+					f"[MODE_SETTLE] Selector drifted {selector_dr} -> {expected}; re-applying"
+				)
+			selector._is_drumrack = expected
+			if hasattr(selector, '_set_top_octave'):
+				selector._set_top_octave(False)
+
+		if bool(getattr(self, '_is_drumrack_layout', False)) != expected:
+			self.on_drumrack_mode_changed(expected)
+
+		self._step_sequencer._sync_editor_layout()
 
 
 	def manual_scan_all_clips(self):
@@ -2616,10 +2649,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector:
 						selector = self._step_sequencer._scale_selector
 						current_val = getattr(selector, 'is_absolute', default_value)
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[IS_ABSOLUTE_READ] from selector={current_val} (should match settings)"
-							)
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message(
+						# 		f"[IS_ABSOLUTE_READ] from selector={current_val} (should match settings)"
+						# 	)
 
 						state[param_name] = current_val
 					else:
@@ -2695,11 +2728,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Add timestamp (not part of SUX schema - metadata only)
 		state['timestamp'] = time.time()
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SAVING_STATE] State built from {len(SUX_SCHEMA)} schema fields"
-			)
-
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SAVING_STATE] State built from {len(SUX_SCHEMA)} schema fields"
+		# 	)
 		return state
 
 
@@ -2712,31 +2744,31 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		3. Force Loop Selector visual update
 		4. Load loop_block onto ALL THREE COMPONENTS (Parent, Child, and Me)
 		"""
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[LOAD_SETTINGS_DEBUG] settings_dict keys={list(settings_dict.keys())}"
-			)
-			self._control_surface.log_message(
-				f"[LOAD_SETTINGS_DEBUG] "
-				f"is_absolute={settings_dict.get('is_absolute')}, "
-				f"is_drumrack={settings_dict.get('is_drumrack')}"
-			)
-			if 'is_absolute' in settings_dict:
-				self._control_surface.log_message(
-					f"[LOAD_SETTINGS_DEBUG] is_absolute value={settings_dict['is_absolute']}"
-				)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[LOAD_SETTINGS_DEBUG] settings_dict keys={list(settings_dict.keys())}"
+		# 	)
+		# 	self._control_surface.log_message(
+		# 		f"[LOAD_SETTINGS_DEBUG] "
+		# 		f"is_absolute={settings_dict.get('is_absolute')}, "
+		# 		f"is_drumrack={settings_dict.get('is_drumrack')}"
+		# 	)
+		# 	if 'is_absolute' in settings_dict:
+		# 		self._control_surface.log_message(
+		# 			f"[LOAD_SETTINGS_DEBUG] is_absolute value={settings_dict['is_absolute']}"
+		# 		)
 
-		if DEBUG_LOGGING:
-			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-				ls = self._step_sequencer._loop_selector
-				self._control_surface.log_message(
-					f"[LOAD_SETTINGS] "
-					f"selector_resolution={ls._resolution} "
-					f"selector_loop_end={ls._loop_end}"
-				)
+		# if DEBUG_LOGGING:
+		# 	if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
+		# 		ls = self._step_sequencer._loop_selector
+		# 		self._control_surface.log_message(
+		# 			f"[LOAD_SETTINGS] "
+		# 			f"selector_resolution={ls._resolution} "
+		# 			f"selector_loop_end={ls._loop_end}"
+		# 		)
 		if not settings_dict:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[LOAD_SETTINGS] No settings provided, using current defaults")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[LOAD_SETTINGS] No settings provided, using current defaults")
 			return
 
 		self._loading_clip = True
@@ -2749,10 +2781,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# Direct assignment to backing variable (most reliable)
 				if hasattr(selector, '_is_absolute'):
 					selector._is_absolute = is_abs
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[LOAD_IS_ABSOLUTE] Set _is_absolute={is_abs} (direct assignment)"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		f"[LOAD_IS_ABSOLUTE] Set _is_absolute={is_abs} (direct assignment)"
+					# 	)
 
 			# === SCALE IS DRUMRACK ===
 			if (
@@ -2762,15 +2794,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				selector = self._step_sequencer._scale_selector
 				is_dr = bool(settings_dict.get('is_drumrack', False))
 
-				# IMPORTANT:
-				# Clip loading restores state; it is NOT a user action.
-				# Therefore do not call set_drumrack(), because that invokes
-				# _drumrack_changed_callback.
-
+				# Force the backing variable(s) directly
 				selector._is_drumrack = is_dr
 
-				# Recalculate dependent ScaleComponent state.
-				selector._set_top_octave(False)
+				if hasattr(selector, 'set_drumrack_from_clip'):
+					selector.set_drumrack_from_clip(is_dr)
+				else:
+					selector._set_top_octave(False)
+
+				# ⭐ Rebuild THIS editor's layout immediately, using the
+				# value from the tag — guaranteed, regardless of what the
+				# selector's property reports.
+				self.on_drumrack_mode_changed(is_dr)
 
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
@@ -2789,11 +2824,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._display_octave = oct_val
 					self._parse_notes()
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[LOADING_DISPLAY_OCTAVE] From JSON={settings_dict.get('display_octave')} " +
-						f"To Internal={getattr(self, '_display_octave', '?')}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[LOADING_DISPLAY_OCTAVE] From JSON={settings_dict.get('display_octave')} " +
+				# 		f"To Internal={getattr(self, '_display_octave', '?')}"
+				# 	)
 
 			# === RESOLUTION: LOAD VALUE, LET SETTER HANDLE LED SYNC ===
 			from .SequencerConstants import RESOLUTION_MAP
@@ -2820,12 +2855,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# CONVERT INDEX → BEAT VALUE
 				new_resolution_beats = float(RESOLUTION_MAP[res_idx])
 
-				if DEBUG_LOGGING:
-					from .SequencerConstants import RESOLUTION_NAMES
-					res_name = RESOLUTION_NAMES[res_idx] if 0 <= res_idx < len(RESOLUTION_NAMES) else "UNKNOWN"
-					self._control_surface.log_message(
-						f"[LOADING_RESOLUTION] JSON idx={res_idx} ({res_name}) → Converted to {new_resolution_beats:.2f} beats"
-					)
+				# if DEBUG_LOGGING:
+				# 	from .SequencerConstants import RESOLUTION_NAMES
+				# 	res_name = RESOLUTION_NAMES[res_idx] if 0 <= res_idx < len(RESOLUTION_NAMES) else "UNKNOWN"
+				# 	self._control_surface.log_message(
+				# 		f"[LOADING_RESOLUTION] JSON idx={res_idx} ({res_name}) → Converted to {new_resolution_beats:.2f} beats"
+				# 	)
 
 			# Backward compatibility: Support legacy 'resolution' field containing beat values
 			elif 'resolution' in settings_dict:
@@ -2843,10 +2878,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# If it's already a beat-like number (8, 16, 32, etc.), use directly
 					new_resolution_beats = float(res_val)
 
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[LOADING_RESOLUTION_LEGACY] BeatVal={res_val} → {new_resolution_beats:.2f} beats"
-						)
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message(
+					# 		f"[LOADING_RESOLUTION_LEGACY] BeatVal={res_val} → {new_resolution_beats:.2f} beats"
+					# 	)
 			else:
 				# No resolution field found - use safe default
 				new_resolution_beats = RESOLUTION_MAP[4]  # Default 1/16th note
@@ -2862,27 +2897,27 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self.apply_loaded_resolution(new_resolution_beats)
 				self._parse_notes()
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[RESOLUTION_APPLIED] Old={old_res_beats:.2f} New={new_resolution_beats:.2f}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[RESOLUTION_APPLIED] Old={old_res_beats:.2f} New={new_resolution_beats:.2f}"
+				# 	)
 			else:
 				# Fallback: Use minimum safe resolution
 				min_resolution = min(RESOLUTION_MAP)
 				old_res_beats = getattr(self, '_resolution', 0.25)
 				self._resolution = min_resolution  # ← ASSIGN TO _resolution, NOT resolution_beats
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[RESOLUTION_FALLBACK] Unsafe value detected → Set to minimum {min_resolution:.2f} beats"
-					)
-					self._parse_notes()
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					f"[RES_VERIFY] after processing"
-					f"StepSeq idx={self._step_sequencer._resolution_index} "
-					f"NoteEditor beats={self._resolution}"
-				)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[RESOLUTION_FALLBACK] Unsafe value detected → Set to minimum {min_resolution:.2f} beats"
+				# 	)
+				self._parse_notes()
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		f"[RES_VERIFY] after processing"
+			# 		f"StepSeq idx={self._step_sequencer._resolution_index} "
+			# 		f"NoteEditor beats={self._resolution}"
+			# 	)
 
 			# === LOOP PARAMETERS: SYNC _loop_block ACROSS ALL THREE COMPONENTS ===
 			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
@@ -2897,15 +2932,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						old_parent_block = self._step_sequencer._loop_block
 						self._step_sequencer._loop_block = loaded_loop_block
 
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[LOOP_BLOCK_PARENT] StepSequencer._loop_block: Old={old_parent_block} New={loaded_loop_block}"
-							)
-					else:
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[LOOP_BLOCK_WARN] StepSequencer missing _loop_block attribute!"
-							)
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message(
+						# 		f"[LOOP_BLOCK_PARENT] StepSequencer._loop_block: Old={old_parent_block} New={loaded_loop_block}"
+						# 	)
+					# else:
+					# 	if DEBUG_LOGGING:
+					# 		self._control_surface.log_message(
+					# 			f"[LOOP_BLOCK_WARN] StepSequencer missing _loop_block attribute!"
+					# 		)
 
 					# 2. Set on LoopSelectorComponent (CHILD) - MUST MATCH PARENT
 					if hasattr(ls, '_block'):
@@ -2913,10 +2948,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						ls._block = loaded_loop_block
 						ls._force = True  # Force full redraw
 
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[LOOP_BLOCK_CHILD] LoopSelector._block: Old={old_ls_block} New={ls._block} _force=True"
-							)
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message(
+						# 		f"[LOOP_BLOCK_CHILD] LoopSelector._block: Old={old_ls_block} New={ls._block} _force=True"
+						# 	)
 					else:
 						if DEBUG_LOGGING:
 							self._control_surface.log_message(
@@ -2929,25 +2964,25 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						old_me_block = self._loop_block
 						self._loop_block = loaded_loop_block
 
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[LOOP_BLOCK_MELODIC] MelodicNoteEditor._loop_block: Old={old_me_block} New={loaded_loop_block}"
-							)
-					else:
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[LOOP_BLOCK_MELODIC_WARN] MelodicNoteEditor missing _loop_block attribute!"
-							)
-
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[LOOP_BLOCK_LOAD] From settings={loaded_loop_block} applied to all components"
-						)
-				else:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[LOOP_BLOCK_MISSING] No loop_block in settings, using current value={getattr(ls, '_block', 'N/A')}"
-						)
+				# 		if DEBUG_LOGGING:
+				# 			self._control_surface.log_message(
+				# 				f"[LOOP_BLOCK_MELODIC] MelodicNoteEditor._loop_block: Old={old_me_block} New={loaded_loop_block}"
+				# 			)
+				# 	else:
+				# 		if DEBUG_LOGGING:
+				# 			self._control_surface.log_message(
+				# 				f"[LOOP_BLOCK_MELODIC_WARN] MelodicNoteEditor missing _loop_block attribute!"
+				# 			)
+				#
+				# 	if DEBUG_LOGGING:
+				# 		self._control_surface.log_message(
+				# 			f"[LOOP_BLOCK_LOAD] From settings={loaded_loop_block} applied to all components"
+				# 		)
+				# else:
+				# 	if DEBUG_LOGGING:
+				# 		self._control_surface.log_message(
+				# 			f"[LOOP_BLOCK_MISSING] No loop_block in settings, using current value={getattr(ls, '_block', 'N/A')}"
+				# 		)
 
 				# ⭐⭐⭐ CALCULATE page_offset FROM loop_block ⭐⭐⭐
 				# Don't restore page_offset - calculate it from absolute position!
@@ -2956,10 +2991,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				else:
 					calculated_offset = 0
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[LOOP_OFFSET_RECALC] abs_block={ls._block} → calculated page_offset={calculated_offset}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[LOOP_OFFSET_RECALC] abs_block={ls._block} → calculated page_offset={calculated_offset}"
+				# 	)
 
 				# Set both step sequencer and loop selector offsets
 				if hasattr(self._step_sequencer, '_loop_page_offset'):
@@ -3006,17 +3041,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# After all loop parameters are set, force full redraw
 				if hasattr(ls, 'update'):
 					ls.update()
-					if DEBUG_LOGGING:
-						self._control_surface.log_message("[LOOP_SELECTOR_FORCE_UPDATE] Redrawn after clip load")
+					# if DEBUG_LOGGING:
+					# 	self._control_surface.log_message("[LOOP_SELECTOR_FORCE_UPDATE] Redrawn after clip load")
 
 				# Refresh cycle button visual state now that loop params are synced
 				if hasattr(self._step_sequencer, '_update_cycle_button'):
 					try:
 						self._step_sequencer._update_cycle_button()
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								"[CYCLE_BUTTON_REFRESH] Post-loop-parameter-update forced refresh"
-							)
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message(
+						# 		"[CYCLE_BUTTON_REFRESH] Post-loop-parameter-update forced refresh"
+						# 	)
 					except Exception as e:
 						if DEBUG_LOGGING:
 							self._control_surface.log_message(f"[CYCLE_BUTTON_ERROR] {e}")
@@ -3073,15 +3108,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			else:
 				note_editor_block = "NOT DEFINED"  # ← Explicit indication it's missing
 
-			self._control_surface.log_message(
-				f"[VERIFICATION_CHECK] StepSeq_Block={step_seq_block} LoopSel_Block={loop_sel_block} NoteEditor_Block={note_editor_block}"
-			)
-			self._control_surface.log_message(
-				f"[PAGE_VERIFY] "
-				f"page={self._page} "
-				f"step_loop_block={getattr(self._step_sequencer, '_loop_block', 'N/A')} "
-				f"selector_block={getattr(self._step_sequencer._loop_selector, '_block', 'N/A')}"
-			)
+			# self._control_surface.log_message(
+			# 	f"[VERIFICATION_CHECK] StepSeq_Block={step_seq_block} LoopSel_Block={loop_sel_block} NoteEditor_Block={note_editor_block}"
+			# )
+			# self._control_surface.log_message(
+			# 	f"[PAGE_VERIFY] "
+			# 	f"page={self._page} "
+			# 	f"step_loop_block={getattr(self._step_sequencer, '_loop_block', 'N/A')} "
+			# 	f"selector_block={getattr(self._step_sequencer._loop_selector, '_block', 'N/A')}"
+			# )
 			# Check for mismatch between any components
 			if step_seq_block is not None and loop_sel_block is not None and note_editor_block not in [None,
 																									   "NOT DEFINED"]:
@@ -3134,9 +3169,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# At this point ALL clip settings have been restored.
 		# Now synchronize the note editor's physical layout with
 		# the newly loaded clip's stored drumrack state.
+		try:
+			selector = getattr(self._step_sequencer, '_scale_selector', None)
+			if selector is not None:
+				self._step_sequencer._sync_editor_layout()
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[TAIL_LAYOUT_SYNC: selector is not None ] ")
+			else:
+				# Selector unavailable — trust the tag value
+				self.on_drumrack_mode_changed(bool(self._is_drumrack_layout))
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[TAIL_LAYOUT_SYNC: selector is None ] ")
+		except Exception as e:
+			self._control_surface.log_message(f"[TAIL_LAYOUT_SYNC_ERROR] {e}")
 
 		if hasattr(self._step_sequencer, '_sync_editor_layout'):
-			self._step_sequencer._sync_editor_layout()
+			# self._step_sequencer._sync_editor_layout() #duplicate with the above
 
 			if DEBUG_LOGGING:
 				selector_dr = bool(
@@ -3161,17 +3211,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._force_update = True
 		self.update()
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[FINAL_PUSH] ForceUpdate=True UpdateCalled=True"
-			)
-			self._control_surface.log_message(
-				f"[LOOP_UI] "
-				f"block={ls._block} "
-				f"resolution={ls._resolution} "
-				f"loop_start={ls._loop_start} "
-				f"loop_end={ls._loop_end}"
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[FINAL_PUSH] ForceUpdate=True UpdateCalled=True"
+		# 	)
+		# 	self._control_surface.log_message(
+		# 		f"[LOOP_UI] "
+		# 		f"block={ls._block} "
+		# 		f"resolution={ls._resolution} "
+		# 		f"loop_start={ls._loop_start} "
+		# 		f"loop_end={ls._loop_end}"
+		# 	)
 		self._verify_resolution_consistency()
 
 	def _verify_resolution_consistency(self):
@@ -3209,8 +3259,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		try:
 			with open(self._metadata_file_path, 'r') as f:
 				self._metadata_cache = json.load(f)
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(f"[META] Loaded {len(self._metadata_cache)} clip entries")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(f"[META] Loaded {len(self._metadata_cache)} clip entries")
 		except Exception as e:
 			self._control_surface.log_message(f"[META] Failed to load cache: {e}")
 			self._metadata_cache = {}
@@ -3336,8 +3386,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._enabled_state = enabled
 
 		if enabled and hasattr(self, '_mode_copy_paste_button') and self._mode_copy_paste_button:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[ENABLED] Refreshing button state")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[ENABLED] Refreshing button state")
 			self._update_copy_paste_button_state()
 			self._force_update = True
 			self.update()
@@ -3525,24 +3575,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# Force hardware push to update the board instantly
 				self._push_to_hardware()
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[ANIM->EDIT] Killed anim, disabled LS for {mode}")
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(f"[ANIM->EDIT] Killed anim, disabled LS for {mode}")
 
 		# --- DEBUG: COPY/PASTE STATE MANAGEMENT ---
 		self._control_surface.log_message("[SET MODE] Entering Mode=%s | OldMode=%s" % (mode, old_mode))
 
 		if mode == STEPSEQ_MODE_NOTES:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-				"[SET MODE] In NOTES block. Armed=%s | Data=%s" %
-				(str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 	"[SET MODE] In NOTES block. Armed=%s | Data=%s" %
+			# 	(str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
+			# 	)
 			# Force LED update
 			self._update_copy_paste_button_state()
 
 		elif mode != STEPSEQ_MODE_NOTES:
-			if DEBUG_LOGGING:
-				self._control_surface.log_message("[SET MODE] Leaving NOTES block.")
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message("[SET MODE] Leaving NOTES block.")
 			# Leaving Notes mode (e.g., going to Velocity Editor). To clear buffer on exit, uncomment below:
 			# self._copied_grid_data = None
 			# self._paste_armed = False
@@ -3555,8 +3605,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# 	("EDITOR" if self.uses_bottom_row() else "LOOP_SELECTOR", mode)
 		# )
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message("CALLING UPDATE FROM SET_MODE")
 		self.update()
 
 	def on_drumrack_mode_changed(self, is_drumrack):
@@ -3570,6 +3620,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._parse_notes()
 		self._force_update = True
 		self.update()
+
+	@property
+	def _is_drumrack_layout(self):
+		return self._dr_layout_state
+
+	@_is_drumrack_layout.setter
+	def _is_drumrack_layout(self, value):
+		value = bool(value)
+		old = getattr(self, '_dr_layout_state', None)
+		if old is None or old != value:
+			try:
+				import traceback
+				self._control_surface.log_message(
+					"[DR_STATE] Editor._is_drumrack_layout %s -> %s\n%s" % (
+						old, value, "".join(traceback.format_stack(limit=7))
+					)
+				)
+			except Exception:
+				pass
+		self._dr_layout_state = value
 
 	@property
 	def _note_rows(self):
@@ -3664,10 +3734,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# Sync parent with child
 				self._step_sequencer._loop_block = getattr(ls, '_block', 0)
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[LOOP_BLOCK_SYNC] StepSequencer._loop_block synced to {self._step_sequencer._loop_block}"
-					)
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(
+				# 		f"[LOOP_BLOCK_SYNC] StepSequencer._loop_block synced to {self._step_sequencer._loop_block}"
+				# 	)
 
 		if not getattr(self, "_loading_clip", False):
 			self.sync_clip_with_json()
@@ -4668,7 +4738,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					# self._control_surface.log_message(
 					# 	"BUTTON MODULE=%s" % button.__class__.__module__
 					# )
-
+					# if DEBUG_LOGGING and (x == 7 or self._force_update):
+					# 	self._control_surface.log_message(
+					# 		f"[DRAW] mode={self._mode} dr={self._is_drumrack_layout} "
+					# 		f"bottom={self.uses_bottom_row()} y={y} x={x} val={self._grid_back_buffer[x][y]}"
+					# 	)
 					button.set_light(self._grid_back_buffer[x][y])
 
 					# if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
@@ -6207,11 +6281,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			state_str = "DIM"
 			self._mode_copy_paste_button.set_light("StepSequencer2.CopyPaste.Dim")
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-			"[LED UPD] Setting Light to %s | Armed=%s | DataCount=%s" %
-			(state_str, str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 	"[LED UPD] Setting Light to %s | Armed=%s | DataCount=%s" %
+		# 	(state_str, str(self._paste_armed), str(len(self._copied_grid_data) if self._copied_grid_data else 0))
+		# 	)
 
 	def _mode_button_copy_paste_value(self, value, sender):
 		assert (self._mode_copy_paste_button != None)
@@ -6644,8 +6718,13 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._loop_block = 0
 
 	def _loop_selector_should_be_enabled(self):
+		if hasattr(self, '_scale_selector') and self._scale_selector:
+			if self._scale_selector.is_drumrack:
+				return False
+
 		if getattr(self, '_is_drumrack_mode', False):
 			return False
+
 		return super(StepSequencerComponent2, self)._loop_selector_should_be_enabled()
 
 	def _search_and_relink_clip(self, target_hash, cached_entry):
@@ -6720,10 +6799,10 @@ class StepSequencerComponent2(StepSequencerComponent):
         """
 		is_drumrack = bool(is_drumrack)
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[DRUMRACK_CHANGED] User changed Drum Rack -> {is_drumrack}"
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[DRUMRACK_CHANGED] User changed Drum Rack -> {is_drumrack}"
+		# 	)
 
 		# Keep the StepSequencer/UI layout synchronized immediately.
 		self._sync_editor_layout()
@@ -6744,7 +6823,6 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 			try:
 				self._note_editor.sync_clip_with_json()
-
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(
 						f"[DRUMRACK_CHANGED] Clip metadata synced "
@@ -6799,47 +6877,43 @@ class StepSequencerComponent2(StepSequencerComponent):
 		# no drum rack mode for me. i am a melodic step seq.
 		self._drum_group_device = None
 
-	def _loop_selector_should_be_enabled(self):
-		"""
-        Row-7 ownership policy.
-
-        The Scale Selector is the authoritative source for Drum Rack mode.
-        This deliberately does not rely only on _is_drumrack_mode, because
-        that flag can become stale during initialization or a mode transition.
-        """
-		if hasattr(self, '_scale_selector') and self._scale_selector:
-			if self._scale_selector.is_drumrack:
-				return False
-
-		if getattr(self, '_is_drumrack_mode', False):
-			return False
-
-		return super(StepSequencerComponent2, self)._loop_selector_should_be_enabled()
-
 
 	def _detect_scale_mode(self):
 		# Manual mode: no device sniffing. Drumrack layout is whatever the
 		# user chose in the scale selector — never overwrite it from here.
 		self._sync_editor_layout()
 
+
 	def _sync_editor_layout(self):
 		"""
         Synchronize the entire editor layout with the Scale Selector's
-        current drumrack state.
+        current Drum Rack state.
 
         ScaleComponent.is_drumrack is the source of truth.
         """
 
+		if not hasattr(self, '_scale_selector') or not self._scale_selector:
+			return
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[TRACE] _sync_editor_layout entered (selector dr=%s)" %
+				getattr(self._scale_selector, '_is_drumrack', '?'))
+
 		is_dr = bool(self._scale_selector.is_drumrack)
 
 		# ---------------------------------------------------------
-		# 1. Update StepSequencer's cached state
+		# 1. Synchronize StepSequencer cached state
 		# ---------------------------------------------------------
 		old_is_dr = getattr(self, '_is_drumrack_mode', False)
 		self._is_drumrack_mode = is_dr
 
 		# ---------------------------------------------------------
 		# 2. Synchronize Note Editor layout
+		#
+		# IMPORTANT:
+		# Do this unconditionally.
+		# During clip loading, _is_drumrack_layout may itself be stale.
+		# on_drumrack_mode_changed() is responsible for rebuilding the
+		# editor's note data and forcing the hardware refresh.
 		# ---------------------------------------------------------
 		note_editor = getattr(self, '_note_editor', None)
 
@@ -6854,10 +6928,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 					f"NoteEditor {editor_is_dr} -> {is_dr}"
 				)
 
-			# Always apply the layout explicitly.
-			# Clip switching must not depend on the previous clip's editor state.
-			if editor_is_dr != is_dr:
-				note_editor.on_drumrack_mode_changed(is_dr)
+			note_editor.on_drumrack_mode_changed(is_dr)
+
 		# ---------------------------------------------------------
 		# 3. Synchronize Loop Selector ownership
 		# ---------------------------------------------------------
@@ -6892,7 +6964,7 @@ class StepSequencerComponent2(StepSequencerComponent):
 					loop_selector.set_enabled(False)
 
 		# ---------------------------------------------------------
-		# 4. Force parent/editor redraw
+		# 4. Force complete redraw
 		# ---------------------------------------------------------
 		self._force_update = True
 
@@ -6906,6 +6978,9 @@ class StepSequencerComponent2(StepSequencerComponent):
 		#
 		# This is important: if super()._scale_updated() causes an update,
 		# the parent must already know that Drum Rack owns row 7.
+		if DEBUG_LOGGING:
+			self._control_surface.log_message("[TRACE] _scale_updated entered, note_selector.is_drumrack=%s" %
+				self._note_selector.is_drumrack)
 		self._sync_editor_layout()
 		super(StepSequencerComponent2, self)._scale_updated()
 
@@ -7035,15 +7110,15 @@ class StepSequencerComponent2(StepSequencerComponent):
 					if hasattr(ls, '_block'):
 						self._loop_block = ls._block
 
-						if DEBUG_LOGGING:
-							self._control_surface.log_message(
-								f"[SYNC_LOOP_BLOCK] Synced _loop_block={self._loop_block} from LoopSelector"
-							)
+						# if DEBUG_LOGGING:
+						# 	self._control_surface.log_message(
+						# 		f"[SYNC_LOOP_BLOCK] Synced _loop_block={self._loop_block} from LoopSelector"
+						# 	)
 
 				self._note_editor.sync_clip_with_json()
 
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[SYNC_JSON] StepSequencer: synced current clip")
+				# if DEBUG_LOGGING:
+				# 	self._control_surface.log_message(f"[SYNC_JSON] StepSequencer: synced current clip")
 
 			except Exception as e:
 				import traceback
@@ -7052,9 +7127,9 @@ class StepSequencerComponent2(StepSequencerComponent):
 		elif DEBUG_LOGGING:
 			self._control_surface.log_message(f"[SYNC_SKIP] No _note_editor available")
 
-		if DEBUG_LOGGING:
-			if self._clip:
-				self._control_surface.log_message(
-					f"[SYNC_LOOP_BLOCK] clip={self._clip.name} "
-					f"LoopSelector._block={self._loop_selector._block}"
-				)
+		# if DEBUG_LOGGING:
+		# 	if self._clip:
+		# 		self._control_surface.log_message(
+		# 			f"[SYNC_LOOP_BLOCK] clip={self._clip.name} "
+		# 			f"LoopSelector._block={self._loop_selector._block}"
+		# 		)

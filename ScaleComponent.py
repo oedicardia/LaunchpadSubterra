@@ -138,6 +138,17 @@ class ScaleComponent(ControlSurfaceComponent):
 			if message:
 				self._control_surface.show_message(str("selected scale: " + KEY_NAMES[self._key])+" "+str(self._modus_names[self._modus]))
 
+	def set_drumrack_from_clip(self, drumrack):
+		"""
+        Restore Drum Rack state from clip metadata.
+
+        This changes the selector state and refreshes dependent state,
+        but does NOT invoke the user-change callback / save metadata.
+        """
+		self._is_drumrack = bool(drumrack)
+		self._set_top_octave(False)
+
+
 	def set_drumrack(self, drumrack):
 		old_value = self._is_drumrack
 		self._is_drumrack = bool(drumrack)
@@ -504,7 +515,28 @@ class ScaleComponent(ControlSurfaceComponent):
 	@property
 	def is_drumrack(self):
 		return self._is_drumrack
-		
+
+	# --- DIAGNOSTIC: logged storage for _is_drumrack ---
+	@property
+	def _is_drumrack(self):
+		return self._dr_state
+
+	@_is_drumrack.setter
+	def _is_drumrack(self, value):
+		value = bool(value)
+		old = getattr(self, '_dr_state', None)
+		if old is None or old != value:
+			try:
+				import traceback
+				self._control_surface.log_message(
+					"[DR_STATE] ScaleComponent._is_drumrack %s -> %s\n%s" % (
+						old, value, "".join(traceback.format_stack(limit=7))
+					)
+				)
+			except Exception:
+				pass
+		self._dr_state = value
+
 	@property
 	def is_diatonic(self):
 		return not self.is_drumrack and (self._mode == "diatonic" or self._mode == "diatonic_ns" or self._mode == "diatonic_chords")

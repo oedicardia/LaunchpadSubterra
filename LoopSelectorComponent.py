@@ -110,6 +110,14 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._blocksize = blocksize
 
     def set_enabled(self, enabled):
+        import traceback
+        if DEBUG_LOGGING and enabled != self.is_enabled():
+            self._debug(
+                "[LS_ENABLE] %s -> %s\n%s" % (
+                    self.is_enabled(), enabled,
+                    "".join(traceback.format_stack(limit=7))
+                )
+            )
         self._force = True
         ControlSurfaceComponent.set_enabled(self, enabled)
 
@@ -410,7 +418,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                     self._step_sequencer.sync_clip_with_json()
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
-    def update(self):
+    def update(self): # LoopSelectorComponent.update()
+        # if DEBUG_LOGGING:
+        #     self._debug(f"[LS_DRAW] enabled={self.is_enabled()} block={getattr(self, '_block', '?')}")
         # --- SAFE INITIALIZATION CHECKS ---
         step_seq = getattr(self, '_step_sequencer', None)
 
