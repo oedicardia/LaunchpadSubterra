@@ -559,13 +559,13 @@ class StepSequencerComponent(CompoundComponent):
 				key_is_root_note[i] = (note % 12) == root_note_class
 				key_is_in_scale[i] = True
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					"[SCALE_UPDATED] {} Keys={}".format(
-						"ABSOLUTE" if is_absolute else "RELATIVE",
-						keys
-					)
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		"[SCALE_UPDATED] {} Keys={}".format(
+			# 			"ABSOLUTE" if is_absolute else "RELATIVE",
+			# 			keys
+			# 		)
+			# 	)
 
 		# ========================================
 		# CASE 3: CHROMATIC MODE
@@ -585,13 +585,13 @@ class StepSequencerComponent(CompoundComponent):
 		self._key_index_is_root_note = key_is_root_note
 		self._key_index_is_in_scale = key_is_in_scale
 
-		if DEBUG_LOGGING:
-			is_ascending = all(keys[i] <= keys[i + 1] for i in range(len(keys) - 1))
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] ASCENDING CHECK - {'✓ PASS' if is_ascending else '✗ FAIL'} Keys={keys}")
-
-			if not is_ascending:
-				self._control_surface.log_message(f"[SCALE_UPDATED] ERROR: Keys are NOT ascending!")
+		# if DEBUG_LOGGING:
+		# 	is_ascending = all(keys[i] <= keys[i + 1] for i in range(len(keys) - 1))
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] ASCENDING CHECK - {'✓ PASS' if is_ascending else '✗ FAIL'} Keys={keys}")
+		#
+		# 	if not is_ascending:
+		# 		self._control_surface.log_message(f"[SCALE_UPDATED] ERROR: Keys are NOT ascending!")
 
 		if hasattr(self, '_note_editor') and self._note_editor:
 			self._note_editor.set_key_indexes(keys)
@@ -601,9 +601,9 @@ class StepSequencerComponent(CompoundComponent):
 		self._update_note_editor()
 		self._update_note_selector()
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] COMPLETE - Mode={'ABSOLUTE' if is_absolute else 'RELATIVE'} Keys={keys}")
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] COMPLETE - Mode={'ABSOLUTE' if is_absolute else 'RELATIVE'} Keys={keys}")
 
 	def _build_keys_from_pattern(self):
 		"""
