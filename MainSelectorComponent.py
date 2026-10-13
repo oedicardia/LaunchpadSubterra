@@ -22,7 +22,6 @@ except ImportError:
 
 from .ModeConstants import MainMode
 
-
 class MainSelectorComponent(ModeSelectorComponent):
 
 	""" Class that reassigns the button on the launchpad to different functions """

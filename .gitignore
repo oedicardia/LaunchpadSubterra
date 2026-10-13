@@ -2,6 +2,12 @@ __pycache__
 .DS_Store
 /.idea/
 .json
+.gitignore
 Reg_SubterraLPs.pub
 Reg_SubterraLPs
 
+StepSequencerComponent2-*
+
+StepSequencerComponent2_*
+
+StepSequencerComponent2.py.ba*

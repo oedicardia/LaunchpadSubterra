@@ -1012,15 +1012,84 @@ class StepSequencerComponent(CompoundComponent):
 			self._clip = None
 			self._clip_changed()
 
-	def _clip_changed(self):  # triggered by _on_clip_slot_changed() or manually on enable.
-		self._note_editor.set_clip(self._clip)
-		self._note_selector.set_clip(self._clip)
-		self._loop_selector.set_clip(self._clip)
+	# def _clip_changed(self):  # triggered by _on_clip_slot_changed() or manually on enable.
+		# # temporarily removed for debugging
+		# self._note_editor.set_clip(self._clip)
+		# self._note_selector.set_clip(self._clip)
+		# self._loop_selector.set_clip(self._clip)
+		# self._note_editor.set_playhead(None)
+		# self._note_selector.set_playhead(None)
+		# self._loop_selector.set_playhead(None)
+		# # reload notes
+		# self._on_notes_changed()
+	def _clip_changed(self):
+		# Temporary diagnostic instrumentation.
+		self._clip_trace_seq = getattr(self, '_clip_trace_seq', 0) + 1
+		seq = self._clip_trace_seq
+		clip = self._clip
+
+		def clip_info(c):
+			if c is None:
+				return 'None'
+			try:
+				name = c.name
+			except Exception:
+				name = '<name unavailable>'
+			return '%s clip_id=%s' % (name, id(c))
+
+		def component_info(component):
+			c = getattr(component, '_clip', None)
+			return clip_info(c)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] ENTER parent_id=%s incoming={%s}'
+			% (seq, id(self), clip_info(clip))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE note_editor.set_clip '
+			'editor_id=%s editor_clip={%s}'
+			% (seq, id(self._note_editor),
+			   component_info(self._note_editor))
+		)
+		self._note_editor.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER note_editor.set_clip '
+			'editor_clip={%s}'
+			% (seq, component_info(self._note_editor))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE note_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._note_selector))
+		)
+		self._note_selector.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER note_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._note_selector))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE loop_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._loop_selector))
+		)
+		self._loop_selector.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER loop_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._loop_selector))
+		)
+
 		self._note_editor.set_playhead(None)
 		self._note_selector.set_playhead(None)
 		self._loop_selector.set_playhead(None)
-		# reload notes
+
+		self._control_surface.log_message('[CLIPTRACE PARENT #%s] BEFORE _on_notes_changed' % seq)
 		self._on_notes_changed()
+		self._control_surface.log_message('[CLIPTRACE PARENT #%s] EXIT' % seq)
 
 	def _on_notes_changed(self):  # trigger by callback on clip or via _clip_changed.
 		if self.is_enabled():
