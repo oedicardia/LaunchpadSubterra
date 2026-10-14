@@ -1361,6 +1361,7 @@ class StepSequencerComponent(CompoundComponent):
 		# repaint the melodic nav grid if the octave overview owns the matrix
 		if (hasattr(self, '_note_editor') and self._note_editor and
 				getattr(self._note_editor, '_mode', None) == STEPSEQ_MODE_NAV_OVERVIEW):
+
 			self._note_editor._force_update = True
 			self._note_editor.update()
 

@@ -1640,6 +1640,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		state['timestamp'] = time.time()
 		return state
 
+
 	def load_clip_settings(self, clip, settings_dict):
 		"""Loads settings from dictionary into active clip's UI state.
 		CRITICAL FIXES:
@@ -2852,6 +2853,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
 							page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
 
+
 							# NOTE: the playhead is intentionally NOT painted in this view.
 
 							# Currently selected block (absolute, from LoopSelector source of truth)
@@ -2937,6 +2939,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									else:
 										target_color = "StepSequencer2.Octave.Off"
 									self._grid_back_buffer[x][y] = target_color
+
 						else:
 							for y in range(8):
 								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
@@ -3340,8 +3343,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Clear step if monophonic mode
 							if self._is_monophonic:
 								for yy in range(7):
+
 									self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 0
 							self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 1
+
 					elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
 						# HORIZONTAL VELOCITY MODE WITH DOUBLE-CLICK DELETE
 
@@ -4042,6 +4047,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_mute_shifted = True
 				self._is_velocity_shifted = True
 
+
 # OCTAVES & BLOCKS
 	def set_display_octave(self, octave):
 		self._display_octave = octave
@@ -4405,6 +4411,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		total_steps = int(clip_end / ss._resolution)
 		total_blocks = max(1, (total_steps + 7) // 8)
 		block_index = max(0, min(block_index, total_blocks - 1))
+
 		new_offset = block_index // 8
 
 		# 1. Offset everywhere (cycle button reads ss._loop_page_offset)
