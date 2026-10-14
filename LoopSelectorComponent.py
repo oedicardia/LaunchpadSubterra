@@ -110,6 +110,14 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._blocksize = blocksize
 
     def set_enabled(self, enabled):
+        import traceback
+        if DEBUG_LOGGING and enabled != self.is_enabled():
+            self._debug(
+                "[LS_ENABLE] %s -> %s\n%s" % (
+                    self.is_enabled(), enabled,
+                    "".join(traceback.format_stack(limit=7))
+                )
+            )
         self._force = True
         ControlSurfaceComponent.set_enabled(self, enabled)
 
@@ -176,7 +184,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
             self._clip.loop_end = end
 
             self._clip.start_marker = start
-            self._clip.end_marker = end
+            # NOTE: the end marker is NOT pulled in to the loop end.
+            # It is the clip's total length, independent of the loop
+            # (it was only expanded above if the loop reaches past it).
 
             # self._debug(
             #     f"APPLIED LOOP start={start} end={end}"
@@ -204,6 +214,48 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         # Trigger sync through step sequencer (will save to JSON with absolute loop_block)
         if not getattr(self._step_sequencer, "_loading_clip", False):
             self._step_sequencer.sync_clip_with_json()
+
+    def set_loop_from_blocks(self, block_a, block_b):
+        """
+        Set the clip loop from the FIRST step of the lower of the two ABSOLUTE
+        block indexes up to (and including) the LAST step of the higher one.
+
+        Same behaviour as the two-button press on the loop selector row:
+        selecting the loop that is already active restores the full clip loop.
+
+        Usable even while this component is disabled (e.g. from the note
+        editor's navigation overview, where row 7 is not owned by us).
+
+        Returns:
+            None if nothing was done, True if the full loop was restored,
+            False if a new loop was set.
+        """
+        if self._clip is None:
+            return None
+
+        first_block = max(0, min(block_a, block_b))
+        last_block = max(0, max(block_a, block_b))
+        absolute_end = last_block + 1  # exclusive block boundary
+
+        block_len = self._blocksize * self._resolution
+
+        if self._is_selecting_current_loop(first_block, absolute_end):
+            self.set_clip_loop(self._full_loop_start, self._full_loop_end)
+            restored = True
+        else:
+            self.set_clip_loop(first_block * block_len, absolute_end * block_len)
+            restored = False
+
+        # Selection follows the start of the loop (absolute block index)
+        self._block = first_block
+        self._loop_point1 = -1
+        self._loop_point2 = -1
+        self._cache = [-1] * len(self._cache)
+        self._force = True
+        self._get_clip_loop()
+
+        self._step_sequencer.set_page(first_block)
+        return restored
 
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
@@ -354,6 +406,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     def _is_selecting_current_loop(self, start, end):
 
+        if self._clip is None:
+            return False
+
         block_size = (
                 self._blocksize *
                 # self._quantization
@@ -410,7 +465,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                     self._step_sequencer.sync_clip_with_json()
 
     # Iterates refreshing all loop selector buttons (called from playing position listener) OK
-    def update(self):
+    def update(self): # LoopSelectorComponent.update()
+        # if DEBUG_LOGGING:
+        #     self._debug(f"[LS_DRAW] enabled={self.is_enabled()} block={getattr(self, '_block', '?')}")
         # --- SAFE INITIALIZATION CHECKS ---
         step_seq = getattr(self, '_step_sequencer', None)
 
@@ -451,6 +508,11 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                     self._clip.is_playing
             )
 
+            # Total length of the clip, independent of the loop.
+            # (Clip.length is the LOOP length for looped clips, so the
+            # loop-independent end marker is used instead.)
+            clip_end = self._clip_total_end()
+
             i = 0
 
             for button in self._buttons:
@@ -483,6 +545,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 # selected is TRUE only if the GLOBAL block index matches the global _block
                 selected = (absolute_block == self._block)
 
+                # Block starts inside the clip [0, end marker)?
+                in_clip = block_start < clip_end
+
                 # Determine color
                 if self._clip is None:
                     button.set_light("DefaultButton.Disabled")
@@ -492,7 +557,11 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 else:
                     current_color = "DefaultButton.Disabled"
 
-                    if not clip_is_playing:
+                    if not in_clip:
+                        # PRIORITY 0: beyond the end of the clip -> left blank
+                        current_color = "DefaultButton.Disabled"
+
+                    elif not clip_is_playing:
                         # CLIP IS STOPPED
 
                         # PRIORITY 1: Selected Indicator
@@ -504,9 +573,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                         elif in_loop:
                             current_color = "StepSequencer.LoopSelector.Stopped"
 
-                        # PRIORITY 3: Outside Loop
+                        # PRIORITY 3: Outside Loop, inside the clip
                         else:
-                            current_color = "DefaultButton.Disabled"
+                            current_color = "StepSequencer.LoopSelector.InClip"
 
                     else:
                         # CLIP IS PLAYING
@@ -531,7 +600,8 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                                     # But handle it just in case
                                     current_color = "StepSequencer.LoopSelector.Selected"
                                 else:
-                                    current_color = "DefaultButton.Disabled"
+                                    # Outside the loop, inside the clip
+                                    current_color = "StepSequencer.LoopSelector.InClip"
 
                     # Apply color
                     if current_color != self._cache[i] or self._force:
@@ -541,6 +611,23 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 i += 1
 
             self._force = False
+
+    def _clip_total_end(self):
+        """
+        End (in beats) of the clip's total length, independent of the loop:
+        Clip.end_marker ("independent of the loop state" in the Live Object
+        Model). Clip.length cannot be used: for looped clips it is the loop
+        length. Falls back to loop_end if the marker is unavailable.
+        """
+        if self._clip is None:
+            return 0.0
+        try:
+            return float(self._clip.end_marker)
+        except Exception:
+            try:
+                return float(self._clip.loop_end)
+            except Exception:
+                return 0.0
 
     # Make a copy of the current loop to the next N empty blocks OK
     def _extend_clip_content(self, loop_start, old_loop_end, new_loop_end):
