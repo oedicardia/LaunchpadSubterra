@@ -16,6 +16,8 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	NAV_VISIBLE_BANDS,
 	NAV_DOUBLE_TAP_WINDOW,
 	NAV_DOUBLE_TAP_TICKS,
+	CLIP_GESTURE_TAP_WINDOW,
+	CLIP_GESTURE_TAP_TICKS,
 	LOOP_TAG_SYNC_DELAY_TICKS,
 	SCALE_MODE_DELAY_TICKS,
 	DRUM_COLORS_NO_NOTE,
@@ -582,9 +584,27 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._paste_armed = False
 		self._last_press_time = 0.0
 		self._suppress_toggle_release = False
+		# Taps within the double-tap window: 1 = copy/paste, 2 = erase (or undo
+		# on an empty grid), 3 = cut (turns the erase just done into a cut)
+		self._copy_tap_count = 0
 		self._delete_action_on_release = False
+		self._cut_action_on_release = False
+		# Notes removed by the last erase (same format as _copied_grid_data),
+		# restored by double-tapping on an empty grid
+		self._erased_grid_data = None
+		# True when the erase of the current tap sequence actually removed notes
+		self._erase_just_done = False
 		self._skip_copy_release = False
 		self._duplicate_pending = False
+		# Toggle held + Copy taps: 1 tap = duplicate clip (deferred until the
+		# double-tap window has passed), 2 taps = delete clip / restore it
+		self._clip_gesture_active = False
+		self._clip_gesture_count = 0
+		self._clip_gesture_last_release = 0.0
+		# Release time of a single tap whose duplicate has not run yet
+		self._pending_duplicate_time = None
+		# Snapshot of the last deleted clip, restored into an empty slot
+		self._deleted_clip_data = None
 		self._update_copy_paste_button_state()
 
 		# Length mode
@@ -1892,7 +1912,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					f"clip={getattr(clip, 'name', '?')} "
 					f"selector={selector_dr} "
 					f"editor={editor_dr}"
-					f"key index={self._note_editor.key_indexes}"
+					f" key index={self._key_indexes}"
 				)
 
 		# Force refresh
@@ -2640,10 +2660,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._force_update = True
 
 	def _update_matrix(self):
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[MATRIX_UPDATE] editor_id={id(self)} enabled={self.is_enabled()} clip={id(self._clip) if self._clip else None}"
-			)
 		if hasattr(self, '_step_sequencer') and self._step_sequencer:
 			has_scale = hasattr(self._step_sequencer, '_scale_selector') and self._step_sequencer._scale_selector
 			if has_scale:
@@ -3862,8 +3878,16 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		assert (self._clip_toggle_button != None)
 		assert (value in range(128))
 		clip_slot = self.song().view.highlighted_clip_slot
+		# Toggle released while no clip is in view (e.g. the clip was just
+		# deleted by Toggle + double-tap Copy): nothing to suppress any more.
+		if value == 0 and (clip_slot is None or not clip_slot.has_clip):
+			if hasattr(self, '_step_sequencer') and self._step_sequencer:
+				self._step_sequencer._suppress_toggle_release = False
 		if (self.is_enabled() and clip_slot is not None and clip_slot.has_clip):
 			if hasattr(self, '_duplicate_pending') and self._duplicate_pending:
+				# Toggle released before Copy: the gesture owns this release
+				if value == 0 and hasattr(self, '_step_sequencer') and self._step_sequencer:
+					self._step_sequencer._suppress_toggle_release = False
 				return
 			if (value == 0 and sender.is_momentary()) or (not sender.is_momentary()):
 
@@ -4730,6 +4754,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _mode_button_copy_paste_value(self, value, sender):
 		assert (self._mode_copy_paste_button != None)
 		assert (value in range(128))
+		# Toggle held + Copy taps act on the whole clip, also on an empty slot
+		if self.is_enabled() and self._handle_clip_gesture(value):
+			return
 		if self.is_enabled() and self._clip != None:
 			current_mode = self._mode
 			now = time.time()
@@ -4761,49 +4788,57 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 			# --- PRESS EVENT (value > 0) ---
 			if value > 0:
-				# Check if Toggle is already held
-				is_toggle_held = False
-				if hasattr(self, '_clip_toggle_button') and self._clip_toggle_button:
-					if self._clip_toggle_button.is_pressed():
-						is_toggle_held = True
-				if is_toggle_held:
-					# Enter "Pending" state
-					self._duplicate_pending = True
-					return
-
-				# DOUBLE CLICK DETECTION LOGIC (On Second Press)
+				# (Toggle already held is handled by _handle_clip_gesture)
+				# MULTI-TAP DETECTION LOGIC (2nd press = erase, 3rd press = cut)
 				if (now - self._last_press_time) < 0.25:
-					self._delete_action_on_release = True
+					self._copy_tap_count += 1
 				else:
-					self._delete_action_on_release = False
+					self._copy_tap_count = 1
+					self._erase_just_done = False
+				self._delete_action_on_release = (self._copy_tap_count == 2)
+				self._cut_action_on_release = (self._copy_tap_count == 3)
 				self._last_press_time = now
 				return
 
 			# --- RELEASE EVENT (value == 0) ---
 
-			# 1. Check Pending State (Duplicate Scenario A)
-			if self._duplicate_pending:
-				self._duplicate_pending = False
-				self._duplicate_clip_to_next_slot()
-				if hasattr(self, '_step_sequencer') and self._step_sequencer:
-					if not hasattr(self._step_sequencer, '_suppress_toggle_release'):
-						self._step_sequencer._suppress_toggle_release = False
-					self._step_sequencer._suppress_toggle_release = True
-				return
-
 			# 2. Handle Delete (Double Click Detected on Press)
 			if self._delete_action_on_release:
 				self._delete_action_on_release = False
-				# Clear buffer ONLY on successful delete (optional, but good practice to clear after delete)
-				# Or keep it? Usually delete clears the view, so buffer might be stale?
-				# Let's clear buffer on delete to avoid pasting deleted notes.
-				self._paste_armed = False
-				self._copied_grid_data = None
-				self._update_copy_paste_button_state()
 				if current_mode == STEPSEQ_MODE_NOTES:
+					# Empty grid: double-tap restores the last erased notes (undo)
+					if not self._notes_in_current_view() and self._erased_grid_data:
+						restored = self._paste_notes_from_buffer(self._erased_grid_data)
+						if restored:
+							self._erased_grid_data = None
+							self._control_surface.show_message("Undo erase (%d notes)" % restored)
+						return
+					# Clear buffer ONLY on successful delete (optional, but good practice to clear after delete)
+					# Or keep it? Usually delete clears the view, so buffer might be stale?
+					# Let's clear buffer on delete to avoid pasting deleted notes.
+					self._paste_armed = False
+					self._copied_grid_data = None
+					self._update_copy_paste_button_state()
 					self._control_surface.show_message("Erase Page")
-					self._delete_notes_in_current_page()
+					self._erase_just_done = self._delete_notes_in_current_page() > 0
 					self.update()
+				return
+
+			# 2b. Handle Cut (Triple Click): the erase done by the double click
+			# becomes a cut — the erased notes go to the paste buffer instead.
+			if self._cut_action_on_release:
+				self._cut_action_on_release = False
+				if current_mode == STEPSEQ_MODE_NOTES and self._erase_just_done and self._erased_grid_data:
+					self._erase_just_done = False
+					self._copied_grid_data = self._erased_grid_data
+					self._erased_grid_data = None
+					self._paste_armed = True
+					self._control_surface.show_message("Cut (%d notes)" % len(self._copied_grid_data))
+					self._update_copy_paste_button_state()
+				return
+
+			# Further taps of a fast sequence (4th and beyond) do nothing
+			if self._copy_tap_count > 3:
 				return
 
 			# 3. Safety Check: Is Toggle held at release? (Redundant but safe)
@@ -4846,6 +4881,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	def _copy_notes_to_buffer(self):
 		"""Copies ALL notes in current page AND current octave / pitch block from note_cache."""
+		self._copied_grid_data = self._notes_in_current_view()
+
+	def _notes_in_current_view(self):
+		"""Returns the notes in current page AND current octave / pitch block,
+		as (pitch, time relative to page start, length, velocity, muted)."""
 		self._parse_notes()
 		page_start_step = self._page * 8
 		page_end_step = (self._page + 1) * 8
@@ -4872,15 +4912,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				continue
 			relative_time = note_time - (page_start_step * resolution)
 			buffer.append((note_pitch, relative_time, note_length, note_velocity, note_muted))
-		self._copied_grid_data = buffer
+		return buffer
 
-	def _paste_notes_from_buffer(self):
+	def _paste_notes_from_buffer(self, buffer=None):
 		"""
-		Pastes notes from buffer onto the CURRENT page and CURRENT displayed octave / pitch block.
-		It preserves the relative pattern (step offset) but shifts pitch and time to match current view.
+		Pastes notes from buffer (default: the copy buffer) onto the CURRENT page and CURRENT
+		displayed octave / pitch block. It preserves the relative pattern (step offset) but
+		shifts pitch and time to match current view. Returns the number of notes pasted.
 		"""
-		if not self._copied_grid_data:
-			return
+		if buffer is None:
+			buffer = self._copied_grid_data
+		if not buffer:
+			return 0
 		page_start_step = self._page * 8
 		current_page_offset_time = page_start_step * self.resolution_beats
 
@@ -4890,7 +4933,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		band_unit = self._view_band_unit()
 		new_notes = []
 		added_count = 0
-		for n in self._copied_grid_data:
+		for n in buffer:
 			orig_pitch = n[0]
 			rel_time = n[1]
 			orig_length = n[2]
@@ -4918,7 +4961,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			added_count += 1
 		if added_count == 0:
 			self._control_surface.show_message("Pattern Out of Range")
-			return
+			return 0
 
 		# --- MERGE WITH EXISTING NOTES ---
 		all_clip_notes = list(self._note_cache)
@@ -4944,10 +4987,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._parse_notes()
 		self.update()
 		self._control_surface.show_message("Pasted (%d notes)" % added_count)
+		return added_count
 
 	def _delete_notes_in_current_page(self):
-		"""Deletes ALL notes in current page AND current octave / pitch block (in-scale + out-of-scale)."""
-		self._parse_notes()
+		"""Deletes ALL notes in current page AND current octave / pitch block (in-scale + out-of-scale).
+		The erased notes are kept so a double-tap on the empty grid can restore them.
+		Returns the number of notes erased."""
+		erased = self._notes_in_current_view()
 		page_start_step = self._page * 8
 		page_end_step = (self._page + 1) * 8
 		resolution = self.resolution_beats
@@ -4981,9 +5027,227 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._note_cache = tuple(cleaned_notes)
 			self._parse_notes()
 			self.update()
+			self._erased_grid_data = erased
 			self._control_surface.show_message("%d erased" % deleted_count)
 		else:
 			self._control_surface.show_message("Nothing to erase")
+		return deleted_count
+
+	# CLIP GESTURES (Toggle held + Copy taps)
+	def _handle_clip_gesture(self, value):
+		"""
+		Toggle held + Copy taps: 1 tap duplicates the clip, 2 taps delete it
+		(or restore the last deleted clip when the slot is empty).
+		Returns True when the Copy event belongs to this gesture.
+		"""
+		if value > 0:
+			if self._mode != STEPSEQ_MODE_NOTES:
+				return False
+			if self._velocity_wait_animation or self._length_wait_animation:
+				return False
+			if not (self._clip_toggle_button and self._clip_toggle_button.is_pressed()):
+				return False
+			now = time.time()
+			if self._pending_duplicate_time is not None:
+				# Second tap before the single-tap duplicate ran: double tap
+				self._pending_duplicate_time = None
+				self._clip_gesture_count = 2
+			elif (self._clip_gesture_count >= 2 and
+					(now - self._clip_gesture_last_release) < CLIP_GESTURE_TAP_WINDOW):
+				# Extra taps right after a double tap: ignored
+				self._clip_gesture_count += 1
+			else:
+				self._clip_gesture_count = 1
+			if DEBUG_LOGGING:
+				slot = self.song().view.highlighted_clip_slot
+				self._control_surface.log_message(
+					f"[CLIP_GESTURE] tap={self._clip_gesture_count} "
+					f"slot_has_clip={slot is not None and slot.has_clip} "
+					f"deleted_clip_saved={self._deleted_clip_data is not None}"
+				)
+			self._clip_gesture_active = True
+			# Toggle must not start/stop the clip when it is released
+			self._duplicate_pending = True
+			if hasattr(self, '_step_sequencer') and self._step_sequencer:
+				self._step_sequencer._suppress_toggle_release = True
+			return True
+
+		if not self._clip_gesture_active:
+			return False
+		self._clip_gesture_active = False
+		self._duplicate_pending = False
+		self._clip_gesture_last_release = time.time()
+		if self._clip_gesture_count == 1:
+			# Wait to see whether a second tap follows before duplicating
+			self._pending_duplicate_time = self._clip_gesture_last_release
+			self._control_surface.schedule_message(
+				CLIP_GESTURE_TAP_TICKS, self._execute_pending_duplicate)
+		elif self._clip_gesture_count == 2:
+			slot = self.song().view.highlighted_clip_slot
+			if slot is not None and slot.has_clip:
+				self._delete_highlighted_clip()
+			else:
+				self._restore_deleted_clip()
+		return True
+
+	def _execute_pending_duplicate(self):
+		"""Run a Toggle + single Copy tap that was not followed by a second tap."""
+		pending = self._pending_duplicate_time
+		if pending is None:
+			return
+		# Scheduler ticks are approximate: if called too early, try again.
+		if (time.time() - pending) < CLIP_GESTURE_TAP_WINDOW:
+			self._control_surface.schedule_message(1, self._execute_pending_duplicate)
+			return
+		self._pending_duplicate_time = None
+		if not (self.is_enabled() and self._mode == STEPSEQ_MODE_NOTES):
+			return
+		slot = self.song().view.highlighted_clip_slot
+		if (slot is None or not slot.has_clip) and self._deleted_clip_data:
+			# Nothing to duplicate here; tell how to get the deleted clip back
+			self._control_surface.show_message("Double-tap to restore the deleted clip")
+			return
+		self._duplicate_clip_to_next_slot()
+
+	_CLIP_SNAPSHOT_ATTRS = (
+		'color_index', 'signature_numerator', 'signature_denominator',
+		'launch_mode', 'launch_quantization', 'legato', 'velocity_amount', 'muted',
+	)
+
+	def _snapshot_clip(self, clip):
+		"""Captures everything needed to rebuild a MIDI clip: notes, loop, markers, name (SUX tag)."""
+		clip.select_all_notes()
+		raw_notes = clip.get_selected_notes_extended()
+		clip.deselect_all_notes()
+		notes = []
+		for n in raw_notes or ():
+			notes.append({
+				'pitch': int(n.pitch),
+				'start_time': float(n.start_time),
+				'duration': float(n.duration),
+				'velocity': float(n.velocity),
+				'mute': bool(n.mute),
+				'probability': float(getattr(n, 'probability', 1.0)),
+				'velocity_deviation': float(getattr(n, 'velocity_deviation', 0.0)),
+				'release_velocity': float(getattr(n, 'release_velocity', 64.0)),
+			})
+		data = {
+			'name': clip.name,
+			'looping': bool(clip.looping),
+			'loop_start': float(clip.loop_start),
+			'loop_end': float(clip.loop_end),
+			'start_marker': float(clip.start_marker),
+			'end_marker': float(clip.end_marker),
+			'notes': notes,
+			'attrs': {},
+		}
+		for attr in self._CLIP_SNAPSHOT_ATTRS:
+			try:
+				data['attrs'][attr] = getattr(clip, attr)
+			except Exception:
+				pass
+		return data
+
+	def _delete_highlighted_clip(self):
+		"""Deletes the clip in view, keeping a snapshot so it can be restored."""
+		slot = self.song().view.highlighted_clip_slot
+		if slot is None or not slot.has_clip:
+			self._control_surface.show_message("No clip to delete")
+			return
+		clip = slot.clip
+		if not clip.is_midi_clip:
+			self._control_surface.show_message("Not a MIDI clip")
+			return
+		try:
+			snapshot = self._snapshot_clip(clip)
+		except Exception as e:
+			self._control_surface.log_message(f"[CLIP_DELETE] Snapshot failed: {e}")
+			self._control_surface.show_message("Clip delete failed")
+			return
+		self._deleted_clip_data = snapshot
+		slot.delete_clip()
+		self._control_surface.show_message("Clip deleted (%d notes)" % len(snapshot['notes']))
+
+	def _restore_deleted_clip(self):
+		"""Rebuilds the last deleted clip in the (empty) slot in view."""
+		data = self._deleted_clip_data
+		if not data:
+			self._control_surface.show_message("No deleted clip to restore")
+			return
+		slot = self.song().view.highlighted_clip_slot
+		if slot is None or slot.has_clip:
+			return
+
+		# Build the clip completely before the step sequencer sees it, so it
+		# loads the restored SUX tag instead of defaults for a new clip.
+		parent = getattr(self, '_step_sequencer', None)
+		listener = getattr(parent, 'on_clip_slot_has_clip_changed', None)
+		had_listener = False
+		if listener is not None:
+			try:
+				had_listener = slot.has_clip_has_listener(listener)
+				if had_listener:
+					slot.remove_has_clip_listener(listener)
+			except Exception:
+				had_listener = False
+		restored = False
+		try:
+			extent = max(data['loop_end'], data['end_marker'])
+			slot.create_clip(extent)
+			self._apply_clip_snapshot(slot.clip, data)
+			restored = True
+		except Exception as e:
+			self._control_surface.log_message(f"[CLIP_RESTORE] Failed: {e}")
+		if had_listener:
+			try:
+				slot.add_has_clip_listener(listener)
+			except Exception:
+				pass
+			# Let the step sequencer pick up the new clip (even a partial one)
+			if slot.has_clip:
+				listener()
+		self._update_clip_toggle_button()
+		if restored:
+			self._deleted_clip_data = None
+			self._control_surface.show_message("Clip restored (%d notes)" % len(data['notes']))
+		else:
+			self._control_surface.show_message("Clip restore failed")
+
+	def _apply_clip_snapshot(self, clip, data):
+		"""Writes a snapshot from _snapshot_clip onto a freshly created clip."""
+		# Loop and markers (looping on while editing, so both can be set)
+		clip.looping = True
+		apply_clip_loop(clip, data['loop_start'], data['loop_end'])
+		try:
+			if data['end_marker'] > clip.end_marker:
+				clip.end_marker = data['end_marker']
+			clip.start_marker = data['start_marker']
+			clip.end_marker = data['end_marker']
+		except Exception as e:
+			self._control_surface.log_message(f"[CLIP_RESTORE] Markers: {e}")
+		clip.looping = data['looping']
+
+		for attr, value in data['attrs'].items():
+			try:
+				setattr(clip, attr, value)
+			except Exception:
+				pass
+
+		notes = data['notes']
+		if notes:
+			try:
+				from Live.Clip import MidiNoteSpecification
+				clip.add_new_notes(tuple(MidiNoteSpecification(**n) for n in notes))
+			except Exception:
+				# Older API: basic note tuples
+				clip.select_all_notes()
+				clip.replace_selected_notes(tuple(
+					(n['pitch'], n['start_time'], n['duration'], int(n['velocity']), n['mute'])
+					for n in notes))
+				clip.deselect_all_notes()
+
+		# Name last: it carries the SUX tag with the step sequencer settings
+		clip.name = data['name']
 
 	def _duplicate_clip_to_next_slot(self):
 		"""Duplicates the current clip to the next slot or a new scene."""
@@ -5030,63 +5294,41 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			# Normal case: Next slot exists
 			next_clip_slot = slot_list[next_slot_index]
 		src_clip = highlighted_clip_slot.clip
-		if next_clip_slot.has_clip:
-			if next_clip_slot.is_playing:
-				next_clip_slot.stop()
-			next_clip_slot.delete_clip()
-		dst_clip = None
+		if not src_clip.is_midi_clip:
+			self._control_surface.show_message("Not a MIDI clip")
+			return
 		try:
-			next_clip_slot.create_clip(src_clip.length)
-			dst_clip = next_clip_slot.clip
-		except RuntimeError:
-			self._control_surface.show_message("Error creating clip")
-			return
-		if not dst_clip:
-			self._control_surface.show_message("Failed to create clip")
-			return
-
-		# --- RETRIEVE AND CONVERT NOTES (Live 12 Format) ---
-		note_tuples = []
-		try:
-			src_clip.select_all_notes()
-			raw_notes = src_clip.get_selected_notes_extended()
-			src_clip.deselect_all_notes()
-			if raw_notes:
-				for n in raw_notes:
-					if hasattr(n, 'pitch'):
-						pitch = int(n.pitch)
-						time = float(n.start_time)
-						length = float(n.duration)
-						velocity = int(n.velocity)
-						mute = 0
-					elif isinstance(n, (list, tuple)) and len(n) >= 4:
-						pitch, time, length, velocity = int(n[0]), float(n[1]), float(n[2]), int(n[3])
-						mute = 0
-					else:
-						continue
-					note_tuples.append((pitch, time, length, velocity, mute))
-			else:
-				self._control_surface.show_message("Source clip has no notes")
-				return
-		except Exception:
-			self._control_surface.show_message("Error reading source notes")
-			return
-		if not note_tuples:
-			return
-
-		# --- APPLY NOTES ---
-		try:
-			dst_clip.select_all_notes()
-			dst_clip.replace_selected_notes(tuple(note_tuples))
-
-			# Highlight the new clip slot so the user sees it immediately
-			# This works for both existing slots and newly created scenes
-			if hasattr(song, 'view'):
-				song.view.highlighted_clip_slot = next_clip_slot
-			self._control_surface.show_message("Duplicated! (%d notes)" % len(note_tuples))
+			snapshot = self._snapshot_clip(src_clip)
 		except Exception as e:
-			self._control_surface.log_message(f"[DUP] Application Error: {e}")
-			self._control_surface.show_message("Duplication Failed")
+			self._control_surface.log_message(f"[DUP] Snapshot failed: {e}")
+			self._control_surface.show_message("Error reading source clip")
+			return
+		if next_clip_slot.has_clip and next_clip_slot.is_playing:
+			next_clip_slot.stop()
+
+		# --- COPY THE WHOLE CLIP (name with SUX tag, loop, markers, notes) ---
+		# This must be complete BEFORE the new slot is highlighted: the step
+		# sequencer then loads the copied SUX tag instead of writing defaults.
+		try:
+			# Live 11+: native copy, identical to Live's own duplicate
+			highlighted_clip_slot.duplicate_clip_to(next_clip_slot)
+		except Exception as e:
+			self._control_surface.log_message(f"[DUP] duplicate_clip_to unavailable ({e}), rebuilding clip")
+			try:
+				if next_clip_slot.has_clip:
+					next_clip_slot.delete_clip()
+				next_clip_slot.create_clip(max(snapshot['loop_end'], snapshot['end_marker']))
+				self._apply_clip_snapshot(next_clip_slot.clip, snapshot)
+			except Exception as e2:
+				self._control_surface.log_message(f"[DUP] Application Error: {e2}")
+				self._control_surface.show_message("Duplication Failed")
+				return
+
+		# Highlight the new clip slot so the user sees it immediately
+		# This works for both existing slots and newly created scenes
+		if hasattr(song, 'view'):
+			song.view.highlighted_clip_slot = next_clip_slot
+		self._control_surface.show_message("Duplicated! (%d notes)" % len(snapshot['notes']))
 
 	# UTILS
 	def uses_bottom_row(self):

@@ -68,6 +68,11 @@ NAV_VISIBLE_BANDS = 8
 # and how many scheduler ticks (~100 ms each) a single tap waits before running.
 NAV_DOUBLE_TAP_WINDOW = 0.3
 NAV_DOUBLE_TAP_TICKS = 3
+# Clip gestures (Toggle held + Copy taps): max time from the first tap's
+# release to the second tap's press (seconds), and how many scheduler ticks
+# the single-tap duplicate waits before running.
+CLIP_GESTURE_TAP_WINDOW = 0.3
+CLIP_GESTURE_TAP_TICKS = 3
 # Loop edits made in Live: coalesce the clip-tag rewrite (scheduler ticks)
 LOOP_TAG_SYNC_DELAY_TICKS = 5
 # Drumrack: switching Live's Scale toggle is deferred (Live forbids changes
