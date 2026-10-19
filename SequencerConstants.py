@@ -52,6 +52,15 @@ RESOLUTION_NAMES = [
 ]
 
 # ==========================================================
+# Velocity of new notes
+# ==========================================================
+# New notes take the last value received on this CC. Channels are 0-based:
+# 11 = MIDI channel 12. Until the CC has been received, the default is used.
+NOTE_VELOCITY_CC_CHANNEL = 11
+NOTE_VELOCITY_CC_NUMBER = 16
+DEFAULT_NOTE_VELOCITY = 90
+
+# ==========================================================
 # Drumrack Pitch Blocks / Navigation View
 # ==========================================================
 # In drumrack mode the vertical navigation unit is a "pitch block":

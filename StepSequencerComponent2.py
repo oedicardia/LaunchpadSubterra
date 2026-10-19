@@ -1,5 +1,6 @@
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
+from _Framework.InputControlElement import InputControlElement, MIDI_CC_TYPE
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement
 from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	STEPSEQ_MODE_NOTES,
@@ -24,6 +25,9 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	DRUM_COLORS_NOTE,
 	DRUM_METRONOME_NO_NOTE,
 	DRUM_METRONOME_NOTE,
+	NOTE_VELOCITY_CC_CHANNEL,
+	NOTE_VELOCITY_CC_NUMBER,
+	DEFAULT_NOTE_VELOCITY,
 )
 from .LoopSelectorComponent import (LoopSelectorComponent, apply_clip_loop,
                                     clamp_to_markers)
@@ -541,6 +545,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._register_clip_slot_listener()
 		self._init_data()
 		self._velocity_map = [0, 18, 36, 54, 72, 90, 108,127]
+		# Velocity of new notes: last value of CC16 on MIDI channel 11
+		self._note_velocity = DEFAULT_NOTE_VELOCITY
+		self._velocity_cc = InputControlElement(
+			MIDI_CC_TYPE, NOTE_VELOCITY_CC_CHANNEL, NOTE_VELOCITY_CC_NUMBER)
+		self._velocity_cc.add_value_listener(self._on_velocity_cc_value)
 		self._length_map = [0.5, 1, 2, 3, 4, 8, 16, 32]
 
 		# time
@@ -673,6 +682,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					except RuntimeError:
 						pass
 		self._matrix = None
+		if self._velocity_cc is not None:
+			self._velocity_cc.remove_value_listener(self._on_velocity_cc_value)
+			self._velocity_cc = None
 		self._mode_notes_lengths_button = None
 		self._mode_notes_octaves_button = None
 		self._mode_notes_velocities_button = None
@@ -2555,7 +2567,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				pitch,
 				grid_time,
 				self.resolution_beats,
-				self._velocity_map[5],
+				self._note_velocity,
 				False
 			)
 		)
@@ -3474,7 +3486,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Single Click Logic:
 							note = self._get_note_for_pitch_at_step(step_idx, pitch)
 							if note is None:
-								new_note = (pitch, start_time, target_length, 90, False)
+								new_note = (pitch, start_time, target_length, self._note_velocity, False)
 								notes = list(self._note_cache)
 								notes.append(new_note)
 								self._write_note_cache_to_clip(notes)
@@ -3703,8 +3715,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._pending_revert_data = list(self._note_cache)
 							note = self._get_note_for_pitch_at_step(step_idx, pitch)
 							if note is None:
-								# CREATE NEW NOTE WITH DEFAULT VELOCITY 90 AND TARGET LENGTH
-								new_note = (pitch, start_time, target_length, 90, False)
+								# CREATE NEW NOTE WITH THE CC VELOCITY AND TARGET LENGTH
+								new_note = (pitch, start_time, target_length, self._note_velocity, False)
 								notes = list(self._note_cache)
 								notes.append(new_note)
 								self._write_note_cache_to_clip(notes)
@@ -4466,6 +4478,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self.sync_clip_with_json()
 
 # VELOCITIES
+	def _on_velocity_cc_value(self, value):
+		# Velocity 0 would make a silent note: keep it at least 1
+		self._note_velocity = max(1, min(127, value))
+
 	def _set_velocity_at_step(self, idx, velocity_index):
 		velocity = self._velocity_map[velocity_index]
 		notes = list(self._note_cache)
