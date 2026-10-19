@@ -7,6 +7,34 @@ from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
 STEPSEQ_MODE_MULTINOTE = 2
 DEBUG_LOGGING = True  # Set to False for release
+
+
+def clamp_to_markers(clip, start, end):
+    """
+    Limit a loop range to the clip's start/end markers. The markers are
+    edited in Live only; the step sequencer never moves them.
+    Returns (start, end), or None if nothing of the range is left.
+    """
+    start = max(float(start), float(clip.start_marker))
+    end = min(float(end), float(clip.end_marker))
+    if end <= start:
+        return None
+    return start, end
+
+
+def apply_clip_loop(clip, start, end):
+    """
+    Set a clip's loop in an order Live accepts
+    (loop_start must stay below loop_end after every single write).
+    """
+    if end > clip.loop_end:
+        clip.loop_end = end
+    if start < clip.loop_start:
+        clip.loop_start = start
+    clip.loop_start = start
+    clip.loop_end = end
+
+
 class LoopSelectorComponent(ControlSurfaceComponent):
 
     def __init__(self, step_sequencer, buttons, control_surface):
@@ -19,8 +47,6 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         self._notes = None  # notes of the clip
         self._playhead = None  # contains the clip playing position
 
-        self._full_loop_start = 0.0
-        self._full_loop_end = 0.0
         self._loop_end = 0
         self._loop_start = 0
 
@@ -58,10 +84,6 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
     def set_clip(self, clip):
         self._clip = clip
-
-        if clip is not None:
-            self._full_loop_start = clip.loop_start
-            self._full_loop_end = clip.loop_end
 
         if DEBUG_LOGGING:
             self._control_surface.log_message(
@@ -138,59 +160,19 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
         try:
 
-            clip_max = max(
-                self._clip.length,
-                self._clip.loop_end,
-                self._clip.end_marker,
-                end
-            )
-
-            start = max(0.0, min(start, clip_max))
-            end = max(start + self._resolution, min(end, clip_max))
-            #end = max(start + self._quantization, min(end, clip_max))
-
-            if start >= end:
+            # The loop is limited to the clip's start/end markers. The
+            # markers are only edited in Live, never by the sequencer.
+            clamped = clamp_to_markers(self._clip, start, end)
+            if clamped is None:
+                self._control_surface.show_message(
+                    "Loop outside the clip markers")
                 return
+            start, end = clamped
 
             self._loop_start = start
             self._loop_end = end
 
-            # ----------------------------------------
-            # IMPORTANT:
-            # expand markers FIRST
-            # ----------------------------------------
-
-            if end > self._clip.end_marker:
-                self._clip.end_marker = end
-
-            if start < self._clip.start_marker:
-                self._clip.start_marker = start
-
-            # ----------------------------------------
-            # expand loop bounds
-            # ----------------------------------------
-
-            if end > self._clip.loop_end:
-                self._clip.loop_end = end
-
-            if start < self._clip.loop_start:
-                self._clip.loop_start = start
-
-            # ----------------------------------------
-            # final exact values
-            # ----------------------------------------
-
-            self._clip.loop_start = start
-            self._clip.loop_end = end
-
-            self._clip.start_marker = start
-            # NOTE: the end marker is NOT pulled in to the loop end.
-            # It is the clip's total length, independent of the loop
-            # (it was only expanded above if the loop reaches past it).
-
-            # self._debug(
-            #     f"APPLIED LOOP start={start} end={end}"
-            # )
+            apply_clip_loop(self._clip, start, end)
 
         except (RuntimeError, IndexError) as e:
 
@@ -221,14 +203,15 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         block indexes up to (and including) the LAST step of the higher one.
 
         Same behaviour as the two-button press on the loop selector row:
-        selecting the loop that is already active restores the full clip loop.
+        selecting the loop that is already active resets the loop to the
+        clip's start and end markers.
 
         Usable even while this component is disabled (e.g. from the note
         editor's navigation overview, where row 7 is not owned by us).
 
         Returns:
-            None if nothing was done, True if the full loop was restored,
-            False if a new loop was set.
+            None if nothing was done, True if the loop was reset to the
+            clip markers, False if a new loop was set.
         """
         if self._clip is None:
             return None
@@ -240,7 +223,7 @@ class LoopSelectorComponent(ControlSurfaceComponent):
         block_len = self._blocksize * self._resolution
 
         if self._is_selecting_current_loop(first_block, absolute_end):
-            self.set_clip_loop(self._full_loop_start, self._full_loop_end)
+            self.reset_loop_to_markers()
             restored = True
         else:
             self.set_clip_loop(first_block * block_len, absolute_end * block_len)
@@ -256,6 +239,22 @@ class LoopSelectorComponent(ControlSurfaceComponent):
 
         self._step_sequencer.set_page(first_block)
         return restored
+
+    def reset_loop_to_markers(self):
+        """
+        Loop start -> clip start marker, loop end -> clip end marker.
+        Called when the loop that is already active is selected again.
+        """
+        if self._clip is None:
+            return
+        try:
+            start = float(self._clip.start_marker)
+            end = float(self._clip.end_marker)
+        except (RuntimeError, AttributeError):
+            return
+        if DEBUG_LOGGING:
+            self._debug(f"RESET LOOP TO MARKERS {start} -> {end}")
+        self.set_clip_loop(start, end)
 
     def set_loop_page_offset(self, offset):
         self._loop_page_offset = offset
@@ -353,21 +352,9 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                         # --- NORMAL LOOP SELECTION (ALWAYS EXECUTED) ---
 
                         # SAME LOOP SELECTED AGAIN
-                        # -> restore full clip
+                        # -> loop = clip start marker .. end marker
                         if self._is_selecting_current_loop(absolute_start, absolute_end):
-
-                            # self._control_surface.log_message(
-                            #     "[LoopSelector] RESTORING FULL LOOP "
-                            #     "stored=(%s,%s)" % (
-                            #         self._full_loop_start,
-                            #         self._full_loop_end
-                            #     )
-                            # )
-
-                            self.set_clip_loop(
-                                self._full_loop_start,
-                                self._full_loop_end
-                            )
+                            self.reset_loop_to_markers()
 
                         else:
 
@@ -414,6 +401,18 @@ class LoopSelectorComponent(ControlSurfaceComponent):
                 # self._quantization
                 self._resolution
         )
+
+        # A selection cut short at a marker is the active loop too
+        # (its end is then not on a block boundary).
+        try:
+            clamped = clamp_to_markers(
+                self._clip, start * block_size, end * block_size)
+        except (RuntimeError, AttributeError):
+            clamped = None
+        if clamped is not None and (
+                abs(clamped[0] - self._clip.loop_start) < 0.0001 and
+                abs(clamped[1] - self._clip.loop_end) < 0.0001):
+            return True
 
         current_start_block = int(
             round(self._clip.loop_start / block_size)

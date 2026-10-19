@@ -354,10 +354,10 @@ class StepSequencerComponent(CompoundComponent):
 		#self._control_surface.log_message("StepSeq enabled=%s" % enabled)
 
 		if enabled:
-			if hasattr(self, '_scale_selector'):
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[SYNCHRONIZE] Absolute mode = {self._scale_selector._is_absolute}")
+			# if hasattr(self, '_scale_selector'):
+			# 	if DEBUG_LOGGING:
+			# 		self._control_surface.log_message(
+			# 			f"[SYNCHRONIZE] Absolute mode = {self._scale_selector._is_absolute}")
 
 			if self._mode == STEPSEQ_MODE_SCALE_EDIT:
 				self.set_mode(self._mode_backup)
@@ -444,9 +444,9 @@ class StepSequencerComponent(CompoundComponent):
 				self._track_controller.set_next_track_button(None)
 				self.set_left_button(self._top_buttons[2])
 				self.set_right_button(self._top_buttons[3])
-			self._control_surface.log_message(
-				"[SET_MODE] old=%d new=%d from StepSequencerComponent.set_mode()>" % (self._mode, mode)
-			)
+			# self._control_surface.log_message(
+			# 	"[SET_MODE] old=%d new=%d from StepSequencerComponent.set_mode()>" % (self._mode, mode)
+			# )
 			self._mode = mode
 			self._note_editor._force_update = True
 			self.update()
@@ -470,11 +470,11 @@ class StepSequencerComponent(CompoundComponent):
 		key_is_root_note = [False, False, False, False, False, False, False, False]
 		key_is_in_scale = [False, False, False, False, False, False, False, False]
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] START - Root={self._note_selector._key} " +
-				f"Scale={self._note_selector._scale} IsDiatonic={self._note_selector.is_diatonic}"
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] START - Root={self._note_selector._key} " +
+		# 		f"Scale={self._note_selector._scale} IsDiatonic={self._note_selector.is_diatonic}"
+		# 	)
 
 		# ========================================
 		# GET SCALE INFORMATION
@@ -503,18 +503,18 @@ class StepSequencerComponent(CompoundComponent):
 		root_note_class = root_midi_note % 12
 		display_octave = octave  # The octave for display (typically 2-3)
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] Root MIDI={root_midi_note} NoteClass={root_note_class} DisplayOctave={display_octave} Absolute={is_absolute}"
-			)
-			self._control_surface.log_message(
-				"[ROOT] root_note={} selected_note={} key={} octave={}".format(
-					self._note_selector._root_note,
-					getattr(self._note_selector, "selected_note", None),
-					self._note_selector._key,
-					getattr(self._scale_selector, "_octave", None)
-				)
-			)
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] Root MIDI={root_midi_note} NoteClass={root_note_class} DisplayOctave={display_octave} Absolute={is_absolute}"
+		# 	)
+		# 	self._control_surface.log_message(
+		# 		"[ROOT] root_note={} selected_note={} key={} octave={}".format(
+		# 			self._note_selector._root_note,
+		# 			getattr(self._note_selector, "selected_note", None),
+		# 			self._note_selector._key,
+		# 			getattr(self._scale_selector, "_octave", None)
+		# 		)
+		# 	)
 		# ========================================
 		# CASE 1: DRUM RACK MODE
 		# ========================================
@@ -559,13 +559,13 @@ class StepSequencerComponent(CompoundComponent):
 				key_is_root_note[i] = (note % 12) == root_note_class
 				key_is_in_scale[i] = True
 
-			if DEBUG_LOGGING:
-				self._control_surface.log_message(
-					"[SCALE_UPDATED] {} Keys={}".format(
-						"ABSOLUTE" if is_absolute else "RELATIVE",
-						keys
-					)
-				)
+			# if DEBUG_LOGGING:
+			# 	self._control_surface.log_message(
+			# 		"[SCALE_UPDATED] {} Keys={}".format(
+			# 			"ABSOLUTE" if is_absolute else "RELATIVE",
+			# 			keys
+			# 		)
+			# 	)
 
 		# ========================================
 		# CASE 3: CHROMATIC MODE
@@ -585,13 +585,13 @@ class StepSequencerComponent(CompoundComponent):
 		self._key_index_is_root_note = key_is_root_note
 		self._key_index_is_in_scale = key_is_in_scale
 
-		if DEBUG_LOGGING:
-			is_ascending = all(keys[i] <= keys[i + 1] for i in range(len(keys) - 1))
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] ASCENDING CHECK - {'✓ PASS' if is_ascending else '✗ FAIL'} Keys={keys}")
-
-			if not is_ascending:
-				self._control_surface.log_message(f"[SCALE_UPDATED] ERROR: Keys are NOT ascending!")
+		# if DEBUG_LOGGING:
+		# 	is_ascending = all(keys[i] <= keys[i + 1] for i in range(len(keys) - 1))
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] ASCENDING CHECK - {'✓ PASS' if is_ascending else '✗ FAIL'} Keys={keys}")
+		#
+		# 	if not is_ascending:
+		# 		self._control_surface.log_message(f"[SCALE_UPDATED] ERROR: Keys are NOT ascending!")
 
 		if hasattr(self, '_note_editor') and self._note_editor:
 			self._note_editor.set_key_indexes(keys)
@@ -601,9 +601,9 @@ class StepSequencerComponent(CompoundComponent):
 		self._update_note_editor()
 		self._update_note_selector()
 
-		if DEBUG_LOGGING:
-			self._control_surface.log_message(
-				f"[SCALE_UPDATED] COMPLETE - Mode={'ABSOLUTE' if is_absolute else 'RELATIVE'} Keys={keys}")
+		# if DEBUG_LOGGING:
+		# 	self._control_surface.log_message(
+		# 		f"[SCALE_UPDATED] COMPLETE - Mode={'ABSOLUTE' if is_absolute else 'RELATIVE'} Keys={keys}")
 
 	def _build_keys_from_pattern(self):
 		"""
@@ -714,7 +714,7 @@ class StepSequencerComponent(CompoundComponent):
 		if hasattr(self._note_editor, '_mode') and self._note_editor._mode == STEPSEQ_MODE_NAV_OVERVIEW:
 			# DO NOT UPDATE LOOP SELECTOR AT ALL in this mode
 			# It will steal Row 7 from the Note Editor
-			self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - OCTAVE OVERVIEW MODE")
+			self._control_surface.log_message("[LOOP SELECTOR] SKIP UPDATE - NAV OVERVIEW MODE")
 			return
 
 		enable = self._loop_selector_should_be_enabled()
@@ -810,33 +810,84 @@ class StepSequencerComponent(CompoundComponent):
 		if self.is_enabled() and self._clip != None:
 			self._loop_selector._get_clip_loop()
 
+
 	def on_clip_slot_has_clip_changed(self):
-		# the clip was deleted. unlock.
+		# Clip was deleted.
 		if not self._clip_slot.has_clip:
 			self._is_locked = False
+
+			# on_clip_slot_changed() is responsible for propagating
+			# the None clip to the child components.
+			self.on_clip_slot_changed()
+
+			# Do not immediately call update() here.
+			# The child components may still be transitioning away
+			# from the deleted Ableton Clip object.
+			return
+
 		self.on_clip_slot_changed()
 		self.update()
 
+
 	def on_clip_slot_changed(self, scheduled=False):
 		# EDGE CASE: Sync old clip if in scale mode before switch
-		if (self._clip is not None and
-				hasattr(self._clip, 'is_midi_clip') and
-				self._clip.is_midi_clip and
-				self._mode == STEPSEQ_MODE_SCALE_EDIT and
-				hasattr(self, '_note_editor') and
-				self._note_editor and
-				hasattr(self._note_editor, '_meta_manager') and
-				self._note_editor._meta_manager):
+		#
+		# IMPORTANT:
+		# During Live clip move/reorder notifications, self._clip may still
+		# contain a Python proxy to a Clip whose underlying Live object has
+		# already been invalidated. In that situation even:
+		#
+		#     hasattr(self._clip, 'is_midi_clip')
+		#
+		# can raise a Boost.Python.ArgumentError.
+		#
+		# Therefore the entire inspection of self._clip must be protected.
+		# If Live has already invalidated the old clip, simply skip this
+		# pre-switch sync. The clip's embedded SUX tag remains the primary
+		# source of truth.
 
-			try:
-				self._note_editor.sync_clip_with_json()
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[CLIP_SWITCH_SYNC] Synced old clip '{self._clip.name[:30]}...' before switching (was in scale mode)"
-					)
-			except Exception as e:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(f"[CLIP_SWITCH_SYNC_ERROR] {e}")
+		# if self._clip is not None:
+		#
+		# 	try:
+		# 		old_clip = self._clip
+		#
+		# 		# Test the Live object inside the protected block.
+		# 		is_midi = old_clip.is_midi_clip
+		#
+		# 		if (
+		# 				is_midi and
+		# 				self._mode == STEPSEQ_MODE_SCALE_EDIT and
+		# 				hasattr(self, '_note_editor') and
+		# 				self._note_editor is not None and
+		# 				hasattr(self._note_editor, '_meta_manager') and
+		# 				self._note_editor._meta_manager is not None
+		# 		):
+		#
+		# 			self._note_editor.sync_clip_with_json()
+		#
+		# 			if DEBUG_LOGGING:
+		# 				try:
+		# 					old_name = old_clip.name[:30]
+		# 				except Exception:
+		# 					old_name = "<invalidated clip>"
+		#
+		# 				self._control_surface.log_message(
+		# 					f"[CLIP_SWITCH_SYNC] "
+		# 					f"Synced old clip '{old_name}...' "
+		# 					f"before switching (was in scale mode)"
+		# 				)
+		#
+		# 	except Exception as e:
+		#
+		# 		# Live can invalidate the old Clip proxy while processing
+		# 		# clip movement. This is expected and must not abort the
+		# 		# clip-slot change callback.
+		# 		if DEBUG_LOGGING:
+		# 			self._control_surface.log_message(
+		# 				f"[CLIP_SWITCH_SYNC_SKIPPED] "
+		# 				f"Old clip unavailable during slot change: {e}"
+		# 			)
+
 		# get old reference to clipslot
 		clip_slot = self._clip_slot
 		#self._update_clip_toggle_button()
@@ -922,6 +973,10 @@ class StepSequencerComponent(CompoundComponent):
 						self._clip.remove_loop_start_listener(self._on_loop_changed)
 					if self._clip.loop_end_has_listener(self._on_loop_changed):
 						self._clip.remove_loop_end_listener(self._on_loop_changed)
+					if self._clip.start_marker_has_listener(self._on_loop_changed):
+						self._clip.remove_start_marker_listener(self._on_loop_changed)
+					if self._clip.end_marker_has_listener(self._on_loop_changed):
+						self._clip.remove_end_marker_listener(self._on_loop_changed)
 
 
 				# link new clip
@@ -930,6 +985,9 @@ class StepSequencerComponent(CompoundComponent):
 				self._clip_slot.clip.add_playing_position_listener(self._on_playing_position_changed)
 				self._clip_slot.clip.add_loop_start_listener(self._on_loop_changed)
 				self._clip_slot.clip.add_loop_end_listener(self._on_loop_changed)
+				# Marker edits in Live redraw the loop selector right away
+				self._clip_slot.clip.add_start_marker_listener(self._on_loop_changed)
+				self._clip_slot.clip.add_end_marker_listener(self._on_loop_changed)
 
 				# publish
 				self._clip = self._clip_slot.clip
@@ -956,20 +1014,93 @@ class StepSequencerComponent(CompoundComponent):
 					self._clip.remove_loop_start_listener(self._on_loop_changed)
 				if self._clip.loop_end_has_listener(self._on_loop_changed):
 					self._clip.remove_loop_end_listener(self._on_loop_changed)
+				if self._clip.start_marker_has_listener(self._on_loop_changed):
+					self._clip.remove_start_marker_listener(self._on_loop_changed)
+				if self._clip.end_marker_has_listener(self._on_loop_changed):
+					self._clip.remove_end_marker_listener(self._on_loop_changed)
 
 			# publish
 			self._clip = None
 			self._clip_changed()
 
-	def _clip_changed(self):  # triggered by _on_clip_slot_changed() or manually on enable.
-		self._note_editor.set_clip(self._clip)
-		self._note_selector.set_clip(self._clip)
-		self._loop_selector.set_clip(self._clip)
+	# def _clip_changed(self):  # triggered by _on_clip_slot_changed() or manually on enable.
+		# # temporarily removed for debugging
+		# self._note_editor.set_clip(self._clip)
+		# self._note_selector.set_clip(self._clip)
+		# self._loop_selector.set_clip(self._clip)
+		# self._note_editor.set_playhead(None)
+		# self._note_selector.set_playhead(None)
+		# self._loop_selector.set_playhead(None)
+		# # reload notes
+		# self._on_notes_changed()
+	def _clip_changed(self):
+		# Temporary diagnostic instrumentation.
+		self._clip_trace_seq = getattr(self, '_clip_trace_seq', 0) + 1
+		seq = self._clip_trace_seq
+		clip = self._clip
+
+		def clip_info(c):
+			if c is None:
+				return 'None'
+			try:
+				name = c.name
+			except Exception:
+				name = '<name unavailable>'
+			return '%s clip_id=%s' % (name, id(c))
+
+		def component_info(component):
+			c = getattr(component, '_clip', None)
+			return clip_info(c)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] ENTER parent_id=%s incoming={%s}'
+			% (seq, id(self), clip_info(clip))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE note_editor.set_clip '
+			'editor_id=%s editor_clip={%s}'
+			% (seq, id(self._note_editor),
+			   component_info(self._note_editor))
+		)
+		self._note_editor.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER note_editor.set_clip '
+			'editor_clip={%s}'
+			% (seq, component_info(self._note_editor))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE note_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._note_selector))
+		)
+		self._note_selector.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER note_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._note_selector))
+		)
+
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] BEFORE loop_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._loop_selector))
+		)
+		self._loop_selector.set_clip(clip)
+		self._control_surface.log_message(
+			'[CLIPTRACE PARENT #%s] AFTER loop_selector.set_clip '
+			'selector_clip={%s}'
+			% (seq, component_info(self._loop_selector))
+		)
+
 		self._note_editor.set_playhead(None)
 		self._note_selector.set_playhead(None)
 		self._loop_selector.set_playhead(None)
-		# reload notes
+
+		self._control_surface.log_message('[CLIPTRACE PARENT #%s] BEFORE _on_notes_changed' % seq)
 		self._on_notes_changed()
+		self._control_surface.log_message('[CLIPTRACE PARENT #%s] EXIT' % seq)
 
 	def _on_notes_changed(self):  # trigger by callback on clip or via _clip_changed.
 		if self.is_enabled():
@@ -1154,10 +1285,10 @@ class StepSequencerComponent(CompoundComponent):
 
 						try:
 							self._note_editor.sync_clip_with_json()
-							if DEBUG_LOGGING:
-								self._control_surface.log_message(
-									f"[EXIT_SCALE_SYNC] Synced tag after exiting scale mode"
-								)
+							# if DEBUG_LOGGING:
+							# 	self._control_surface.log_message(
+							# 		f"[EXIT_SCALE_SYNC] Synced tag after exiting scale mode"
+							# 	)
 						except Exception as e:
 							if DEBUG_LOGGING:
 								self._control_surface.log_message(f"[EXIT_SCALE_SYNC_ERROR] {e}")
@@ -1361,7 +1492,6 @@ class StepSequencerComponent(CompoundComponent):
 		# repaint the melodic nav grid if the octave overview owns the matrix
 		if (hasattr(self, '_note_editor') and self._note_editor and
 				getattr(self._note_editor, '_mode', None) == STEPSEQ_MODE_NAV_OVERVIEW):
-
 			self._note_editor._force_update = True
 			self._note_editor.update()
 

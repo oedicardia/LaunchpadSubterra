@@ -23,7 +23,8 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	DRUM_METRONOME_NO_NOTE,
 	DRUM_METRONOME_NOTE,
 )
-from .LoopSelectorComponent import LoopSelectorComponent
+from .LoopSelectorComponent import (LoopSelectorComponent, apply_clip_loop,
+                                    clamp_to_markers)
 from .NoteSelectorComponent import NoteSelectorComponent
 from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
 from .TrackControllerComponent import TrackControllerComponent
@@ -60,9 +61,15 @@ SUX_SCHEMA = [
     ('clip_loop_start',   0.0, float),
     ('clip_loop_end',     16.0, float),
 ]
+# The clip start/end markers are NOT stored: Live keeps them in the clip
+# and the step sequencer never changes them. Extra values in a tag (e.g.
+# markers written by an earlier version) are ignored.
 SUX_PARAM_COUNT = len(SUX_SCHEMA)
 METADATA_PREFIX = "[SUX:"
 METADATA_SUFFIX = "]"
+# Spaces between the clip name and the tag, so the tag is pushed out of
+# the visible part of the clip name in Session View.
+TAG_SEPARATOR = " " * 10
 
 class ClipMetadataManager:
 	"""Manages persistent clip metadata storage in JSON."""
@@ -732,10 +739,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def build_embedded_parameters_tag(self, params_dict):
 		"""
 		Construct the SUX metadata tag from parameter dictionary.
-		Format: [SUX:{is_absolute;oct;res;blk;off;start;end}]
+		Format: [SUX:{is_absolute;is_drumrack;oct;res;blk;off;start;end}]
 		CRITICAL: Must include BOTH opening '[' and closing ']' AND curly braces '{' '}'!
 		Returns:
-			str: Formatted tag like "[SUX:{0;2;4;0;0;0.0;16.0}]"
+			str: Formatted tag like "[SUX:{0;0;2;4;0;0;0.0;16.0}]"
 		"""
 		try:
 			values = []
@@ -857,12 +864,16 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							self._control_surface.log_message(
 								f"[TAG_CORRUPT] Existing tag malformed, will rewrite"
 							)
-			if not need_update:
-				return True
 			if clean_name:
-				new_full_name = f"{clean_name} {new_tag}"
+				new_full_name = f"{clean_name}{TAG_SEPARATOR}{new_tag}"
 			else:
-				new_full_name = new_tag
+				new_full_name = f"{TAG_SEPARATOR}{new_tag}"
+			# Same values but older spacing before the tag -> still rename.
+			# (Compared stripped too, in case Live trims a leading space.)
+			if not need_update and (
+					original_name == new_full_name
+					or original_name.strip() == new_full_name.strip()):
+				return True
 			immediate_success = False
 			try:
 				clip.name = new_full_name
@@ -1437,6 +1448,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				final_state['track_index'] = track_idx
 				final_state['slot_index'] = slot_idx
 				if settings_source == "EMBEDDED_TAG":
+					# No-op when the tag is current; upgrades tags written
+					# with the old tag spacing or with stored markers.
+					self.update_clip_name_with_params(
+						clip,
+						final_state
+					)
 					self._meta_manager.save_clip_to_json(
 						clip,
 						final_state
@@ -1640,7 +1657,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		state['timestamp'] = time.time()
 		return state
 
-
 	def load_clip_settings(self, clip, settings_dict):
 		"""Loads settings from dictionary into active clip's UI state.
 		CRITICAL FIXES:
@@ -1798,15 +1814,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						end = float(settings_dict['clip_loop_end'])
 						if end > start:
 							try:
-								# Expand the end marker first if the loop
-								# reaches past it; never pull it in: the end
-								# marker is the clip's total length,
-								# independent of the loop.
-								if end > self._clip.end_marker:
-									self._clip.end_marker = end
-								self._clip.loop_start = start
-								self._clip.loop_end = end
-								self._clip.start_marker = start
+								# The loop stays within the clip's markers;
+								# the markers themselves are never changed.
+								clamped = clamp_to_markers(self._clip, start, end)
+								if clamped is not None:
+									apply_clip_loop(self._clip, *clamped)
 								if hasattr(ls, '_get_clip_loop'):
 									ls._get_clip_loop()
 									ls.update()
@@ -2853,7 +2865,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
 							page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
 
-
 							# NOTE: the playhead is intentionally NOT painted in this view.
 
 							# Currently selected block (absolute, from LoopSelector source of truth)
@@ -2939,7 +2950,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 									else:
 										target_color = "StepSequencer2.Octave.Off"
 									self._grid_back_buffer[x][y] = target_color
-
 						else:
 							for y in range(8):
 								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
@@ -3343,10 +3353,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Clear step if monophonic mode
 							if self._is_monophonic:
 								for yy in range(7):
-
 									self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 0
 							self._notes_pitches[(idx) * rows + (rows - 1) - yy] = 1
-
 					elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
 						# HORIZONTAL VELOCITY MODE WITH DOUBLE-CLICK DELETE
 
@@ -4047,7 +4055,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_mute_shifted = True
 				self._is_velocity_shifted = True
 
-
 # OCTAVES & BLOCKS
 	def set_display_octave(self, octave):
 		self._display_octave = octave
@@ -4353,7 +4360,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._page = first_block
 
 		if restored:
-			self._control_surface.show_message("Loop: full clip restored")
+			self._control_surface.show_message("Loop: reset to clip markers")
 		else:
 			steps_per_block = 8
 			self._control_surface.show_message(
@@ -4411,7 +4418,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		total_steps = int(clip_end / ss._resolution)
 		total_blocks = max(1, (total_steps + 7) // 8)
 		block_index = max(0, min(block_index, total_blocks - 1))
-
 		new_offset = block_index // 8
 
 		# 1. Offset everywhere (cycle button reads ss._loop_page_offset)

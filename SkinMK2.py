@@ -372,6 +372,7 @@ class Colors:
             StoppedSelected = Rgb.WHITE
             InLoop = Rgb.PINK_THIRD
             Stopped = Rgb.DARK_GREY
+            InClip = Rgb.DARK_GREY
 
         class Resolution:
             One = Rgb.PINK
@@ -445,6 +446,18 @@ class Colors:
             OnMixedStepScale = Rgb.WHITE
             OutOfRange = Rgb.DARK_GREY
 
+        class PitchDM:
+            KickOn = Rgb.RED
+            KickOff = Rgb.RED_THIRD
+            HHOn = Rgb.YELLOW
+            HHOff = Rgb.AMBER_THIRD
+            SnareOn = Rgb.AMBER
+            SnareOff = Rgb.RED_THIRD
+            FX1On = Rgb.RED
+            FX1Off = Rgb.RED_THIRD
+            FX2On = Rgb.AMBER
+            FX2Off = Rgb.AMBER_THIRD
+
         class Zoom:
             On = Rgb.BLUE
             Dim = Rgb.BLUE_THIRD
@@ -461,6 +474,7 @@ class Colors:
             On = Rgb.PURPLE
             Dim = Rgb.PURPLE_THIRD
             Off = Rgb.BLACK
+            OffLoop = Rgb.PINK_THIRD
             OffDisplay = Rgb.DARK_GREY_PULSE
             OnDisplay = Rgb.PURPLE_PULSE
             OnAbove1 = Rgb.MINT
@@ -473,6 +487,8 @@ class Colors:
             OffPlayBlock = Rgb.BLACK # playhead column, no note
             OnSelectedBlock = Rgb.PURPLE_PULSE
             OffSelectedBlock = Rgb.DARK_GREY_PULSE
+            OnSelectedBlockLoop = Rgb.PINK_PULSE
+            OffSelectedBlockLoop = Rgb.PINK_THIRD_PULSE
 
         class Velocity:
             On = Rgb.LIGHT_BLUE
@@ -495,6 +511,8 @@ class Colors:
             MetronomeInOtherPage = Rgb.PURPLE_THIRD
             PlayInPage = Rgb.PINK_THIRD
             PlayInOtherPage = Rgb.RED_THIRD
+            PlayInPageDR = Rgb.WHITE
+            MetronomeInPageDR = Rgb.GREY
 
         class Cycle:
             Page0 = Rgb.BLUE
