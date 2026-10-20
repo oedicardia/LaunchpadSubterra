@@ -61,6 +61,28 @@ NOTE_VELOCITY_CC_NUMBER = 16
 DEFAULT_NOTE_VELOCITY = 90
 
 # ==========================================================
+# Velocity / Length Slider Subdivisions
+# ==========================================================
+# Holding the last lit pad of a velocity or length slider and tapping the pad
+# next to it moves the value by 1/SLIDER_SUBDIVISIONS of the gap between two
+# pads: 4 values in between, then the value of the next pad. The last lit pad
+# shows Sub1..Sub4 for the in-between value closest to the notes' value, and
+# the normal On colour when the value is the pad's own value.
+SLIDER_SUBDIVISIONS = 5
+VELOCITY_SUB_COLORS = [
+    "StepSequencer2.Velocity.Sub1",
+    "StepSequencer2.Velocity.Sub2",
+    "StepSequencer2.Velocity.Sub3",
+    "StepSequencer2.Velocity.Sub4",
+]
+LENGTH_SUB_COLORS = [
+    "StepSequencer2.Length.Sub1",
+    "StepSequencer2.Length.Sub2",
+    "StepSequencer2.Length.Sub3",
+    "StepSequencer2.Length.Sub4",
+]
+
+# ==========================================================
 # Drumrack Pitch Blocks / Navigation View
 # ==========================================================
 # In drumrack mode the vertical navigation unit is a "pitch block":

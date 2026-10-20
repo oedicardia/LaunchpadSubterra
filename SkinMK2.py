@@ -494,13 +494,21 @@ class Colors:
             On = Rgb.LIGHT_BLUE
             Dim = Rgb.LIGHT_BLUE_THIRD
             Off = Rgb.BLACK
-            Mixed = Rgb.RED
+            Mixed = Rgb.PURPLE
+            Sub1 = Rgb.WHITE
+            Sub2 = Rgb.YELLOW
+            Sub3 = Rgb.AMBER
+            Sub4 = Rgb.RED
 
         class Length:
             On = Rgb.MINT
             Dim = Rgb.MINT_THIRD
             Off = Rgb.BLACK
-            Mixed = Rgb.RED
+            Mixed = Rgb.PURPLE
+            Sub1 = Rgb.WHITE
+            Sub2 = Rgb.YELLOW
+            Sub3 = Rgb.AMBER
+            Sub4 = Rgb.RED
 
         class Random:
             On = Rgb.RED

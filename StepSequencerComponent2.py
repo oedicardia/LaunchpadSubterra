@@ -28,6 +28,9 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	NOTE_VELOCITY_CC_CHANNEL,
 	NOTE_VELOCITY_CC_NUMBER,
 	DEFAULT_NOTE_VELOCITY,
+	SLIDER_SUBDIVISIONS,
+	VELOCITY_SUB_COLORS,
+	LENGTH_SUB_COLORS,
 )
 from .LoopSelectorComponent import (LoopSelectorComponent, apply_clip_loop,
                                     clamp_to_markers)
@@ -545,7 +548,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._register_clip_slot_listener()
 		self._init_data()
 		self._velocity_map = [0, 18, 36, 54, 72, 90, 108,127]
-		# Velocity of new notes: last value of CC16 on MIDI channel 11
+		# Velocity of new notes: last value of the velocity CC (SequencerConstants)
 		self._note_velocity = DEFAULT_NOTE_VELOCITY
 		self._velocity_cc = InputControlElement(
 			MIDI_CC_TYPE, NOTE_VELOCITY_CC_CHANNEL, NOTE_VELOCITY_CC_NUMBER)
@@ -2123,6 +2126,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._is_velocity_editor_vertical = False
 		self._last_velocity_press_time = 0
 		self._last_velocity_press_pos = None
+		# Velocity/length slider pad currently held (fine adjustment gesture), or None
+		self._slider_hold = None
 		self._double_click_window = 0.25
 		self._pending_revert_data = None
 		self._revert_timer_id = None
@@ -2148,6 +2153,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._nav_held = []
 		self._nav_combo_done = False
 		self._nav_pending_tap = None
+		self._slider_hold = None
 		if hasattr(self, '_step_sequencer') and self._step_sequencer:
 			self._step_sequencer.update()
 
@@ -2687,6 +2693,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		effective_page = self._get_effective_page()
 
 		# WAITING ANIMATION: Velocity
+		# Both animations cover all 8 rows: the note editor owns row 7 while
+		# waiting (uses_bottom_row), the loop selector is disabled meanwhile.
 		rows = self._note_rows
 		if self._velocity_wait_animation:
 			now = time.time()
@@ -2699,7 +2707,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				# If this is the very first run or timer is in future, force "Waiting" state
 				if elapsed_col <= 0.0:
 					# Clear column only
-					for y in range(rows):
+					for y in range(8):
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
@@ -2718,12 +2726,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				# Only draw if we are in the "falling" phase of the cycle
 				if time_in_cycle < time_to_fall:
-					pos_float = (time_in_cycle / time_to_fall) * 7.0
+					pos_float = (time_in_cycle / time_to_fall) * 8.0
 					head_pos = int(pos_float)
 					if head_pos > 7: head_pos = 7
 
 				# Clear Column (Always Black first)
-				for y in range(7):
+				for y in range(8):
 					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 				if head_pos != -1:
 					# Draw Bright Head
@@ -2741,7 +2749,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				delay = self._length_wait_start_times[x]
 				elapsed_col = now - delay
 				if elapsed_col <= 0.0:
-					for y in range(rows):
+					for y in range(8):
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 					continue
 
@@ -2755,10 +2763,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				time_in_cycle = elapsed_col % cycle_duration
 				head_pos = -1
 				if time_in_cycle < time_to_fall:
-					pos_float = (time_in_cycle / time_to_fall) * 7.0
+					pos_float = (time_in_cycle / time_to_fall) * 8.0
 					head_pos = int(pos_float)
 					if head_pos > 7: head_pos = 7
-				for y in range(rows):
+				for y in range(8):
 					self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 				if head_pos != -1:
 					self._grid_back_buffer[x][head_pos] = "StepSequencer2.Length.On"
@@ -2776,9 +2784,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
 				# update back buffer
 				if self._clip != None:
-					for x in range(8):
-						idx = self._get_step_index(x)
-						if self._mode == STEPSEQ_MODE_NOTES:
+					# Notes view: one pass per step column. The other views draw
+					# the whole grid themselves, so they run once per update.
+					if self._mode == STEPSEQ_MODE_NOTES:
+						for x in range(8):
+							idx = self._get_step_index(x)
 							# --- SCALE CONFIGURATION ---
 							scale_root_key = 0
 							scale_notes = [0, 2, 4, 5, 7, 9, 11]
@@ -2812,19 +2822,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										if not (start_time <= note_time < end_time):
 											continue
 
-										# 2. Row Mapping Check
-										mapped_row = self._get_row_for_pitch(note_midi)
-										if mapped_row != row_idx:
+										# 2. Row Mapping Check (melodic: closest row,
+										# only if the note is in that row's octave)
+										if self._visible_row_for_pitch(note_midi) != row_idx:
 											continue
-
-										# 3. STRICT OCTAVE FILTER (melodic only;
-										# drumrack rows map pitches exactly)
-										# Ensure the note's octave matches the row's octave
-										if not self._is_drum_view:
-											note_octave = int(note_midi / 12)
-											expected_octave = int(current_pitch / 12)
-											if note_octave != expected_octave:
-												continue
 										notes_mapped_to_this_row.append(n)
 									has_note_here = len(notes_mapped_to_this_row) > 0
 									if self._is_drum_view:
@@ -2881,354 +2882,199 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 								# Update buffer for ALL cases
 								self._grid_back_buffer[x][y] = target_color
-						elif self._mode == STEPSEQ_MODE_NAV_OVERVIEW:
-							# Vertical bands: MIDI octaves (melodic, 11 bands) or
-							# 8-note pitch blocks (drumrack, 16 bands).
-							start_band = self._overview_start_octave
-							max_visible_band = start_band + 7
-							min_visible_band = start_band
-							band_count = self._nav_band_count()
-							displayed_band = self._displayed_nav_band(self._last_displayed_octave)
+					elif self._mode == STEPSEQ_MODE_NAV_OVERVIEW:
+						# Vertical bands: MIDI octaves (melodic, 11 bands) or
+						# 8-note pitch blocks (drumrack, 16 bands).
+						start_band = self._overview_start_octave
+						max_visible_band = start_band + 7
+						min_visible_band = start_band
+						band_count = self._nav_band_count()
+						displayed_band = self._displayed_nav_band(self._last_displayed_octave)
 
-							# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
-							page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
+						# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
+						page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
 
-							# NOTE: the playhead is intentionally NOT painted in this view.
+						# NOTE: the playhead is intentionally NOT painted in this view.
 
-							# Currently selected block (absolute, from LoopSelector source of truth)
-							ls = getattr(self._step_sequencer, '_loop_selector', None)
-							selected_block = getattr(ls, '_block', None) if ls else None
+						# Currently selected block (absolute, from LoopSelector source of truth)
+						ls = getattr(self._step_sequencer, '_loop_selector', None)
+						selected_block = getattr(ls, '_block', None) if ls else None
 
-							# Current clip loop, read live from the clip (also reflects
-							# loop edits made in Live)
-							try:
-								loop_start = float(self._clip.loop_start)
-								loop_end = float(self._clip.loop_end)
-							except Exception:
-								loop_start, loop_end = 0.0, 0.0
-							block_len = 8 * self.resolution_beats
-							clip_end = self._clip_total_end()
-							for x in range(8):
-								block_index = x + page_offset * 8
-								# Blocks beyond the clip's total length are not painted
-								if block_index * block_len >= clip_end:
-									for y in range(8):
-										self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
-									continue
-								step_notes = self._get_notes_in_block(block_index)
-								note_bands = set(self._nav_band_of_pitch(n[0]) for n in step_notes)
-								highest_note_band = max(note_bands) if note_bands else -1
-								lowest_note_band = min(note_bands) if note_bands else 128
-								is_selected_col = (selected_block == block_index)
-								# Same rule as the loop selector row: a block is in the
-								# loop when its first step lies inside [loop_start, loop_end)
-								block_start = block_index * block_len
-								is_loop_col = (loop_start <= block_start < loop_end)
+						# Current clip loop, read live from the clip (also reflects
+						# loop edits made in Live)
+						try:
+							loop_start = float(self._clip.loop_start)
+							loop_end = float(self._clip.loop_end)
+						except Exception:
+							loop_start, loop_end = 0.0, 0.0
+						block_len = 8 * self.resolution_beats
+						clip_end = self._clip_total_end()
+						for x in range(8):
+							block_index = x + page_offset * 8
+							# Blocks beyond the clip's total length are not painted
+							if block_index * block_len >= clip_end:
 								for y in range(8):
-									target_band = start_band + (7 - y)
-									has_note_here = target_band in note_bands
-									target_color = "StepSequencer2.Octave.Off"
-
-									# PRIORITY 0: band beyond the MIDI range -> dark
-									if target_band >= band_count:
-										target_color = "DefaultButton.Disabled"
-										self._grid_back_buffer[x][y] = target_color
-										continue
-
-									# PRIORITY 1: overflow indicators (edge rows)
-									is_top_edge = (y == 0)
-									is_bottom_edge = (y == 7)
-									if is_top_edge and highest_note_band > max_visible_band:
-										diff = highest_note_band - max_visible_band
-										if diff >= 3:
-											target_color = "StepSequencer2.Octave.OnAbove3"
-										elif diff == 2:
-											target_color = "StepSequencer2.Octave.OnAbove2"
-										else:
-											target_color = "StepSequencer2.Octave.OnAbove1"
-									elif is_bottom_edge and (lowest_note_band < min_visible_band):
-										diff = min_visible_band - lowest_note_band
-										if diff >= 3:
-											target_color = "StepSequencer2.Octave.OnBelow3"
-										elif diff == 2:
-											target_color = "StepSequencer2.Octave.OnBelow2"
-										else:
-											target_color = "StepSequencer2.Octave.OnBelow1"
-
-									# PRIORITY 2: the cross centred on where we come from in
-									# the note editor:
-									#   horizontal arm = displayed pitch block / octave row
-									#   vertical arm   = selected step-block column
-									# Loop variant when the cell's block (column) is inside
-									# the clip loop.
-									elif target_band == displayed_band or is_selected_col:
-										if has_note_here:
-											target_color = ("StepSequencer2.Octave.OnSelectedBlockLoop" if is_loop_col
-															else "StepSequencer2.Octave.OnSelectedBlock")
-										else:
-											target_color = ("StepSequencer2.Octave.OffSelectedBlockLoop" if is_loop_col
-															else "StepSequencer2.Octave.OffSelectedBlock")
-
-									# PRIORITY 3: everything outside the cross
-									elif has_note_here:
-										target_color = "StepSequencer2.Octave.On"
-									elif is_loop_col:
-										# empty block inside the loop
-										target_color = "StepSequencer2.Octave.OffLoop"
-									else:
-										target_color = "StepSequencer2.Octave.Off"
-									self._grid_back_buffer[x][y] = target_color
-						else:
+									self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
+								continue
+							step_notes = self._get_notes_in_block(block_index)
+							note_bands = set(self._nav_band_of_pitch(n[0]) for n in step_notes)
+							highest_note_band = max(note_bands) if note_bands else -1
+							lowest_note_band = min(note_bands) if note_bands else 128
+							is_selected_col = (selected_block == block_index)
+							# Same rule as the loop selector row: a block is in the
+							# loop when its first step lies inside [loop_start, loop_end)
+							block_start = block_index * block_len
+							is_loop_col = (loop_start <= block_start < loop_end)
 							for y in range(8):
-								if self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
-									# Safety check
-									if self._editing_step is None:
-										return
-									idx = self._editing_step
+								target_band = start_band + (7 - y)
+								has_note_here = target_band in note_bands
+								target_color = "StepSequencer2.Octave.Off"
 
-									# --- PRE-CALCULATE MIXED VELOCITIES PER PITCH ---
-									# Dictionary: { pitch_code : True/False }
-									mixed_velocity_pitches = {}
+								# PRIORITY 0: band beyond the MIDI range -> dark
+								if target_band >= band_count:
+									target_color = "DefaultButton.Disabled"
+									self._grid_back_buffer[x][y] = target_color
+									continue
 
-									# Get all notes for the current step
-									step_notes = self._get_notes_at_step(idx)
+								# PRIORITY 1: overflow indicators (edge rows)
+								is_top_edge = (y == 0)
+								is_bottom_edge = (y == 7)
+								if is_top_edge and highest_note_band > max_visible_band:
+									diff = highest_note_band - max_visible_band
+									if diff >= 3:
+										target_color = "StepSequencer2.Octave.OnAbove3"
+									elif diff == 2:
+										target_color = "StepSequencer2.Octave.OnAbove2"
+									else:
+										target_color = "StepSequencer2.Octave.OnAbove1"
+								elif is_bottom_edge and (lowest_note_band < min_visible_band):
+									diff = min_visible_band - lowest_note_band
+									if diff >= 3:
+										target_color = "StepSequencer2.Octave.OnBelow3"
+									elif diff == 2:
+										target_color = "StepSequencer2.Octave.OnBelow2"
+									else:
+										target_color = "StepSequencer2.Octave.OnBelow1"
 
-									# Group by pitch and check for velocity conflicts
-									pitch_velocities = {} # { pitch_code : [vel1, vel2, ...] }
+								# PRIORITY 2: the cross centred on where we come from in
+								# the note editor:
+								#   horizontal arm = displayed pitch block / octave row
+								#   vertical arm   = selected step-block column
+								# Loop variant when the cell's block (column) is inside
+								# the clip loop.
+								elif target_band == displayed_band or is_selected_col:
+									if has_note_here:
+										target_color = ("StepSequencer2.Octave.OnSelectedBlockLoop" if is_loop_col
+														else "StepSequencer2.Octave.OnSelectedBlock")
+									else:
+										target_color = ("StepSequencer2.Octave.OffSelectedBlockLoop" if is_loop_col
+														else "StepSequencer2.Octave.OffSelectedBlock")
 
-									for note in step_notes:
-										note_pitch = note[0]
-										note_vel = note[3]
-										if note_pitch not in pitch_velocities:
-											pitch_velocities[note_pitch] = []
-										pitch_velocities[note_pitch].append(note_vel)
+								# PRIORITY 3: everything outside the cross
+								elif has_note_here:
+									target_color = "StepSequencer2.Octave.On"
+								elif is_loop_col:
+									# empty block inside the loop
+									target_color = "StepSequencer2.Octave.OffLoop"
+								else:
+									target_color = "StepSequencer2.Octave.Off"
+								self._grid_back_buffer[x][y] = target_color
+					elif self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR:
+						# Safety check
+						if self._editing_step is None:
+							return
 
-									# Identify pitches with mixed velocities
-									for pitch, vels in pitch_velocities.items():
-										if len(vels) > 1:
-											# Check if any two velocities differ
-											if len(set(vels)) > 1:
-												mixed_velocity_pitches[pitch] = True
-											else:
-												mixed_velocity_pitches[pitch] = False
-										else:
-											mixed_velocity_pitches[pitch] = False
+						# One slider per row: the notes of that pitch at the edited step
+						for y in range(rows):
+							pitch = self._pitch_for_row(y)
+							levels = self._slider_levels(self._editing_step, pitch)
+							if not levels:
+								# No note here: draw dim grid background
+								default_velocity = 90
+								bucket = 0
+								for i, v in enumerate(self._velocity_map):
+									if default_velocity >= v:
+										bucket = i
+								for col in range(8):
+									if col <= bucket:
+										self._grid_back_buffer[col][y] = \
+											"StepSequencer2.Velocity.Dim"
+									else:
+										self._grid_back_buffer[col][y] = \
+											"StepSequencer2.Velocity.Off"
+								continue
 
-									# --- DRAW THE GRID ---
-									for y in range(rows):
-										pitch = self._pitch_for_row(y)
-										note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
+							# Notes of different velocities are drawn as Mixed (red)
+							self._draw_slider(
+								levels, [(col, y) for col in range(8)],
+								"StepSequencer2.Velocity.Off", "StepSequencer2.Velocity.Mixed")
+						if not self._is_drum_view:
+							self._draw_step_selector_row()
+					elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
+						# One slider per step, showing only the notes visible in the view
+						for col_x in range(8):
+							idx = self._get_step_index(col_x)
+							levels = self._slider_levels(idx)
+							if levels:
+								# Notes of different velocities are drawn as Mixed (red),
+								# above the bar is BLACK
+								self._draw_slider(
+									levels, [(col_x, 7 - pad) for pad in range(8)],
+									0, "StepSequencer2.Velocity.Mixed")
+								continue
 
-										# Check if THIS specific pitch has mixed velocities
-										is_conflict = mixed_velocity_pitches.get(pitch, False)
-										if note is None:
-											# No note here: draw dim grid background
-											default_velocity = 90
-											bucket = 0
-											for i, v in enumerate(self._velocity_map):
-												if default_velocity >= v:
-													bucket = i
-											for col in range(8):
-												if col <= bucket:
-													self._grid_back_buffer[col][y] = \
-														"StepSequencer2.Velocity.Dim"
-												else:
-													self._grid_back_buffer[col][y] = \
-														"StepSequencer2.Velocity.Off"
-											continue
+							# CASE: NO VISIBLE NOTES IN THIS STEP
+							for row_y in range(8):
+								if row_y <= 1:
+									# Rows 0 and 1: BLACK
+									self._grid_back_buffer[col_x][row_y] = 0
+								else:
+									# Rows 2 to 7: DIMMED
+									self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
+					elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
+						# One slider per step, showing only the notes visible in the view
+						for col_x in range(8):
+							idx = self._get_step_index(col_x)
+							levels = self._slider_levels(idx)
+							if levels:
+								# Notes of different lengths are drawn as Mixed (red),
+								# above the bar is BLACK
+								self._draw_slider(
+									levels, [(col_x, 7 - pad) for pad in range(8)],
+									0, "StepSequencer2.Velocity.Mixed")
+								continue
 
-										# There is a note (or notes) at this pitch
-										velocity = note[3] # Note: If mixed, 'note' usually returns the first one found.
-														   # But the color logic relies on 'is_conflict', not the specific value here.
+							# CASE: NO VISIBLE NOTES IN THIS STEP
+							for row_y in range(8):
+								if row_y <= 1:
+									self._grid_back_buffer[col_x][row_y] = 0
+								else:
+									self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Length.Dim"
+					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+						if self._editing_step is None:
+							return
 
-										bucket = 0
-										for i, v in enumerate(self._velocity_map):
-											if velocity >= v:
-												bucket = i
-										for col in range(8):
-											if col <= bucket:
-												if is_conflict:
-													# USE RED COLOR FOR CONFLICTS
-													self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Mixed"
-												else:
-													# Normal On Color
-													self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.On"
-											else:
-												# Normal Off/Dim Color
-												self._grid_back_buffer[col][y] = "StepSequencer2.Velocity.Off"
-								elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
-									for col_x in range(8):
-										idx = self._get_step_index(col_x)
-										step_notes = self._get_notes_at_step(idx)
-										max_vel_idx = -1
-										has_mixed_velocities = False
-										if step_notes:
-											# Collect all velocity buckets for this step
-											velocity_buckets = []
-											for note in step_notes:
-												note_vel = note[3]
-												bucket = 0
-												for i, v in enumerate(self._velocity_map):
-													if note_vel >= v:
-														bucket = i
-												velocity_buckets.append(bucket)
+						# One slider per row: the notes of that pitch at the edited step
+						for y in range(rows):
+							pitch = self._pitch_for_row(y)
+							levels = self._slider_levels(self._editing_step, pitch)
+							if not levels:
+								# No note here: draw dim grid background
+								default_length_idx = 3
+								for col in range(8):
+									if col <= default_length_idx:
+										self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
+									else:
+										self._grid_back_buffer[col][
+											y] = "StepSequencer2.Length.Off"
+								continue
 
-												# Track max velocity for the bar height
-												if bucket > max_vel_idx:
-													max_vel_idx = bucket
-
-											# Clamp to grid height (8 rows = indices 0-7)
-											if max_vel_idx > 7: max_vel_idx = 7
-
-											# CHECK IF VELOCITIES ARE MIXED
-											if len(velocity_buckets) > 1:
-												# Multiple velocity buckets found in this step
-												first_bucket = velocity_buckets[0]
-												for b in velocity_buckets[1:]:
-													if b != first_bucket:
-														has_mixed_velocities = True
-														break
-
-										# Draw the vertical bar with appropriate color
-										for row_y in range(8):
-											row_bucket = 7 - row_y
-											if max_vel_idx == -1:
-												# CASE: NO NOTES IN THIS STEP
-												if row_y <= 1:
-													# Rows 0 and 1: BLACK
-													self._grid_back_buffer[col_x][row_y] = 0
-												else:
-													# Rows 2 to 7: DIMMED
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Dim"
-											else:
-												# CASE: HAS NOTES
-												if has_mixed_velocities and row_bucket <= max_vel_idx:
-													# RED for mixed
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
-												elif row_bucket <= max_vel_idx:
-													# BRIGHT bar
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.On"
-												else:
-													# Above the bar: BLACK
-													self._grid_back_buffer[col_x][row_y] = 0
-								elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
-									# VERTICAL LENGTH DISPLAY
-
-									for col_x in range(8):
-										idx = self._get_step_index(col_x)
-										step_notes = self._get_notes_at_step(idx)
-										max_len_idx = -1
-										has_mixed_lengths = False
-										if step_notes:
-											length_buckets = []
-											for note in step_notes:
-												note_len = note[2]
-												bucket = 0
-												for i, v in enumerate(self._length_map):
-													if note_len >= v * self.resolution_beats / 4.0:
-														bucket = i
-												length_buckets.append(bucket)
-												if bucket > max_len_idx:
-													max_len_idx = bucket
-											if max_len_idx > 7: max_len_idx = 7
-
-											# CHECK IF MIXED
-											if len(length_buckets) > 1:
-												if len(set(length_buckets)) > 1:
-													has_mixed_lengths = True
-
-										# Draw bar
-										for row_y in range(8):
-											row_bucket = 7 - row_y
-											if max_len_idx == -1:
-												if row_y <= 1:
-													self._grid_back_buffer[col_x][row_y] = 0
-												else:
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Length.Dim"
-											else:
-												# HAS NOTES
-												if has_mixed_lengths and row_bucket <= max_len_idx:
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Velocity.Mixed"
-												elif row_bucket <= max_len_idx:
-													self._grid_back_buffer[col_x][row_y] = "StepSequencer2.Length.On"
-												else:
-													self._grid_back_buffer[col_x][row_y] = 0
-								elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
-									if self._editing_step is None:
-										return
-
-									# --- PRE-CALCULATE MIXED LENGTHS PER PITCH ---
-									# Dictionary: { pitch_code : True/False }
-									mixed_length_pitches = {}
-									step_notes = self._get_notes_at_step(self._editing_step)
-
-									# Group by pitch and check for length conflicts
-									pitch_lengths = {}  # { pitch_code : [length1, length2, ...] }
-
-									for note in step_notes:
-										note_pitch = note[0]
-										note_len = note[2]
-										if note_pitch not in pitch_lengths:
-											pitch_lengths[note_pitch] = []
-										pitch_lengths[note_pitch].append(note_len)
-
-									# Identify pitches with mixed lengths
-									for pitch, lengths in pitch_lengths.items():
-										if len(lengths) > 1:
-											# Check if any two lengths differ
-											if len(set(lengths)) > 1:
-												mixed_length_pitches[pitch] = True
-											else:
-												mixed_length_pitches[pitch] = False
-										else:
-											mixed_length_pitches[pitch] = False
-
-									# --- DRAW THE GRID ---
-									for y in range(7):
-										pitch = self._pitch_for_row(y)
-										current_note = self._get_note_for_pitch_at_step(self._editing_step, pitch)
-
-										# Check if THIS specific pitch has mixed lengths
-										is_mixed = mixed_length_pitches.get(pitch, False)
-										if current_note is None:
-											# No note here: draw dim grid background
-											default_length_idx = 3
-											for col in range(8):
-												if col <= default_length_idx:
-													self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
-												else:
-													self._grid_back_buffer[col][
-														y] = "StepSequencer2.Length.Off"
-											continue
-
-										# There is a note (or notes) at this pitch
-										# If mixed, we usually draw the MAXIMUM length to show the full extent,
-										# or the first one found. Let's use the max length for visual clarity.
-										pitch_max_length = 0
-										for note in step_notes:
-											if note[0] == pitch:
-												if note[2] > pitch_max_length:
-													pitch_max_length = note[2]
-
-										# Calculate bucket for the max length
-										length_bucket = 0
-										for i, v in enumerate(self._length_map):
-											if pitch_max_length >= v * self.resolution_beats / 4.0:
-												length_bucket = i
-										if length_bucket > 7: length_bucket = 7
-
-										# Draw the "Bar" across the columns for this row
-										for col in range(8):
-											if col <= length_bucket:
-												if is_mixed:
-													# USE RED COLOR FOR CONFLICTS
-													# Note: Ensure you have defined "StepSequencer2.Length.Mixed" in your resources
-													# If not, you might need to reuse Velocity.Mixed or create a new string
-													self._grid_back_buffer[col][y] = "StepSequencer2.Length.Mixed"
-												else:
-													self._grid_back_buffer[col][y] = "StepSequencer2.Length.On"
-											else:
-												self._grid_back_buffer[col][y] = "StepSequencer2.Length.Dim"
+							# Notes of different lengths are drawn as Mixed (red)
+							self._draw_slider(
+								levels, [(col, y) for col in range(8)],
+								"StepSequencer2.Length.Dim", "StepSequencer2.Length.Mixed")
+						if not self._is_drum_view:
+							self._draw_step_selector_row()
 
 				# --- METRONOME ---
 				# playing notes (ONLY current visible page and Normal Mode)
@@ -3290,11 +3136,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					x = xx
 					y = yy
 
-		# --- BLOCK ROW 7 ONLY IN HORIZONTAL EDITORS ---
-		if (self._mode == STEPSEQ_MODE_STEP_VELOCITY_EDITOR or
-				self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR):
-			if y == 7:
-				return
+		# --- ROW 7 IN HORIZONTAL EDITORS ---
+		# Drumrack: row 7 edits the lowest note in view, like the other rows.
+		# Melodic: the notes end at row 6, row 7 selects the step to edit.
+		if (self._mode in (STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_STEP_LENGTH_EDITOR)
+				and y == 7 and not self._is_drum_view):
+			if self.is_enabled() and ((value != 0) or (not sender.is_momentary())):
+				self._select_editing_step(x)
+			return
 		effective_page = self._get_effective_page()
 		if self.is_enabled() and self._matrix != None:
 			if self._clip == None:
@@ -3336,7 +3185,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 				# If we are currently animating (waiting for user selection),
 				# pressing a grid button stops the animation and enters Horizontal Editor immediately.
-				if self._length_wait_animation and ((value != 0) or (not sender.is_momentary())) and y < 7:
+				if self._length_wait_animation and ((value != 0) or (not sender.is_momentary())):
 					idx = self._get_step_index(x)
 
 					# Stop Animation
@@ -3365,6 +3214,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._handle_nav_overview_button(x, y, value, sender)
 					return
 
+				# --- VELOCITY / LENGTH SLIDERS: RELEASING THE HELD PAD ---
+				if value == 0 and sender.is_momentary():
+					if self._mode in (STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_VERTICAL_VELOCITY,
+									STEPSEQ_MODE_STEP_LENGTH_EDITOR, STEPSEQ_MODE_VERTICAL_LENGTH):
+						self._release_slider_hold(x, y)
+					return
+
 				# --- MAIN BUTTON PRESS HANDLING ---
 				allow_row7 = (self._is_drumrack_layout or
 				              self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH, STEPSEQ_MODE_NAV_OVERVIEW))
@@ -3391,6 +3247,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						pitch = self._pitch_for_row(y)
 						step_idx = self._editing_step
 
+						# --- TWO PADS: hold a pad and tap the pad right/left of it (fine
+						# adjustment) or a pad on another row (linear ramp over the pitches) ---
+						if self._slider_two_pad_gesture(x, y):
+							return
+
 						# Check for Double Click
 						is_double_click = False
 						if (self._last_velocity_press_pos is not None and
@@ -3403,6 +3264,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._last_velocity_press_time = current_ts
 						self._last_velocity_press_pos = {'x': x, 'y': y}
 						if is_double_click:
+							self._slider_hold = None
 							# --- DELETE OPERATION (DELETE LAST NOTE IN STEP) ---
 							step_idx = self._editing_step
 							start_time = step_idx * self.resolution_beats
@@ -3428,12 +3290,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						else:
 							# --- SET VELOCITY OPERATION ---
 							velocity = self._velocity_map[x]
-							note = self._get_note_for_pitch_at_step(step_idx, pitch)
-							if note is None:
+							if not self._press_slider_pad(x, y, step_idx, pitch, velocity, sender):
 								self._add_note_at_step(step_idx, pitch, velocity)
-							else:
-								self._set_velocity_for_pitch_at_step(step_idx, pitch, velocity)
-							self._update_matrix()
+								self._update_matrix()
 							return
 					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
 						# HORIZONTAL LENGTH MODE WITH DOUBLE-CLICK DELETE
@@ -3441,6 +3300,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						current_ts = time.time()
 						pitch = self._pitch_for_row(y)
 						step_idx = self._editing_step
+
+						# --- TWO PADS: hold a pad and tap the pad right/left of it (fine
+						# adjustment) or a pad on another row (linear ramp over the pitches) ---
+						if self._slider_two_pad_gesture(x, y):
+							return
+
 						is_double_click = False
 						if (self._last_length_press_pos is not None and
 							self._last_length_press_pos['x'] == x and
@@ -3452,6 +3317,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._last_length_press_time = current_ts
 						self._last_length_press_pos = {'x': x, 'y': y}
 						if is_double_click:
+							self._slider_hold = None
 							# --- DELETE OPERATION ---
 							step_idx = self._editing_step
 							start_time = step_idx * self.resolution_beats
@@ -3483,25 +3349,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 							# Double Click Check (Delete Logic) - Keep your existing double click logic here
 
-							# Single Click Logic:
-							note = self._get_note_for_pitch_at_step(step_idx, pitch)
-							if note is None:
+							# Single Click Logic: update the note's length only (preserves velocity)
+							if not self._press_slider_pad(x, y, step_idx, pitch, target_length, sender):
 								new_note = (pitch, start_time, target_length, self._note_velocity, False)
 								notes = list(self._note_cache)
 								notes.append(new_note)
 								self._write_note_cache_to_clip(notes)
 								self._note_cache = tuple(notes)
 								self._parse_notes()
-							else:
-								# UPDATE EXISTING NOTE'S LENGTH ONLY (Preserves velocity)
-								self._set_length_for_pitch_at_step(step_idx, pitch, target_length)
-								# No need to parse_notes here if _set_length_for_pitch_at_step handles cache updates properly,
-								# but calling it ensures safety.
-								self._parse_notes()
-							self._update_matrix()
+								self._update_matrix()
 							return
 					elif self._mode == STEPSEQ_MODE_VERTICAL_VELOCITY:
 						# VERTICAL VELOCITY MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
+						# The slider only controls the notes visible in the current view.
 						current_ts = time.time()
 						step_idx = idx
 						vel_bucket = 7 - y
@@ -3510,6 +3370,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						target_velocity = self._velocity_map[vel_bucket]
 						start_time = step_idx * self.resolution_beats
 						end_time = start_time + self.resolution_beats
+
+						# --- TWO PADS: hold a pad and tap the pad above/below it (fine
+						# adjustment) or a pad on another column (linear ramp over the steps) ---
+						if self._slider_two_pad_gesture(x, y):
+							return
 
 						# --- DETECT DOUBLE CLICK ---
 						is_double_click = False
@@ -3524,6 +3389,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._last_velocity_press_pos = {'x': x, 'y': y}
 						if is_double_click:
 							# --- HANDLE DOUBLE CLICK ---
+							self._slider_hold = None
 
 							# 1. REVERT to the saved OLD state
 							if self._pending_revert_data is not None:
@@ -3533,13 +3399,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								self._parse_notes()
 								self._pending_revert_data = None
 
-							# 2. PERFORM DELETE on the NOW-CORRECTED cache
+							# 2. PERFORM DELETE on the NOW-CORRECTED cache:
+							#    a visible note whose last pad is the tapped pad
+							pad_values = self._slider_pad_values()
 							current_notes = list(self._note_cache)
 							target_index = -1
 							max_note_time = -1.0
 							for i, note in enumerate(current_notes):
 								note_p, note_t, note_l, note_v, note_m = note
-								if (start_time <= note_t < end_time and note_v == target_velocity):
+								if (start_time <= note_t < end_time and
+										self._visible_row_for_pitch(note_p) >= 0 and
+										self._slider_level_pad(self._slider_level(note_v, pad_values)) == vel_bucket):
 									if note_t > max_note_time:
 										max_note_time = note_t
 										target_index = i
@@ -3554,25 +3424,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							return
 						else:
 							# --- HANDLE SINGLE CLICK ---
-
-							# 1. SAVE CURRENT STATE for potential revert
-							self._pending_revert_data = list(self._note_cache)
-
-							# 2. IMMEDIATELY APPLY THE CHANGE
-							notes = list(self._note_cache)
-							changed = False
-							for i, note in enumerate(notes):
-								note_p, note_t, note_l, old_vel, muted = note
-								if start_time <= note_t < end_time:
-									if old_vel != target_velocity:
-										notes[i] = (note_p, note_t, note_l, target_velocity, muted)
-										changed = True
-							if changed:
-								self._write_note_cache_to_clip(notes)
-								self._note_cache = tuple(notes)
-								# CRITICAL: Refresh display data from cache
-								self._parse_notes()
-								self._update_matrix()
+							# Saves the state for a revert, then applies the change (visible notes only)
+							self._press_slider_pad(x, y, step_idx, None, target_velocity, sender)
 							return
 					elif self._mode == STEPSEQ_MODE_VERTICAL_LENGTH:
 						# VERTICAL LENGTH MODE - INSTANT EXECUTE WITH REVERT ON DOUBLE CLICK
@@ -3589,6 +3442,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						start_time = step_idx * self.resolution_beats
 						end_time = start_time + self.resolution_beats
 
+						# --- TWO PADS: hold a pad and tap the pad above/below it (fine
+						# adjustment) or a pad on another column (linear ramp over the steps) ---
+						if self._slider_two_pad_gesture(x, y):
+							return
+
 						# --- DETECT DOUBLE CLICK ---
 						is_double_click = False
 						if (self._last_length_press_pos is not None and
@@ -3602,6 +3460,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						self._last_length_press_pos = {'x': x, 'y': y}
 						if is_double_click:
 							# --- HANDLE DOUBLE CLICK (DELETE SINGLE NOTE) ---
+							self._slider_hold = None
 
 							# 1. Revert state if needed (optional safety)
 							if self._pending_revert_data is not None:
@@ -3614,22 +3473,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Logic: Delete the note in this step that matches the target length bucket
 							#        AND has the HIGHEST time value (latest creation order).
 
+							pad_values = self._slider_pad_values()
 							current_notes = list(self._note_cache)
 							target_index = -1
 							max_note_time = -1.0
 							for i, note in enumerate(current_notes):
 								note_p, note_t, note_l, note_v, note_m = note
 
-								# Check if note is in this step
-								if start_time <= note_t < end_time:
-									# Calculate the bucket of this existing note
-									existing_len_bucket = 0
-									for i_map, v in enumerate(self._length_map):
-										if note_l >= v * self.resolution_beats / 4.0:
-											existing_len_bucket = i_map
-
-									# Check if it matches the clicked row's bucket
-									if existing_len_bucket == len_bucket:
+								# Check if note is in this step and visible in the view
+								if start_time <= note_t < end_time and self._visible_row_for_pitch(note_p) >= 0:
+									# Check if its last lit pad is the clicked row's bucket
+									if self._slider_level_pad(self._slider_level(note_l, pad_values)) == len_bucket:
 										# Keep track of the note with the LATEST time
 										if note_t > max_note_time:
 											max_note_time = note_t
@@ -3647,26 +3501,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 								self._control_surface.show_message("No matching note found")
 							return
 						else:
-							# --- HANDLE SINGLE CLICK (SET LENGTH FOR ALL IN STEP) ---
-
-							# 1. SAVE CURRENT STATE
-							self._pending_revert_data = list(self._note_cache)
-
-							# 2. APPLY CHANGE TO ALL NOTES IN THIS STEP
-							notes = list(self._note_cache)
-							changed = False
-							for i, note in enumerate(notes):
-								note_p, note_t, note_l, note_v, note_m = note
-								if start_time <= note_t < end_time:
-									# Only change if different
-									if abs(note_l - target_length) > 0.001:
-										notes[i] = (note_p, note_t, target_length, note_v, note_m)
-										changed = True
-							if changed:
-								self._write_note_cache_to_clip(notes)
-								self._note_cache = tuple(notes)
-								self._parse_notes()
-								self._update_matrix()
+							# --- HANDLE SINGLE CLICK (SET LENGTH FOR ALL VISIBLE NOTES IN STEP) ---
+							# Saves the state for a revert, then applies the change
+							self._press_slider_pad(x, y, step_idx, None, target_length, sender)
 							return
 					elif self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
 						current_ts = time.time()
@@ -3765,6 +3602,24 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				closest_row = row_idx
 		return closest_row
 
+	def _visible_row_for_pitch(self, midi_note):
+		"""
+		Row on which the note grid draws this pitch, or -1 when notes of this
+		pitch are not visible. Melodic notes are drawn on the closest row, but
+		only when they are in the same octave as that row's pitch.
+		"""
+		row_idx = self._get_row_for_pitch(midi_note)
+		if row_idx < 0 or self._is_drum_view:
+			return row_idx
+		if int(midi_note / 12) != int(self._row_pitch(row_idx) / 12):
+			return -1
+		return row_idx
+
+	def _get_visible_notes_at_step(self, idx):
+		"""Notes of a step that the note grid shows in the current view."""
+		return [note for note in self._get_notes_at_step(idx)
+				if self._visible_row_for_pitch(note[0]) >= 0]
+
 	def _is_note_on_grid(self, note_time, resolution):
 		tolerance = 0.001
 		remainder = abs(note_time % resolution)
@@ -3792,18 +3647,335 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _get_step_index(self, x):
 		return x + 8 * self._get_effective_page()
 
-	def _set_velocity_for_pitch_at_step(self, idx, pitch, velocity):
-		start_time = idx * self.resolution_beats
-		end_time = start_time + self.resolution_beats
+	def _select_editing_step(self, x):
+		"""Melodic horizontal editors: a press on row 7 edits that step."""
+		self._editing_step = self._get_step_index(x)
+		self._slider_hold = None
+		self._last_velocity_press_pos = None
+		self._last_length_press_pos = None
+		name = "Length" if self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR else "Velocity"
+		self._control_surface.show_message("Horizontal %s Step %d" % (name, self._editing_step))
+		self._update_matrix()
+		self._step_sequencer._update_OSD()
+
+	def _draw_step_selector_row(self):
+		"""
+		Melodic horizontal editors: row 7 shows the steps of the page, the
+		edited step in the playhead colour, the other steps in the colours of
+		the editor (On with notes in view, Dim without).
+		"""
+		if self._mode == STEPSEQ_MODE_STEP_LENGTH_EDITOR:
+			with_notes, empty = "StepSequencer2.Length.On", "StepSequencer2.Length.Dim"
+		else:
+			with_notes, empty = "StepSequencer2.Velocity.On", "StepSequencer2.Velocity.Dim"
+		for x in range(8):
+			idx = self._get_step_index(x)
+			has_notes = len(self._get_visible_notes_at_step(idx)) > 0
+			if idx == self._editing_step:
+				if has_notes:
+					color = "StepSequencer2.NoteEditor.PlayInPage"
+				else:
+					color = "StepSequencer2.NoteEditor.MetronomeInPage"
+			elif has_notes:
+				color = with_notes
+			else:
+				color = empty
+			self._grid_back_buffer[x][7] = color
+
+	# ------------------------------------------------------------------
+	# VELOCITY / LENGTH SLIDERS
+	# A slider controls the notes of one pitch at a step (horizontal editors)
+	# or, with pitch None, the notes of a step visible in the current view
+	# (vertical editors). The current mode tells velocity from length.
+	# Values are handled as levels: level 0 is pad 0, pad n >= 1 covers
+	# levels 5n-4 .. 5n. Levels 5n-4 .. 5n-1 are the 4 values between pad n-1
+	# and pad n (Sub1 .. Sub4), level 5n is the value of pad n itself.
+	# ------------------------------------------------------------------
+	@property
+	def _slider_is_length(self):
+		return self._mode in (STEPSEQ_MODE_STEP_LENGTH_EDITOR, STEPSEQ_MODE_VERTICAL_LENGTH)
+
+	@property
+	def _slider_is_vertical(self):
+		return self._mode in (STEPSEQ_MODE_VERTICAL_VELOCITY, STEPSEQ_MODE_VERTICAL_LENGTH)
+
+	def _slider_pad_values(self):
+		"""Value of each slider pad: a velocity, or a length in beats."""
+		if self._slider_is_length:
+			return [length * self.resolution_beats / 4.0 for length in self._length_map]
+		return self._velocity_map
+
+	def _slider_note_value(self, note):
+		return note[2] if self._slider_is_length else note[3]
+
+	def _slider_max_level(self):
+		return (len(self._slider_pad_values()) - 1) * SLIDER_SUBDIVISIONS
+
+	def _slider_level_pad(self, level):
+		"""Last lit pad of the slider for this level."""
+		return (level + SLIDER_SUBDIVISIONS - 1) // SLIDER_SUBDIVISIONS
+
+	def _slider_level_sub(self, level):
+		"""1 .. 4: value between two pads (Sub1 .. Sub4), 5: value of the pad itself."""
+		return (level - 1) % SLIDER_SUBDIVISIONS + 1
+
+	def _slider_value_of_level(self, level):
+		pad_values = self._slider_pad_values()
+		pad = self._slider_level_pad(level)
+		sub = self._slider_level_sub(level)
+		if pad == 0 or sub == SLIDER_SUBDIVISIONS:
+			value = pad_values[pad]
+		else:
+			low = pad_values[pad - 1]
+			value = low + (pad_values[pad] - low) * sub / float(SLIDER_SUBDIVISIONS)
+		if self._slider_is_length:
+			return value
+		return int(value + 0.5)
+
+	def _slider_level(self, value, pad_values):
+		"""Level closest to a value (also for values edited in Live)."""
+		if value <= pad_values[0]:
+			return 0
+		for pad in range(1, len(pad_values)):
+			if value <= pad_values[pad]:
+				low = pad_values[pad - 1]
+				fraction = (value - low) / float(pad_values[pad] - low)
+				return (pad - 1) * SLIDER_SUBDIVISIONS + int(fraction * SLIDER_SUBDIVISIONS + 0.5)
+		return self._slider_max_level()
+
+	def _slider_levels(self, idx, pitch=None):
+		"""Levels of the notes a slider controls."""
+		if pitch is None:
+			notes = self._get_visible_notes_at_step(idx)
+		else:
+			notes = [note for note in self._get_notes_at_step(idx) if note[0] == pitch]
+		pad_values = self._slider_pad_values()
+		return [self._slider_level(self._slider_note_value(note), pad_values) for note in notes]
+
+	def _slider_last_pad(self, idx, pitch=None):
+		"""Last lit pad of a slider, or -1 when it controls no notes."""
+		levels = self._slider_levels(idx, pitch)
+		if not levels:
+			return -1
+		return self._slider_level_pad(max(levels))
+
+	def _draw_slider(self, levels, pads, off_color, mixed_color):
+		"""
+		Slider colours for the levels of its notes; pads[i] is the (x, y) of
+		pad i. A last lit pad between two pad values shows Sub1 .. Sub4, the
+		other lit pads show Mixed when the notes have different values.
+		"""
+		if self._slider_is_length:
+			on_color, sub_colors = "StepSequencer2.Length.On", LENGTH_SUB_COLORS
+		else:
+			on_color, sub_colors = "StepSequencer2.Velocity.On", VELOCITY_SUB_COLORS
+		top_level = max(levels)
+		last_pad = self._slider_level_pad(top_level)
+		sub = self._slider_level_sub(top_level)
+		is_mixed = len(set(levels)) > 1
+		for pad, (x, y) in enumerate(pads):
+			if pad > last_pad:
+				color = off_color
+			elif pad == last_pad and sub < SLIDER_SUBDIVISIONS:
+				color = sub_colors[sub - 1]
+			elif is_mixed:
+				color = mixed_color
+			else:
+				color = on_color
+			self._grid_back_buffer[x][y] = color
+
+	def _set_step_slider_value(self, idx, value, pitch=None):
+		"""Set the velocity/length of the notes a slider controls. True if changed."""
+		return self._apply_slider_values({(idx, pitch): value})
+
+	def _apply_slider_values(self, values):
+		"""
+		Set velocities/lengths for several sliders in one clip write.
+		values: {(step, pitch): value}, pitch None meaning the notes of the step
+		visible in the current view. True if a note changed.
+		"""
+		field = 2 if self._slider_is_length else 3
 		notes = list(self._note_cache)
 		changed = False
-		for i, note in enumerate(notes):
-			note_pitch, note_time, length, old_velocity, muted = note
-			if (note_pitch == pitch and start_time <= note_time < end_time):
-				notes[i] = (note_pitch, note_time, length, velocity, muted)
-				changed = True
+		for (idx, pitch), value in values.items():
+			start_time = idx * self.resolution_beats
+			end_time = start_time + self.resolution_beats
+			for i, note in enumerate(notes):
+				note_pitch, note_time = note[0], note[1]
+				if not (start_time <= note_time < end_time):
+					continue
+				if pitch is None:
+					if self._visible_row_for_pitch(note_pitch) < 0:
+						continue
+				elif note_pitch != pitch:
+					continue
+				if abs(note[field] - value) > 0.0001:
+					new_note = list(note)
+					new_note[field] = value
+					notes[i] = tuple(new_note)
+					changed = True
 		if changed:
 			self._write_note_cache_to_clip(notes)
+			self._note_cache = tuple(notes)
+			self._parse_notes()
+		return changed
+
+	def _slider_value_message(self, value):
+		if self._slider_is_length:
+			return "%g beats" % round(value, 4)
+		return "%d" % value
+
+	def _slider_two_pad_gesture(self, x, y):
+		"""
+		Press on (x, y) while another slider pad is held. The pad next to the
+		held one on its slider: fine adjustment. A pad on another step
+		(vertical editors) or another pitch (horizontal editors): linear ramp.
+		While the ramp's end pad is held too, the pad next to it fine-tunes the
+		end of the ramp, the pad next to the start pad its start.
+		Returns True when the press was one of these gestures.
+		"""
+		hold = self._slider_hold
+		if hold is None:
+			return False
+		ramp_end = hold['ramp_end']
+		end_direction = self._slider_fine_direction(ramp_end, x, y)
+		direction = self._slider_fine_direction(hold, x, y)
+		if end_direction != 0:
+			ramp_end['value'] = self._nudge_value(ramp_end['value'], end_direction)
+			self._apply_ramp()
+		elif direction != 0:
+			if ramp_end is not None:
+				hold['anchor'] = self._nudge_value(hold['anchor'], direction)
+				self._apply_ramp()
+			else:
+				self._nudge_slider(direction)
+		elif (x != hold['x']) if self._slider_is_vertical else (y != hold['y']):
+			pad = (7 - y) if self._slider_is_vertical else x
+			hold['ramp_end'] = {'x': x, 'y': y, 'value': self._slider_pad_values()[pad]}
+			self._apply_ramp()
+		else:
+			return False
+		# Taps of a gesture never count as a double click
+		self._last_velocity_press_pos = None
+		self._last_length_press_pos = None
+		return True
+
+	def _slider_fine_direction(self, pad, x, y):
+		"""
+		+1 / -1 when (x, y) is the pad above / below a held pad of a vertical
+		slider (right / left of it in the horizontal editors), 0 otherwise or
+		when no pad is given.
+		"""
+		if pad is None:
+			return 0
+		if self._slider_is_vertical:
+			if x == pad['x'] and abs(y - pad['y']) == 1:
+				return 1 if y < pad['y'] else -1
+		elif y == pad['y'] and abs(x - pad['x']) == 1:
+			return 1 if x > pad['x'] else -1
+		return 0
+
+	def _nudge_value(self, value, direction):
+		"""Value one subdivision above (+1) or below (-1) a value."""
+		level = self._slider_level(value, self._slider_pad_values()) + direction
+		return self._slider_value_of_level(max(0, min(self._slider_max_level(), level)))
+
+	def _nudge_slider(self, direction):
+		"""Move the held slider one subdivision up or down."""
+		hold = self._slider_hold
+		# The press on the held pad no longer sets its own value
+		hold['value'] = None
+		levels = self._slider_levels(hold['step'], hold['pitch'])
+		if not levels:
+			return
+		level = max(0, min(self._slider_max_level(), max(levels) + direction))
+		value = self._slider_value_of_level(level)
+		# A ramp started from the held pad now starts from this value
+		hold['anchor'] = value
+		if self._set_step_slider_value(hold['step'], value, hold['pitch']):
+			self._update_matrix()
+		name = "Length" if self._slider_is_length else "Velocity"
+		self._control_surface.show_message("%s %s" % (name, self._slider_value_message(value)))
+
+	def _apply_ramp(self):
+		"""
+		Spread values linearly from the held pad to the ramp's end pad: over
+		the steps between the two columns (vertical editors), or the pitches
+		between the two rows at the edited step (horizontal editors), both
+		included. Only the notes present in the grid change.
+		"""
+		hold = self._slider_hold
+		ramp_end = hold['ramp_end']
+		# The held pad's value is applied as the start of the ramp
+		hold['value'] = None
+		if self._slider_is_vertical:
+			first, last = hold['x'], ramp_end['x']
+		else:
+			first, last = hold['y'], ramp_end['y']
+		start_value, end_value = hold['anchor'], ramp_end['value']
+		direction = 1 if last > first else -1
+		values = {}
+		for position in range(first, last + direction, direction):
+			value = start_value + (end_value - start_value) * (position - first) / float(last - first)
+			if not self._slider_is_length:
+				value = int(value + 0.5)
+			if self._slider_is_vertical:
+				values[(self._get_step_index(position), None)] = value
+			else:
+				values[(hold['step'], self._pitch_for_row(position))] = value
+		if self._apply_slider_values(values):
+			self._update_matrix()
+		name = "Length" if self._slider_is_length else "Velocity"
+		self._control_surface.show_message("%s ramp %s -> %s" % (
+			name, self._slider_value_message(start_value), self._slider_value_message(end_value)))
+
+	def _release_slider_hold(self, x, y):
+		"""
+		Releasing the held pad applies its value, unless it was nudged or
+		started a ramp. Releasing the ramp's end pad ends the ramp gesture.
+		"""
+		hold = self._slider_hold
+		if hold is None:
+			return
+		ramp_end = hold['ramp_end']
+		if ramp_end is not None and ramp_end['x'] == x and ramp_end['y'] == y:
+			hold['ramp_end'] = None
+			return
+		if hold['x'] != x or hold['y'] != y:
+			return
+		self._slider_hold = None
+		if hold['value'] is None:
+			return
+		if self._set_step_slider_value(hold['step'], hold['value'], hold['pitch']):
+			self._update_matrix()
+
+	def _press_slider_pad(self, x, y, step_idx, pitch, value, sender):
+		"""
+		Single press on a slider pad: sets the value of the notes it controls.
+		Returns False when the slider controls no notes (nothing done).
+		The last lit pad is set on release instead, so that holding it for
+		fine adjustment keeps the current in-between value.
+		"""
+		hold = None
+		if sender.is_momentary():
+			# 'value': value set on release; 'anchor': start value of a ramp;
+			# 'ramp_end': the ramp's end pad while it is held
+			hold = {'x': x, 'y': y, 'step': step_idx, 'pitch': pitch,
+					'value': None, 'anchor': value, 'ramp_end': None}
+		self._slider_hold = hold
+		if pitch is None:
+			# Vertical editors: a double tap reverts this press
+			self._pending_revert_data = list(self._note_cache)
+		last_pad = self._slider_last_pad(step_idx, pitch)
+		if last_pad == -1:
+			return False
+		pad = (7 - y) if self._slider_is_vertical else x
+		if hold is not None and pad == last_pad:
+			hold['value'] = value
+			return True
+		if self._set_step_slider_value(step_idx, value, pitch):
+			self._update_matrix()
+		return True
 
 	def _set_length_for_pitch_at_step(self, idx, pitch, target_length):
 		start_time = idx * self.resolution_beats
@@ -4588,6 +4760,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					# Force update to show animation immediately
 					self._force_update = True
+					# The animation uses row 7: take it from the loop selector
+					self._step_sequencer._update_loop_selector()
 
 					# Schedule the animation loop
 					self._control_surface.schedule_message(1, self._velocity_wait_tick)
@@ -4722,6 +4896,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					# Force update to show animation immediately
 					self._force_update = True
+					# The animation uses row 7: take it from the loop selector
+					self._step_sequencer._update_loop_selector()
 					# Schedule the animation loop
 					self._control_surface.schedule_message(1, self._length_wait_tick)
 					self._control_surface.show_message("Select step or press Length button again")
@@ -5350,6 +5526,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def uses_bottom_row(self):
 		if getattr(self, '_is_drumrack_layout', False):
 			return True
+		# The velocity/length waiting animation covers row 7 too
+		if (getattr(self, '_velocity_wait_animation', False) or
+				getattr(self, '_length_wait_animation', False)):
+			return True
 		return self._mode in (
 			STEPSEQ_MODE_STEP_VELOCITY_EDITOR,
 			STEPSEQ_MODE_STEP_LENGTH_EDITOR,
@@ -5372,6 +5552,11 @@ class StepSequencerComponent2(StepSequencerComponent):
 			if self._scale_selector.is_drumrack:
 				return False
 		if getattr(self, '_is_drumrack_mode', False):
+			return False
+		# The velocity/length waiting animation uses row 7 too
+		note_editor = getattr(self, '_note_editor', None)
+		if (getattr(note_editor, '_velocity_wait_animation', False) or
+				getattr(note_editor, '_length_wait_animation', False)):
 			return False
 		return super(StepSequencerComponent2, self)._loop_selector_should_be_enabled()
 
