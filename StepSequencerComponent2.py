@@ -20,6 +20,8 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	NAV_VISIBLE_BANDS,
 	NAV_DOUBLE_TAP_WINDOW,
 	NAV_DOUBLE_TAP_TICKS,
+	NAV_BUTTON_DOUBLE_TAP_WINDOW,
+	NAV_BUTTON_DOUBLE_TAP_TICKS,
 	CLIP_GESTURE_TAP_WINDOW,
 	CLIP_GESTURE_TAP_TICKS,
 	LOOP_TAG_SYNC_DELAY_TICKS,
@@ -2133,6 +2135,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._slider_hold = None
 		# Notes view pads currently held (press order), see _press_note_pad
 		self._held_note_pads = []
+		# Notes moved through the navigation view (see _land_moved_notes):
+		# captured when the navigation button is pressed, then being moved
+		self._nav_move_capture = None
+		self._nav_move = None
+		# Navigation button in the notes view: tap waiting for a 2nd one
+		# (release time), and whether the press in progress is that 2nd tap
+		self._nav_button_pending_tap = None
+		self._nav_button_double_tap = False
+		# View positions (see _current_position): when the navigation view
+		# was entered, and the one a double tap goes back to
+		self._nav_entry_position = None
+		self._previous_position = None
 		self._double_click_window = 0.25
 		self._pending_revert_data = None
 		self._revert_timer_id = None
@@ -2160,6 +2174,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._nav_pending_tap = None
 		self._slider_hold = None
 		self._held_note_pads = []
+		if mode != STEPSEQ_MODE_NAV_OVERVIEW:
+			self._nav_move = None
 		if hasattr(self, '_step_sequencer') and self._step_sequencer:
 			self._step_sequencer.update()
 
@@ -2915,6 +2931,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						except Exception:
 							loop_start, loop_end = 0.0, 0.0
 						block_len = 8 * self.resolution_beats
+						if self._nav_move is not None:
+							# Moving notes: the cross is centred on where they come
+							# from; tapping its centre cancels the move.
+							selected_block = int(self._nav_move['anchor_time'] // block_len)
+							displayed_band = self._displayed_nav_band(self._nav_move['display_octave'])
 						clip_end = self._clip_total_end()
 						for x in range(8):
 							block_index = x + page_offset * 8
@@ -3597,14 +3618,19 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		row_idx = (self._note_rows - 1) - y
 		pad_notes = [n for n in self._get_notes_at_step(idx)
 		             if self._visible_row_for_pitch(n[0]) == row_idx]
+		row_pitch = self._row_pitch(row_idx)
+		step_start = idx * self.resolution_beats
 		self._held_note_pads = [p for p in self._held_note_pads if p['pos'] != (x, y)]
 		self._held_note_pads.append({
 			'pos': (x, y),
 			'idx': idx,
-			'pitch': self._row_pitch(row_idx),
+			'pitch': row_pitch,
+			# Where the pad's notes are, in absolute terms (see _held_pad_notes)
+			'start': step_start,
+			'end': step_start + self.resolution_beats,
+			'pitches': set(n[0] for n in pad_notes) | {row_pitch},
 			# Zoom anchor: the pad's first note, else the step start
-			'time': (min(n[1] for n in pad_notes) if pad_notes
-			         else idx * self.resolution_beats),
+			'time': min(n[1] for n in pad_notes) if pad_notes else step_start,
 			'toggle_on_release': bool(pad_notes),
 		})
 		return bool(pad_notes)
@@ -3617,17 +3643,57 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._toggle_note(pad['idx'], pad['pitch'])
 				return
 
-	def take_zoom_anchor(self):
+	def _take_held_note_pads(self):
 		"""
-		Time (beats) of the first notes-view pad still held, or None.
-		The held pads are then left alone on release: they were used for
-		the zoom, not to delete their notes.
+		Notes-view pads still held, in press order, for a gesture made
+		while holding them. They are then left alone on release: they were
+		used for the gesture, not to delete their notes.
 		"""
 		held = [p for p in self._held_note_pads
 		        if self._matrix.get_button(p['pos'][0], p['pos'][1]).is_pressed()]
 		for pad in held:
 			pad['toggle_on_release'] = False
+		return held
+
+	def _held_pad_notes(self, pad):
+		"""
+		Current notes of a held pad, all parameters included. Read from the
+		clip notes when asked, so a note added by the press is found too.
+		"""
+		return [tuple(n) for n in self._note_cache
+		        if pad['start'] <= n[1] < pad['end'] and n[0] in pad['pitches']]
+
+	def take_zoom_anchor(self):
+		"""
+		Time (beats) to zoom around: the first notes-view pad still held,
+		or the notes being moved in the navigation view; else None.
+		"""
+		if self._nav_move is not None:
+			return self._nav_move['anchor_time']
+		held = self._take_held_note_pads()
 		return held[0]['time'] if held else None
+
+	def _capture_held_notes(self):
+		"""
+		The notes of the held notes-view pads, to be moved through the
+		navigation view, or None if no pad (with notes) is held. The
+		anchor is the first note of the first pad held: its block and the
+		octave / pitch block in view decide where the notes land.
+		"""
+		held = self._take_held_note_pads()
+		notes = []
+		for pad in held:
+			for note in self._held_pad_notes(pad):
+				if note not in notes:
+					notes.append(note)
+		if not notes:
+			return None
+		first_pad_notes = self._held_pad_notes(held[0]) or notes
+		return {
+			'notes': notes,
+			'anchor_time': min(n[1] for n in first_pad_notes),
+			'display_octave': self._display_octave,
+		}
 
 	def _get_row_for_pitch(self, midi_note):
 		"""
@@ -4366,7 +4432,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		assert (self._mode_notes_octaves_button != None)
 		assert (value in range(128))
 		if self.is_enabled() and self._clip != None:
-			if ((value == 0) and (sender.is_momentary())):
+			if value != 0 and sender.is_momentary() and self._mode == STEPSEQ_MODE_NOTES:
+				self._nav_button_press_in_notes()
+			elif ((value == 0) and (sender.is_momentary())):
 				now = time.time()
 				current_mode = self._mode
 				if current_mode == STEPSEQ_MODE_NAV_OVERVIEW:
@@ -4396,45 +4464,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._last_notes_octaves_button_press = now
 					return
 
-				# --- ENTRY LOGIC (NOTES -> OVERVIEW) ---
+				# --- NOTES VIEW: overview, move notes, or back (see _nav_button_release_in_notes) ---
 				elif current_mode == STEPSEQ_MODE_NOTES:
-					if self._is_drum_view:
-						# Drumrack: 16 pitch blocks, 8 visible.
-						# Put the displayed block on the 4th row from the bottom.
-						new_start = self._display_octave - 3
-						new_start = max(0, min(self._nav_max_start(), new_start))
-					else:
-						# 1. Capture the octave we are currently viewing
-						current_octave = self._display_octave
-
-						# 2. Calculate a new start octave to ensure current_octave is visible in an 8-octave window.
-						# We want: start <= current_octave <= start + 7
-						# Let's try to center it: start = current_octave - 3 (puts current at index 3, i.e., 4th row from bottom)
-						new_start = current_octave - 3
-
-						# 3. Clamp to valid MIDI range (0 to 15 approx)
-						# Ensure the whole window [new_start, new_start+7] doesn't go negative
-						if new_start < 0:
-							new_start = 0
-						# Ensure the top of the window doesn't exceed max useful octave
-						if new_start + 7 > 12:
-							new_start = 3
-					self._overview_start_octave = new_start
-
-					# Reset the timer for double-click detection
-					self._last_notes_octaves_button_press = 0.0
-					self._scroll_pending_action = False
-
-					# Set Mode
-					self.set_mode(STEPSEQ_MODE_NAV_OVERVIEW)
-
-					# Show message with the calculated range
-					if self._is_drum_view:
-						self._control_surface.show_message("Pitch Block Overview ")
-					else:
-						self._control_surface.show_message("Octave Overview ") #% (self._overview_start_octave, self._overview_start_octave + 7)
-					self._step_sequencer._update_OSD()
-					self.update()
+					self._nav_button_release_in_notes()
 					return
 				else:
 					self.set_mode(STEPSEQ_MODE_NOTES)
@@ -4444,6 +4476,142 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		else:
 			if self._mode_notes_octaves_button:
 				self._mode_notes_octaves_button.set_light("DefaultButton.Disabled")
+
+	def _nav_button_press_in_notes(self):
+		"""
+		Notes view, navigation button pressed. Pads held now have their
+		notes moved (see _land_moved_notes); a press right after a tap is
+		the second tap of a double tap. Both act on release.
+		"""
+		now = time.time()
+		self._nav_button_double_tap = False
+		self._nav_move_capture = None
+		pending = self._nav_button_pending_tap
+		self._nav_button_pending_tap = None
+		if pending is not None:
+			if (now - pending) < NAV_BUTTON_DOUBLE_TAP_WINDOW:
+				self._nav_button_double_tap = True
+			else:
+				# Window over but the scheduler has not run the tap yet;
+				# this press then belongs to the navigation view.
+				self._enter_nav_overview()
+			return
+		self._nav_move_capture = self._capture_held_notes()
+
+	def _nav_button_release_in_notes(self):
+		"""
+		Notes view, navigation button released:
+		- note pads were held at the press: navigation view to move their notes
+		- double tap: back to the previous position (see _go_back_to_previous_position)
+		- tap: navigation view, once the double-tap window has elapsed
+		"""
+		move = self._nav_move_capture
+		self._nav_move_capture = None
+		if move is not None:
+			self._enter_nav_overview(move)
+		elif self._nav_button_double_tap:
+			self._nav_button_double_tap = False
+			self._go_back_to_previous_position()
+		else:
+			# First tap: wait to see if a second tap follows
+			self._nav_button_pending_tap = time.time()
+			self._control_surface.schedule_message(
+				NAV_BUTTON_DOUBLE_TAP_TICKS, self._execute_pending_nav_button_tap)
+
+	def _execute_pending_nav_button_tap(self):
+		"""Run a navigation button tap that was not followed by a second one."""
+		pending = self._nav_button_pending_tap
+		if pending is None:
+			return
+		# Scheduler ticks are approximate: if called too early, try again.
+		if (time.time() - pending) < NAV_BUTTON_DOUBLE_TAP_WINDOW:
+			self._control_surface.schedule_message(1, self._execute_pending_nav_button_tap)
+			return
+		self._nav_button_pending_tap = None
+		if not self.is_enabled() or self._clip is None or self._mode != STEPSEQ_MODE_NOTES:
+			return
+		self._enter_nav_overview()
+
+	def _enter_nav_overview(self, move=None):
+		"""Notes view -> navigation view; move = notes to move (see _capture_held_notes)."""
+		if self._is_drum_view:
+			# Drumrack: 16 pitch blocks, 8 visible.
+			# Put the displayed block on the 4th row from the bottom.
+			new_start = self._display_octave - 3
+			new_start = max(0, min(self._nav_max_start(), new_start))
+		else:
+			# 1. Capture the octave we are currently viewing
+			current_octave = self._display_octave
+
+			# 2. Calculate a new start octave to ensure current_octave is visible in an 8-octave window.
+			# We want: start <= current_octave <= start + 7
+			# Let's try to center it: start = current_octave - 3 (puts current at index 3, i.e., 4th row from bottom)
+			new_start = current_octave - 3
+
+			# 3. Clamp to valid MIDI range (0 to 15 approx)
+			# Ensure the whole window [new_start, new_start+7] doesn't go negative
+			if new_start < 0:
+				new_start = 0
+			# Ensure the top of the window doesn't exceed max useful octave
+			if new_start + 7 > 12:
+				new_start = 3
+		self._overview_start_octave = new_start
+
+		# Reset the timer for double-click detection
+		self._last_notes_octaves_button_press = 0.0
+		self._scroll_pending_action = False
+
+		# Set Mode (the notes being moved, if any, survive the mode change)
+		self._nav_entry_position = self._current_position()
+		self._nav_move = move
+		self.set_mode(STEPSEQ_MODE_NAV_OVERVIEW)
+
+		# Show message with the calculated range
+		if move is not None:
+			self._control_surface.show_message("Move %d note(s): tap the block and %s where they land" % (
+				len(move['notes']), "pitch block" if self._is_drum_view else "octave"))
+		elif self._is_drum_view:
+			self._control_surface.show_message("Pitch Block Overview ")
+		else:
+			self._control_surface.show_message("Octave Overview ") #% (self._overview_start_octave, self._overview_start_octave + 7)
+		self._step_sequencer._update_OSD()
+		self.update()
+
+	# --- VIEW POSITIONS ---
+	def _current_position(self):
+		"""What the notes view shows: resolution, block and octave / pitch block."""
+		return (self._step_sequencer._resolution_index, self._page,
+		        self._display_octave, self._is_drum_view)
+
+	def _go_back_to_previous_position(self):
+		"""
+		Back to where the notes view was before the last jump made from the
+		navigation view (a move included). The position left becomes the
+		previous one, so doing it again goes back to where the jump landed.
+		"""
+		previous = self._previous_position
+		if previous is None or previous[3] != self._is_drum_view:
+			self._control_surface.show_message("No previous position")
+			return
+		self._previous_position = self._current_position()
+		self._go_to_position(previous)
+		self._control_surface.show_message("Back to block %d, %s (%s)" % (
+			self._page, self._nav_band_label(self._displayed_nav_band()),
+			RESOLUTION_NAMES[previous[0]]))
+
+	def _go_to_position(self, position):
+		"""Show a position from _current_position (resolution, block, octave)."""
+		if position is None or position[3] != self._is_drum_view:
+			return
+		resolution_index, block, display_octave = position[:3]
+		ss = self._step_sequencer
+		if resolution_index != ss._resolution_index:
+			ss._resolution_index = resolution_index
+			ss.set_resolution(RESOLUTION_MAP[resolution_index])
+		self._select_block(block)
+		self.set_display_octave(display_octave)
+		ss._update_loop_selector()
+		ss._update_buttons()
 
 	def _execute_octave_up_scroll(self):
 		"""
@@ -4494,9 +4662,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 		Because of the double tap, a single tap is executed only once the
 		double-tap window has elapsed without a second tap.
+
+		While notes are being moved (see _land_moved_notes), a press lands
+		them at once and the gestures above are off.
 		"""
 		is_momentary = sender.is_momentary()
 		is_press = (value != 0) or (not is_momentary)
+
+		if self._nav_move is not None:
+			if is_press:
+				self._land_moved_notes(x, y)
+			return
 
 		# Non-momentary (toggle) buttons give no usable release: act at once.
 		if not is_momentary:
@@ -4580,6 +4756,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		target_band = self._overview_start_octave + (7 - y)
 		target_band = max(0, min(self._nav_band_count() - 1, target_band))
 
+		# A double tap on the navigation button comes back here
+		self._previous_position = self._nav_entry_position
 		# Also jump to the block this column represents
 		self._select_block(block_index)
 		if self._is_drum_view:
@@ -4593,6 +4771,76 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self.set_display_octave(selected_octave)
 			self._control_surface.show_message(
 				"Octave %d, Block %d" % (selected_octave - 1, block_index))
+		self.set_mode(STEPSEQ_MODE_NOTES)
+		self._force_update = True
+		self.update()
+
+	def _land_moved_notes(self, x, y):
+		"""
+		Navigation view, moving notes: the tapped column is the block and
+		the tapped row the octave (pitch block in drumrack) where the notes
+		land. The anchor note lands in that block at the same place inside
+		the block; every note keeps its place inside the octave / pitch
+		block and its other parameters, and the notes keep their spacing.
+		A note already where a moved note lands is replaced. The move is
+		refused if a note would land outside the clip's start/end markers
+		or outside the MIDI range. Then the notes view shows where they
+		landed.
+		Tapping the centre of the cross (where the notes come from) cancels
+		the move: back to the notes view as it was.
+		"""
+		move = self._nav_move
+		current_notes = [tuple(n) for n in self._note_cache]
+		if any(n not in current_notes for n in move['notes']):
+			# Changed in the meantime (e.g. edited in Live)
+			self._control_surface.show_message("Move cancelled: the notes have changed")
+			self.set_mode(STEPSEQ_MODE_NOTES)
+			self.update()
+			return
+		page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
+		dest_block = x + page_offset * 8
+		dest_band = self._overview_start_octave + (7 - y)
+		block_len = 8 * self.resolution_beats
+		block_shift = dest_block - int(move['anchor_time'] // block_len)
+		band_shift = dest_band - self._displayed_nav_band(move['display_octave'])
+		if block_shift == 0 and band_shift == 0:
+			self._nav_move = None
+			self._go_to_position(self._nav_entry_position)
+			self.set_mode(STEPSEQ_MODE_NOTES)
+			self._control_surface.show_message("Move cancelled")
+			self._force_update = True
+			self.update()
+			return
+		time_shift = block_shift * block_len
+		pitch_shift = band_shift * self._view_band_unit()
+		moved = [(n[0] + pitch_shift, n[1] + time_shift) + n[2:] for n in move['notes']]
+		try:
+			clip_start = float(self._clip.start_marker)
+		except Exception:
+			clip_start = 0.0
+		clip_end = self._clip_total_end()
+		if any(not (0 <= n[0] <= 127) for n in moved):
+			self._control_surface.show_message("Move refused: notes outside the MIDI range")
+			return
+		if any(not (clip_start <= n[1] < clip_end) for n in moved):
+			self._control_surface.show_message("Move refused: notes outside the clip")
+			return
+
+		self._nav_move = None
+		kept = [n for n in current_notes if n not in move['notes']]
+		# A note already where a moved note lands is replaced
+		kept = [n for n in kept if not any(
+			n[0] == m[0] and abs(n[1] - m[1]) < 0.0001 for m in moved)]
+		new_notes = kept + moved
+		self._write_note_cache_to_clip(new_notes)
+		self._note_cache = tuple(new_notes)
+		self._parse_notes()
+		# A double tap on the navigation button comes back here
+		self._previous_position = self._nav_entry_position
+		self._select_block(dest_block)
+		self.set_display_octave(move['display_octave'] + band_shift)
+		self._control_surface.show_message("%d note(s) moved to block %d, %s" % (
+			len(moved), dest_block, self._nav_band_label(dest_band)))
 		self.set_mode(STEPSEQ_MODE_NOTES)
 		self._force_update = True
 		self.update()
