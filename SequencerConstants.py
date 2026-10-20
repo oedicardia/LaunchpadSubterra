@@ -51,6 +51,14 @@ RESOLUTION_NAMES = [
     "1/2"
 ]
 
+# Resolution button: tap = zoom in, double tap = zoom out, long press =
+# middle resolution. Max time from the first tap's release to the second
+# tap's press (seconds), how many scheduler ticks the single-tap zoom in
+# waits before running, and the hold time of a long press (seconds).
+RESOLUTION_DOUBLE_TAP_WINDOW = 0.3
+RESOLUTION_DOUBLE_TAP_TICKS = 3
+RESOLUTION_LONG_PRESS = 0.5
+
 # ==========================================================
 # Velocity of new notes
 # ==========================================================

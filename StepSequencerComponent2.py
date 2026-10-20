@@ -3,6 +3,9 @@ from _Framework.ButtonMatrixElement import ButtonMatrixElement
 from _Framework.InputControlElement import InputControlElement, MIDI_CC_TYPE
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement
 from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
+	RESOLUTION_DOUBLE_TAP_WINDOW,
+	RESOLUTION_DOUBLE_TAP_TICKS,
+	RESOLUTION_LONG_PRESS,
 	STEPSEQ_MODE_NOTES,
 	STEPSEQ_MODE_NOTES_OCTAVES,
 	STEPSEQ_MODE_NAV_OVERVIEW,
@@ -2128,6 +2131,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._last_velocity_press_pos = None
 		# Velocity/length slider pad currently held (fine adjustment gesture), or None
 		self._slider_hold = None
+		# Notes view pads currently held (press order), see _press_note_pad
+		self._held_note_pads = []
 		self._double_click_window = 0.25
 		self._pending_revert_data = None
 		self._revert_timer_id = None
@@ -2154,6 +2159,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._nav_combo_done = False
 		self._nav_pending_tap = None
 		self._slider_hold = None
+		self._held_note_pads = []
 		if hasattr(self, '_step_sequencer') and self._step_sequencer:
 			self._step_sequencer.update()
 
@@ -2553,9 +2559,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(f"[PARSE NOTES ERROR] {e}")
 
 	def _toggle_note_at_grid_position(self, idx, y):
+		self._toggle_note(idx, self._row_pitch(self._note_rows - 1 - y))
+
+	def _toggle_note(self, idx, pitch):
 		grid_time = idx * self.resolution_beats
-		rows = self._note_rows
-		pitch = self._row_pitch(rows - 1 - y)
 		if pitch < 0 or pitch > 127:
 			return
 		notes = list(self._note_cache)
@@ -3219,6 +3226,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if self._mode in (STEPSEQ_MODE_STEP_VELOCITY_EDITOR, STEPSEQ_MODE_VERTICAL_VELOCITY,
 									STEPSEQ_MODE_STEP_LENGTH_EDITOR, STEPSEQ_MODE_VERTICAL_LENGTH):
 						self._release_slider_hold(x, y)
+					elif self._mode == STEPSEQ_MODE_NOTES:
+						self._release_note_pad(x, y)
 					return
 
 				# --- MAIN BUTTON PRESS HANDLING ---
@@ -3229,6 +3238,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if y == 7 and not allow_row7:
 						return
 					idx = self._get_step_index(x)
+					# A pad showing a note acts on its release (it can be held as a zoom anchor)
+					if self._mode == STEPSEQ_MODE_NOTES and self._press_note_pad(x, y, idx):
+						return
 					if self._mode == STEPSEQ_MODE_NOTES:
 						# Toggle note at grid position
 						if self._notes_pitches[(idx) * rows + (rows - 1) - y] == 1:
@@ -3572,6 +3584,50 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						return
 					else:
 						self._update_clip_notes()
+
+	# --- HELD NOTE PADS (ZOOM ANCHOR) ---
+	def _press_note_pad(self, x, y, idx):
+		"""
+		Notes view: remember the pad as held, so the resolution button can
+		zoom around it (see take_zoom_anchor). A pad that shows a note is
+		toggled (its note deleted) on release instead of on press, and not
+		at all if the resolution button is used while it is held.
+		Returns True if the toggle waits for the release.
+		"""
+		row_idx = (self._note_rows - 1) - y
+		pad_notes = [n for n in self._get_notes_at_step(idx)
+		             if self._visible_row_for_pitch(n[0]) == row_idx]
+		self._held_note_pads = [p for p in self._held_note_pads if p['pos'] != (x, y)]
+		self._held_note_pads.append({
+			'pos': (x, y),
+			'idx': idx,
+			'pitch': self._row_pitch(row_idx),
+			# Zoom anchor: the pad's first note, else the step start
+			'time': (min(n[1] for n in pad_notes) if pad_notes
+			         else idx * self.resolution_beats),
+			'toggle_on_release': bool(pad_notes),
+		})
+		return bool(pad_notes)
+
+	def _release_note_pad(self, x, y):
+		for pad in self._held_note_pads:
+			if pad['pos'] == (x, y):
+				self._held_note_pads.remove(pad)
+				if pad['toggle_on_release']:
+					self._toggle_note(pad['idx'], pad['pitch'])
+				return
+
+	def take_zoom_anchor(self):
+		"""
+		Time (beats) of the first notes-view pad still held, or None.
+		The held pads are then left alone on release: they were used for
+		the zoom, not to delete their notes.
+		"""
+		held = [p for p in self._held_note_pads
+		        if self._matrix.get_button(p['pos'][0], p['pos'][1]).is_pressed()]
+		for pad in held:
+			pad['toggle_on_release'] = False
+		return held[0]['time'] if held else None
 
 	def _get_row_for_pitch(self, midi_note):
 		"""
@@ -5546,6 +5602,11 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._name = "melodic step sequencer"
 		super(StepSequencerComponent2, self).__init__(matrix, side_buttons, top_buttons, control_surface)
 		self._loop_block = 0
+		# Resolution button taps (see _resolution_button_value)
+		self._last_res_button_press = time.time()
+		self._res_pending_tap_time = None  # release time of a tap waiting for a 2nd one
+		self._res_double_tap = False  # the press in progress is a double tap's 2nd tap
+		self._res_anchor_time = None  # held note (beats) to zoom around, or None
 
 	def _loop_selector_should_be_enabled(self):
 		if hasattr(self, '_scale_selector') and self._scale_selector:
@@ -5705,6 +5766,103 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._update_scale_selector_button()
 		self._update_left_button()
 		self._update_right_button()
+
+	# --- RESOLUTION (ZOOM) ---
+	def _resolution_button_value(self, value, sender):
+		"""
+		- Tap: zoom in (finer resolution; from the finest one it wraps
+		  around to the coarsest).
+		- Double tap: zoom out (coarser resolution; from the coarsest one
+		  it wraps around to the finest).
+		- Long press: middle resolution.
+		The view stays on the same part of the clip (see _change_resolution).
+		While a pad of the notes view is held, the zoom goes around that
+		note instead of around the first step shown.
+
+		Because of the double tap, a single tap zooms in only once the
+		double-tap window has elapsed without a second tap.
+		"""
+		assert (self._resolution_button != None)
+		assert (value in range(128))
+		if not self.is_enabled() or self._clip is None:
+			return
+		now = time.time()
+		if (value != 0) or (not sender.is_momentary()):
+			self._last_res_button_press = now
+			self._res_double_tap = False
+			anchor = self._note_editor.take_zoom_anchor()
+			pending = self._res_pending_tap_time
+			self._res_pending_tap_time = None
+			if pending is not None:
+				if (now - pending) < RESOLUTION_DOUBLE_TAP_WINDOW:
+					# Second tap before the single-tap zoom in ran: double tap
+					self._res_double_tap = True
+					if anchor is None:
+						# Note released between the taps: keep the first tap's
+						anchor = self._res_anchor_time
+				else:
+					# Window over but the scheduler has not run the tap yet
+					self._zoom_in()
+			self._res_anchor_time = anchor
+			return
+
+		# --- release ---
+		if (now - self._last_res_button_press) > RESOLUTION_LONG_PRESS:
+			self._res_double_tap = False
+			self._change_resolution(len(RESOLUTION_MAP) // 2, self._res_anchor_time)
+		elif self._res_double_tap:
+			self._res_double_tap = False
+			self._change_resolution(
+				(self._resolution_index + 1) % len(RESOLUTION_MAP), self._res_anchor_time)
+		else:
+			# First tap: wait to see if a second tap follows
+			self._res_pending_tap_time = now
+			self._control_surface.schedule_message(
+				RESOLUTION_DOUBLE_TAP_TICKS, self._execute_pending_resolution_tap)
+
+	def _execute_pending_resolution_tap(self):
+		"""Run a single tap on the resolution button that was not followed by a second one."""
+		pending = self._res_pending_tap_time
+		if pending is None:
+			return
+		# Scheduler ticks are approximate: if called too early, try again.
+		if (time.time() - pending) < RESOLUTION_DOUBLE_TAP_WINDOW:
+			self._control_surface.schedule_message(1, self._execute_pending_resolution_tap)
+			return
+		self._res_pending_tap_time = None
+		if not self.is_enabled() or self._clip is None:
+			return
+		self._zoom_in()
+
+	def _zoom_in(self):
+		self._change_resolution(
+			(self._resolution_index - 1) % len(RESOLUTION_MAP), self._res_anchor_time)
+
+	def _change_resolution(self, new_index, anchor_time=None):
+		"""
+		Switch to RESOLUTION_MAP[new_index], keeping the view on the same
+		part of the clip: the new selected block is the one that holds the
+		anchor, i.e. the held note (anchor_time, in beats) or else the
+		first step shown before. Zooming in by one level shows the half of
+		the old block that holds the anchor (block * 2, or block * 2 + 1
+		for a held note in the second half), zooming out the block that
+		contains the old one (block // 2).
+		"""
+		if new_index != self._resolution_index:
+			blocksize = self._loop_selector._blocksize
+			if anchor_time is None:
+				anchor_time = (self._note_editor._get_effective_page() *
+					blocksize * RESOLUTION_MAP[self._resolution_index])
+			self._resolution_index = new_index
+			new_resolution = RESOLUTION_MAP[new_index]
+			self.set_resolution(new_resolution)
+			# Block boundaries are powers of two: exact for on-grid times
+			new_block = int(anchor_time // (blocksize * new_resolution))
+			self._note_editor._select_block(new_block)
+			# The loop selector row and the arrows follow the new block
+			self._update_loop_selector()
+			self._update_buttons()
+		self._control_surface.show_message("RESOLUTION : " + RESOLUTION_NAMES[new_index])
 
 	def _update_drum_group_device(self):
 		# no drum rack mode for me. i am a melodic step seq.
