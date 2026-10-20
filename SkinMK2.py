@@ -439,6 +439,7 @@ class Colors:
             Off = Rgb.BLACK
             RootNote = Rgb.LIGHT_BLUE_THIRD
             ChordTone = Rgb.LIGHT_BLUE_THIRD
+            InScaleNote = Rgb.LIGHT_BLUE_THIRD
             OnOutScale = Rgb.GREEN_THIRD
             OnOutScaleOffStep = Rgb.AMBER_HALF
             OnOutScaleOffStep2 = Rgb.YELLOW_THIRD

@@ -91,6 +91,28 @@ LENGTH_SUB_COLORS = [
 ]
 
 # ==========================================================
+# Focus Mode (melodic notes view)
+# ==========================================================
+# Holding a note pad and tapping the scale button shows the semitones
+# around the note's pitch: the note on LP row FOCUS_ROW, one semitone
+# higher per row above it, one lower per row below it. Pad colours of the
+# in-scale and out-of-scale pitch rows: no note, one note on the step, one
+# note off the step (not on the grid), several notes in the step.
+FOCUS_ROW = 3
+FOCUS_COLORS_IN_SCALE = (
+    "StepSequencer2.Pitch.InScaleNote",
+    "StepSequencer2.Pitch.On",
+    "StepSequencer2.Pitch.OnOffStep",
+    "StepSequencer2.Pitch.OnMixedStep",
+)
+FOCUS_COLORS_OUT_SCALE = (
+    "StepSequencer2.Pitch.Off",
+    "StepSequencer2.Pitch.OnOutScale",
+    "StepSequencer2.Pitch.OnOutScaleStep",
+    "StepSequencer2.Pitch.OnOutScaleStep2",
+)
+
+# ==========================================================
 # Drumrack Pitch Blocks / Navigation View
 # ==========================================================
 # In drumrack mode the vertical navigation unit is a "pitch block":

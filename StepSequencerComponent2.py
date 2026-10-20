@@ -14,6 +14,7 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	STEPSEQ_MODE_STEP_LENGTH_EDITOR,
 	STEPSEQ_MODE_VERTICAL_VELOCITY,
 	STEPSEQ_MODE_VERTICAL_LENGTH,
+	STEPSEQ_MODE_SCALE_EDIT,
 	DRUM_BLOCK_SIZE,
 	DRUM_BLOCK_COUNT,
 	MELODIC_OCTAVE_COUNT,
@@ -36,6 +37,9 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	SLIDER_SUBDIVISIONS,
 	VELOCITY_SUB_COLORS,
 	LENGTH_SUB_COLORS,
+	FOCUS_ROW,
+	FOCUS_COLORS_IN_SCALE,
+	FOCUS_COLORS_OUT_SCALE,
 )
 from .LoopSelectorComponent import (LoopSelectorComponent, apply_clip_loop,
                                     clamp_to_markers)
@@ -570,6 +574,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._key_index_is_root_note = [True, False, False, False, False, False, False, False]
 		self._is_monophonic = False
 		self._is_drumrack_layout = False
+		# Focus mode (melodic): pitch on LP row FOCUS_ROW, or None (see set_focus_pitch)
+		self._focus_pitch = None
 
 		# octaves
 		# NOTE: in drumrack layout _display_octave holds the PITCH BLOCK
@@ -1328,6 +1334,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			except Exception:
 				pass
 			self._clip = None
+			self._focus_pitch = None
 			self._force_update = True
 			try:
 				self.update()
@@ -1448,6 +1455,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						f"[PREV_STATE_SAVE_ERROR] {e}"
 					)
 		self._clip = clip
+		self._focus_pitch = None
 		self._init_data()
 
 
@@ -2332,6 +2340,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# valid for the layout we are switching to.
 		if was_drumrack != bool(is_drumrack):
 			old_octave = max(0, min(self._nav_band_count() - 1, old_octave))
+			# Focus mode is melodic only
+			self._focus_pitch = None
 		if DEBUG_LOGGING:
 			self._control_surface.log_message(
 				f"[NOTE_EDITOR_SYNC] Setting _is_drumrack_layout to {is_drumrack}"
@@ -2384,15 +2394,23 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""True when the grid is laid out as chromatic 8-note pitch blocks."""
 		return bool(getattr(self, '_is_drumrack_layout', False))
 
+	@property
+	def _is_focus_view(self):
+		"""True in focus mode: the melodic rows are the semitones around a note."""
+		return getattr(self, '_focus_pitch', None) is not None and not self._is_drum_view
+
 	def _row_pitch(self, row_idx):
 		"""
 		MIDI pitch shown on a note row. row_idx 0 = bottom row (LP row 7).
 		Drumrack: pitch block b -> row 7 = b*8, row 6 = b*8+1, ... row 0 = b*8+7
 		          (block 0: row 7 = MIDI 0 (C-2), row 5 = MIDI 2, ...)
+		Focus   : the focus pitch on LP row FOCUS_ROW, one semitone per row.
 		Melodic : scale degree from key_indexes, shifted by display octave.
 		"""
 		if self._is_drum_view:
 			return self._display_octave * DRUM_BLOCK_SIZE + row_idx
+		if self._is_focus_view:
+			return self._focus_pitch + row_idx - (self._note_rows - 1 - FOCUS_ROW)
 		return self._key_indexes[row_idx] + 12 * (self._display_octave - 2)
 
 	def _nav_band_count(self):
@@ -2409,12 +2427,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			return int(pitch) // DRUM_BLOCK_SIZE
 		return int(pitch) // 12
 
-	def _displayed_nav_band(self, display_value=None):
-		"""Band currently shown in the note grid."""
+	def _displayed_nav_band(self, display_value=None, focus_pitch=None):
+		"""Band shown in the note grid (default: now). Focus mode: the focus pitch's octave."""
 		if display_value is None:
 			display_value = self._display_octave
+			focus_pitch = self._focus_pitch
 		if self._is_drum_view:
 			return display_value
+		if focus_pitch is not None:
+			return int(focus_pitch) // 12
 		# melodic: display octave 2 shows MIDI octave 3 (C1 = 36)
 		return display_value + 1
 
@@ -2435,6 +2456,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if self._is_drum_view:
 			return self._display_octave
 		return int((self._key_indexes[0] + 12 * (self._display_octave - 2)) / 12)
+
+	def _is_pitch_in_current_view(self, pitch):
+		"""
+		Copy / paste / erase: a pitch of the current view, i.e. of the
+		displayed octave / pitch block, or in focus mode of the rows shown.
+		"""
+		if self._is_focus_view:
+			return self._visible_row_for_pitch(pitch) >= 0
+		return self._nav_band_of_pitch(pitch) == self._current_view_band()
 
 	def _push_to_hardware(self):
 		"""Force ALL buffered LED values to hardware immediately, ignoring cache."""
@@ -2621,7 +2651,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						note_time = x * self.resolution_beats
 						velocity = self._velocity_map[self._notes_velocities[x]]
 						length = self._length_map[self._notes_lengths[x]] * self.resolution_beats / 4.0
-						if self._is_drum_view:
+						if self._is_drum_view or self._is_focus_view:
 							pitch = self._row_pitch(note_index)
 						else:
 							pitch = self._key_indexes[note_index] + 12 * (self._notes_octaves[x] - 2)
@@ -2856,6 +2886,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										lane = current_pitch % 16
 										target_color = (DRUM_COLORS_NOTE[lane] if has_note_here
 														else DRUM_COLORS_NO_NOTE[lane])
+									elif self._is_focus_view:
+										target_color = self._focus_pad_color(
+											current_pitch, notes_mapped_to_this_row, scale_notes)
 									elif not has_note_here:
 										# No note here: Draw Scale Colors
 										interval = (current_pitch - scale_root_key) % 12
@@ -2912,7 +2945,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						max_visible_band = start_band + 7
 						min_visible_band = start_band
 						band_count = self._nav_band_count()
-						displayed_band = self._displayed_nav_band(self._last_displayed_octave)
+						displayed_band = self._displayed_nav_band(
+							self._last_displayed_octave, self._focus_pitch)
 
 						# --- LATERAL ZOOM: columns are BLOCKS (8 steps each), not steps ---
 						page_offset = getattr(self._step_sequencer, '_loop_page_offset', 0)
@@ -2935,7 +2969,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							# Moving notes: the cross is centred on where they come
 							# from; tapping its centre cancels the move.
 							selected_block = int(self._nav_move['anchor_time'] // block_len)
-							displayed_band = self._displayed_nav_band(self._nav_move['display_octave'])
+							displayed_band = self._displayed_nav_band(
+								self._nav_move['display_octave'], self._nav_move['focus_pitch'])
 						clip_end = self._clip_total_end()
 						for x in range(8):
 							block_index = x + page_offset * 8
@@ -3693,16 +3728,93 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			'notes': notes,
 			'anchor_time': min(n[1] for n in first_pad_notes),
 			'display_octave': self._display_octave,
+			'focus_pitch': self._focus_pitch if self._is_focus_view else None,
 		}
+
+	# --- FOCUS MODE (melodic notes view) ---
+	def handle_focus_button(self):
+		"""
+		Scale button pressed. Melodic notes view only:
+		- a note pad held: focus mode around that pad's note
+		- no pad held, in focus mode: back to the normal notes view
+		Returns True if the press was used here (no scale editor then).
+		"""
+		if self._is_drum_view or self._mode != STEPSEQ_MODE_NOTES or self._clip is None:
+			return False
+		held = self._take_held_note_pads()
+		if held:
+			pitch = self._held_pad_focus_pitch(held[0])
+			if pitch is None:
+				self._control_surface.show_message("Focus: no note on this pad")
+			else:
+				self.set_focus_pitch(pitch)
+			return True
+		if self._is_focus_view:
+			self.set_focus_pitch(None)
+			return True
+		return False
+
+	def _held_pad_focus_pitch(self, pad):
+		"""
+		Pitch to focus on for a held pad: its first note (the one closest to
+		the row's pitch if several start together), else the row's pitch.
+		None if the row is outside the MIDI range.
+		"""
+		notes = self._held_pad_notes(pad)
+		if notes:
+			return min(notes, key=lambda n: (n[1], abs(n[0] - pad['pitch'])))[0]
+		if 0 <= pad['pitch'] <= 127:
+			return pad['pitch']
+		return None
+
+	def set_focus_pitch(self, pitch):
+		"""
+		Focus mode: the rows show the semitones around pitch, which is on LP
+		row FOCUS_ROW (see _row_pitch). None leaves focus mode. The scale
+		view's octave (_display_octave) is kept for when focus mode ends.
+		"""
+		self._focus_pitch = pitch
+		self._parse_notes()
+		self._force_update = True
+		self.update()
+		ss = self._step_sequencer
+		ss._update_buttons()
+		ss._update_OSD()
+		if pitch is None:
+			self._control_surface.show_message("Focus mode off")
+		else:
+			self._control_surface.show_message(
+				"Focus mode: %s (tap Scale to leave)" % self._pitch_name(pitch))
+
+	def _pitch_name(self, pitch):
+		"""Note name of a MIDI pitch, e.g. 36 -> C1."""
+		return "%s%d" % (KEY_NAMES[pitch % 12], pitch // 12 - 2)
+
+	def _focus_pad_color(self, pitch, notes, scale_notes):
+		"""
+		Focus mode colour of a pad whose row shows pitch; notes = the notes
+		of that pitch in the pad's step (see FOCUS_COLORS_IN_SCALE).
+		"""
+		if pitch % 12 in scale_notes:
+			no_note, on_step, off_step, several = FOCUS_COLORS_IN_SCALE
+		else:
+			no_note, on_step, off_step, several = FOCUS_COLORS_OUT_SCALE
+		if not notes:
+			return no_note
+		if len(notes) > 1:
+			return several
+		if self._is_note_on_grid(notes[0][1], self.resolution_beats):
+			return on_step
+		return off_step
 
 	def _get_row_for_pitch(self, midi_note):
 		"""
 		Find which grid row (0-6) corresponds closest to this MIDI note.
-		Drumrack layout: exact mapping inside the current pitch block only.
+		Drumrack layout and focus mode: exact mapping (one semitone per row).
 		Returns -1 if no reasonable mapping exists.
 		"""
 		rows = self._note_rows
-		if self._is_drum_view:
+		if self._is_drum_view or self._is_focus_view:
 			offset = int(midi_note) - self._row_pitch(0)
 			if 0 <= offset < rows:
 				return offset
@@ -3731,7 +3843,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		only when they are in the same octave as that row's pitch.
 		"""
 		row_idx = self._get_row_for_pitch(midi_note)
-		if row_idx < 0 or self._is_drum_view:
+		if row_idx < 0 or self._is_drum_view or self._is_focus_view:
 			return row_idx
 		if int(midi_note / 12) != int(self._row_pitch(row_idx) / 12):
 			return -1
@@ -4579,9 +4691,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 	# --- VIEW POSITIONS ---
 	def _current_position(self):
-		"""What the notes view shows: resolution, block and octave / pitch block."""
+		"""What the notes view shows: resolution, block, octave / pitch block and focus pitch."""
 		return (self._step_sequencer._resolution_index, self._page,
-		        self._display_octave, self._is_drum_view)
+		        self._display_octave, self._is_drum_view,
+		        self._focus_pitch if self._is_focus_view else None)
 
 	def _go_back_to_previous_position(self):
 		"""
@@ -4600,10 +4713,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			RESOLUTION_NAMES[previous[0]]))
 
 	def _go_to_position(self, position):
-		"""Show a position from _current_position (resolution, block, octave)."""
+		"""Show a position from _current_position (resolution, block, octave, focus)."""
 		if position is None or position[3] != self._is_drum_view:
 			return
 		resolution_index, block, display_octave = position[:3]
+		self._focus_pitch = position[4]
 		ss = self._step_sequencer
 		if resolution_index != ss._resolution_index:
 			ss._resolution_index = resolution_index
@@ -4765,6 +4879,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self.set_display_octave(target_band)
 			self._control_surface.show_message(
 				"%s, Block %d" % (self._nav_band_label(target_band), block_index))
+		elif self._is_focus_view:
+			# Focus mode: the focus pitch moves by octaves to the tapped
+			# band, the scale view's octave moves with it
+			shift = target_band - self._focus_pitch // 12
+			if self._focus_pitch + 12 * shift > 127:
+				shift -= 1
+			self._focus_pitch += 12 * shift
+			self.set_display_octave(max(-1, min(MELODIC_OCTAVE_COUNT - 2,
+			                                    self._display_octave + shift)))
+			self._control_surface.show_message(
+				"Focus %s, Block %d" % (self._pitch_name(self._focus_pitch), block_index))
 		else:
 			# Melodic: display octave = band - 1 (display octave 2 -> MIDI octave 3)
 			selected_octave = target_band - 1
@@ -4802,7 +4927,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		dest_band = self._overview_start_octave + (7 - y)
 		block_len = 8 * self.resolution_beats
 		block_shift = dest_block - int(move['anchor_time'] // block_len)
-		band_shift = dest_band - self._displayed_nav_band(move['display_octave'])
+		band_shift = dest_band - self._displayed_nav_band(move['display_octave'], move['focus_pitch'])
 		if block_shift == 0 and band_shift == 0:
 			self._nav_move = None
 			self._go_to_position(self._nav_entry_position)
@@ -4837,8 +4962,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._parse_notes()
 		# A double tap on the navigation button comes back here
 		self._previous_position = self._nav_entry_position
+		display_octave = move['display_octave'] + band_shift
+		if move['focus_pitch'] is not None:
+			# Focus mode follows the notes
+			self._focus_pitch = max(0, min(127, move['focus_pitch'] + pitch_shift))
+			display_octave = max(-1, min(MELODIC_OCTAVE_COUNT - 2, display_octave))
 		self._select_block(dest_block)
-		self.set_display_octave(move['display_octave'] + band_shift)
+		self.set_display_octave(display_octave)
 		self._control_surface.show_message("%d note(s) moved to block %d, %s" % (
 			len(moved), dest_block, self._nav_band_label(dest_band)))
 		self.set_mode(STEPSEQ_MODE_NOTES)
@@ -5389,8 +5519,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# CRITICAL: Use SAFE accessor that guarantees beat value ≥ 0.001
 		resolution = self.resolution_beats  # ← CHANGED FROM self._resolution
 
-		# Band currently displayed (MIDI octave, or pitch block in drumrack)
-		target_band = self._current_view_band()
 		buffer = []
 		for n in self._note_cache:
 			note_pitch = n[0]
@@ -5403,8 +5531,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if not (page_start_step * resolution <= note_time < page_end_step * resolution):
 				continue
 
-			# Check 2: Does note belong to current displayed octave / block?
-			if self._nav_band_of_pitch(note_pitch) != target_band:
+			# Check 2: Does note belong to current displayed octave / block (focus: rows)?
+			if not self._is_pitch_in_current_view(note_pitch):
 				continue
 			relative_time = note_time - (page_start_step * resolution)
 			buffer.append((note_pitch, relative_time, note_length, note_velocity, note_muted))
@@ -5427,6 +5555,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Band (MIDI octave / pitch block) of the CURRENT display, and its size in semitones.
 		target_band = self._current_view_band()
 		band_unit = self._view_band_unit()
+		# Focus mode: the whole pattern moves by the octaves that bring its
+		# middle closest to the focus pitch
+		focus_shift = None
+		if self._is_focus_view:
+			pitches = [n[0] for n in buffer]
+			middle = (min(pitches) + max(pitches)) / 2.0
+			focus_shift = 12 * int(round((self._focus_pitch - middle) / 12.0))
 		new_notes = []
 		added_count = 0
 		for n in buffer:
@@ -5440,9 +5575,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			orig_band = self._nav_band_of_pitch(orig_pitch)
 
 			# --- PITCH SHIFTING LOGIC ---
-			# Shift by whole bands (12 semitones melodic, 8 semitones drumrack)
-			band_shift = target_band - orig_band
-			new_pitch = orig_pitch + (band_shift * band_unit)
+			if focus_shift is not None:
+				new_pitch = orig_pitch + focus_shift
+			else:
+				# Shift by whole bands (12 semitones melodic, 8 semitones drumrack)
+				band_shift = target_band - orig_band
+				new_pitch = orig_pitch + (band_shift * band_unit)
 
 			# Ensure pitch stays within valid MIDI range (0-127)
 			if new_pitch < 0 or new_pitch > 127:
@@ -5494,8 +5632,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		page_end_step = (self._page + 1) * 8
 		resolution = self.resolution_beats
 
-		# Band currently displayed (MIDI octave, or pitch block in drumrack)
-		target_band = self._current_view_band()
 		cleaned_notes = []
 		deleted_count = 0
 		for n in self._note_cache:
@@ -5509,8 +5645,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				cleaned_notes.append(n)
 				continue
 
-			# Check 2: Does note belong to current displayed octave / block?
-			if self._nav_band_of_pitch(note_pitch) == target_band:
+			# Check 2: Does note belong to current displayed octave / block (focus: rows)?
+			if self._is_pitch_in_current_view(note_pitch):
 				# It matches current page AND current band -> DELETE IT
 				is_deleted = True
 				deleted_count += 1
@@ -6015,6 +6151,27 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._update_left_button()
 		self._update_right_button()
 
+	# --- SCALE BUTTON: SCALE EDITOR / FOCUS MODE ---
+	def _scale_selector_button_value(self, value):
+		"""
+		Melodic notes view: a note pad held + tap = focus mode around that
+		note, tap in focus mode = back to the normal notes view (see
+		MelodicNoteEditorComponent.handle_focus_button). Otherwise the
+		scale editor, as before.
+		"""
+		if (self.is_enabled() and value > 0 and self._mode != STEPSEQ_MODE_SCALE_EDIT
+				and self._note_editor.handle_focus_button()):
+			return
+		super(StepSequencerComponent2, self)._scale_selector_button_value(value)
+
+	def _update_scale_selector_button(self):
+		super(StepSequencerComponent2, self)._update_scale_selector_button()
+		# Lit in focus mode too: a tap leaves it
+		if (self.is_enabled() and self._scale_selector_button is not None
+				and self._clip is not None and self._mode != STEPSEQ_MODE_SCALE_EDIT
+				and self._note_editor._is_focus_view):
+			self._scale_selector_button.turn_on()
+
 	# --- RESOLUTION (ZOOM) ---
 	def _resolution_button_value(self, value, sender):
 		"""
@@ -6290,7 +6447,10 @@ class StepSequencerComponent2(StepSequencerComponent):
 					self._osd.attributes[4] = "Poly"
 				self._osd.attribute_names[4] = "Polyphony"
 				self._osd.attribute_names[5] = "Mode"
-				if self._note_editor._mode == STEPSEQ_MODE_NOTES:
+				if self._note_editor._mode == STEPSEQ_MODE_NOTES and self._note_editor._is_focus_view:
+					self._osd.attributes[5] = "Focus " + self._note_editor._pitch_name(
+						self._note_editor._focus_pitch)
+				elif self._note_editor._mode == STEPSEQ_MODE_NOTES:
 					self._osd.attributes[5] = "Notes"
 				elif self._note_editor._mode == STEPSEQ_MODE_NOTES_OCTAVES:
 					self._osd.attributes[5] = "Octave"
