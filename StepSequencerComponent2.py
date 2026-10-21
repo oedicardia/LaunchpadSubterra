@@ -1,6 +1,6 @@
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
-from _Framework.InputControlElement import InputControlElement, MIDI_CC_TYPE
+from _Framework.InputControlElement import InputControlElement, MIDI_CC_TYPE, MIDI_NOTE_TYPE
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement
 from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	RESOLUTION_DOUBLE_TAP_WINDOW,
@@ -34,6 +34,8 @@ from .SequencerConstants import (RESOLUTION_NAMES, RESOLUTION_MAP,
 	NOTE_VELOCITY_CC_CHANNEL,
 	NOTE_VELOCITY_CC_NUMBER,
 	DEFAULT_NOTE_VELOCITY,
+	SHARP_PEDAL_CHANNEL,
+	SHARP_PEDAL_NOTE,
 	SLIDER_SUBDIVISIONS,
 	VELOCITY_SUB_COLORS,
 	LENGTH_SUB_COLORS,
@@ -562,6 +564,11 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._velocity_cc = InputControlElement(
 			MIDI_CC_TYPE, NOTE_VELOCITY_CC_CHANNEL, NOTE_VELOCITY_CC_NUMBER)
 		self._velocity_cc.add_value_listener(self._on_velocity_cc_value)
+		# Sharp pedal held: notes-view toggles are a semitone higher (SequencerConstants)
+		self._sharp_pedal_down = False
+		self._sharp_pedal = InputControlElement(
+			MIDI_NOTE_TYPE, SHARP_PEDAL_CHANNEL, SHARP_PEDAL_NOTE)
+		self._sharp_pedal.add_value_listener(self._on_sharp_pedal_value)
 		self._length_map = [0.5, 1, 2, 3, 4, 8, 16, 32]
 
 		# time
@@ -699,6 +706,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		if self._velocity_cc is not None:
 			self._velocity_cc.remove_value_listener(self._on_velocity_cc_value)
 			self._velocity_cc = None
+		if self._sharp_pedal is not None:
+			self._sharp_pedal.remove_value_listener(self._on_sharp_pedal_value)
+			self._sharp_pedal = None
 		self._mode_notes_lengths_button = None
 		self._mode_notes_octaves_button = None
 		self._mode_notes_velocities_button = None
@@ -2605,7 +2615,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._control_surface.log_message(f"[PARSE NOTES ERROR] {e}")
 
 	def _toggle_note_at_grid_position(self, idx, y):
-		self._toggle_note(idx, self._row_pitch(self._note_rows - 1 - y))
+		self._toggle_note(idx, self._toggle_pitch_for_row(self._note_rows - 1 - y))
+
+	def _toggle_pitch_for_row(self, row_idx):
+		"""Pitch a notes-view pad toggles: its row's pitch, a semitone higher while the sharp pedal is held."""
+		return self._row_pitch(row_idx) + (1 if self._sharp_pedal_down else 0)
+
+	def _on_sharp_pedal_value(self, value):
+		# Note on = pedal held, note off (value 0) = released
+		self._sharp_pedal_down = value > 0
 
 	def _toggle_note(self, idx, pitch):
 		grid_time = idx * self.resolution_beats
@@ -2912,7 +2930,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 												has_on_step = True
 											else:
 												has_off_step = True
-											if note_deg in scale_notes:
+											# The row's sharp (B# on the B row) shows as out of scale
+											if note_deg in scale_notes and n[0] != current_pitch + 1:
 												has_in_scale = True
 											else:
 												has_out_scale = True
@@ -3647,23 +3666,26 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		Notes view: remember the pad as held, so the resolution button can
 		zoom around it (see take_zoom_anchor). A pad that shows a note is
 		toggled (its note deleted) on release instead of on press, and not
-		at all if the resolution button is used while it is held.
+		at all if the resolution button is used while it is held. The pitch
+		toggled is decided on press (sharp pedal, see _toggle_pitch_for_row).
 		Returns True if the toggle waits for the release.
 		"""
 		row_idx = (self._note_rows - 1) - y
 		pad_notes = [n for n in self._get_notes_at_step(idx)
 		             if self._visible_row_for_pitch(n[0]) == row_idx]
 		row_pitch = self._row_pitch(row_idx)
+		toggle_pitch = self._toggle_pitch_for_row(row_idx)
 		step_start = idx * self.resolution_beats
 		self._held_note_pads = [p for p in self._held_note_pads if p['pos'] != (x, y)]
 		self._held_note_pads.append({
 			'pos': (x, y),
 			'idx': idx,
 			'pitch': row_pitch,
+			'toggle_pitch': toggle_pitch,
 			# Where the pad's notes are, in absolute terms (see _held_pad_notes)
 			'start': step_start,
 			'end': step_start + self.resolution_beats,
-			'pitches': set(n[0] for n in pad_notes) | {row_pitch},
+			'pitches': set(n[0] for n in pad_notes) | {row_pitch, toggle_pitch},
 			# Zoom anchor: the pad's first note, else the step start
 			'time': min(n[1] for n in pad_notes) if pad_notes else step_start,
 			'toggle_on_release': bool(pad_notes),
@@ -3675,7 +3697,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if pad['pos'] == (x, y):
 				self._held_note_pads.remove(pad)
 				if pad['toggle_on_release']:
-					self._toggle_note(pad['idx'], pad['pitch'])
+					self._toggle_note(pad['idx'], pad['toggle_pitch'])
 				return
 
 	def _take_held_note_pads(self):
@@ -3840,12 +3862,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
 		Row on which the note grid draws this pitch, or -1 when notes of this
 		pitch are not visible. Melodic notes are drawn on the closest row, but
-		only when they are in the same octave as that row's pitch.
+		only when they are in the same octave as that row's pitch, or are that
+		row's sharp (B# on the B row in C major, also shown as C an octave up).
 		"""
 		row_idx = self._get_row_for_pitch(midi_note)
 		if row_idx < 0 or self._is_drum_view or self._is_focus_view:
 			return row_idx
-		if int(midi_note / 12) != int(self._row_pitch(row_idx) / 12):
+		row_pitch = self._row_pitch(row_idx)
+		if int(midi_note / 12) != int(row_pitch / 12) and midi_note != row_pitch + 1:
 			return -1
 		return row_idx
 

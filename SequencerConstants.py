@@ -69,6 +69,15 @@ NOTE_VELOCITY_CC_NUMBER = 16
 DEFAULT_NOTE_VELOCITY = 90
 
 # ==========================================================
+# Sharp Pedal (notes view)
+# ==========================================================
+# While the switch pedal is held, toggling a note in the notes view toggles
+# the pitch one semitone above the pad's row. The pedal sends this note
+# (on = held, off = released). Channels are 0-based: 11 = MIDI channel 12.
+SHARP_PEDAL_CHANNEL = 11
+SHARP_PEDAL_NOTE = 126
+
+# ==========================================================
 # Velocity / Length Slider Subdivisions
 # ==========================================================
 # Holding the last lit pad of a velocity or length slider and tapping the pad
