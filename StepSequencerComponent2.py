@@ -48,6 +48,7 @@ from .LoopSelectorComponent import (LoopSelectorComponent, apply_clip_loop,
 from .NoteSelectorComponent import NoteSelectorComponent
 from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
 from .TrackControllerComponent import TrackControllerComponent
+from .StepSeqTeam import TEAM
 import time
 from random import uniform
 import json
@@ -94,9 +95,40 @@ TAG_SEPARATOR = " " * 10
 class ClipMetadataManager:
 	"""Manages persistent clip metadata storage in JSON."""
 
+	# One manager, so one JSON cache, for all the Launchpads running this
+	# script (see acquire / release)
+	_shared = None
+
+	@classmethod
+	def acquire(cls, control_surface):
+		"""
+		The manager shared by all the Launchpads. The first one creates it,
+		which backs up and resets the JSON file as before; the others use
+		the same cache instead of each overwriting the file with its own.
+		"""
+		if cls._shared is None:
+			cls._shared = cls(control_surface)
+		manager = cls._shared
+		if control_surface not in manager._users:
+			manager._users.append(control_surface)
+		return manager
+
+	def release(self, control_surface):
+		"""A Launchpad no longer uses the manager; the last one drops it."""
+		if control_surface in self._users:
+			self._users.remove(control_surface)
+		if self._users:
+			# Logging and song() go through a Launchpad still connected
+			self.control_surface = self._users[0]
+			return
+		self._unregister_undo_listener()
+		if ClipMetadataManager._shared is self:
+			ClipMetadataManager._shared = None
+
 	def __init__(self, control_surface):
 		"""Initialize - ADD EXTREME LOGGING."""
 		self.control_surface = control_surface
+		self._users = []
 		self.cache = {"clips": {}}
 
 		# Determine cache path with diagnostics
@@ -529,7 +561,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._meta_manager = None
 		try:
 			# CRITICAL: Pass control_surface so manager can log
-			self._meta_manager = ClipMetadataManager(control_surface)
+			self._meta_manager = ClipMetadataManager.acquire(control_surface)
 			self._setup_observer_listeners()
 		except Exception as e:
 			import traceback
@@ -690,7 +722,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._flush_pending_renames()
 		self._remove_observer_listeners()
 		if hasattr(self, '_meta_manager') and self._meta_manager:
-			self._meta_manager._unregister_undo_listener()
+			self._meta_manager.release(self._control_surface)
 		self._remove_highlighted_clip_slot_listener()
 		self._remove_clip_slot_listener()
 		self._step_sequencer = None
@@ -1049,27 +1081,21 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		"""
 		if not self._clip or not self._meta_manager:
 			return
+		# Showing another Launchpad's change (see StepSeqTeam): that one saves it
+		if TEAM.is_showing():
+			return
+		# The Launchpads editing this clip together follow first: the team
+		# frame, which is what gets saved, may move
+		self._step_sequencer.team_changed()
 		try:
 			# 1. Get CURRENT STATE (SETTINGS ONLY - no position!)
+			# loop_block is read from the LoopSelector (latest value) there
 			settings_only = self._get_current_state_dict()
 
-			# 2. ⭐⭐⭐ CRITICAL: READ loop_block FROM LOOP SELECTOR (ALWAYS LATEST) ⭐⭐⭐
-			# DO NOT trust self._loop_block - read directly from source of truth!
-			if hasattr(self._step_sequencer, '_loop_selector') and self._step_sequencer._loop_selector:
-				ls = self._step_sequencer._loop_selector
-				if hasattr(ls, '_block'):
-					latest_block = ls._block
-					settings_only['loop_block'] = latest_block
-				else:
-					if DEBUG_LOGGING:
-						self._control_surface.log_message(
-							f"[SYNC_LOOP_BLOCK_WARN] LoopSelector missing _block attribute!"
-						)
-			else:
-				if DEBUG_LOGGING:
-					self._control_surface.log_message(
-						f"[SYNC_LOOP_BLOCK_WARN] No LoopSelector available!"
-					)
+			# 2. Step sequencer off (e.g. the loop was edited in Live): what it
+			# remembers may be outdated, the Launchpads in use keep the tag current
+			if not self._step_sequencer.is_enabled():
+				settings_only = self._with_tag_settings(settings_only)
 
 			# 3. Get POSITION SEPARATELY (not stored in settings dict!)
 			track_idx, slot_idx = self._meta_manager._get_current_track_slot_indices_safe(self._clip)
@@ -1088,6 +1114,17 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		except Exception as e:
 			import traceback
 			self._control_surface.log_message(f"[SYNC_ERROR] {e}\n{traceback.format_exc()}")
+
+	def _with_tag_settings(self, settings):
+		"""settings with the clip tag's values for everything but the loop."""
+		tagged = self._meta_manager.extract_embedded_parameters(getattr(self._clip, 'name', ''))
+		if not tagged:
+			return settings
+		merged = dict(settings)
+		for param_name, _, _ in SUX_SCHEMA:
+			if param_name not in ('clip_loop_start', 'clip_loop_end'):
+				merged[param_name] = tagged[param_name]
+		return merged
 
 	def strip_metadata_tags(self, clip_name):
 		"""
@@ -1712,6 +1749,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if DEBUG_LOGGING:
 					self._control_surface.log_message(f"[STATE_DICT_ERROR] {param_name}: {e}")
 				state[param_name] = default_value
+		# Launchpads editing this clip together save their master's view
+		TEAM.frame_values(self._clip, state)
 		state['timestamp'] = time.time()
 		return state
 
@@ -3312,6 +3351,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if ((value != 0) or (not sender.is_momentary())):
 					if y == 7 and not allow_row7:
 						return
+					# Notes view: rows beyond the MIDI range (chessboard) do nothing,
+					# not even with the sharp pedal
+					if self._mode == STEPSEQ_MODE_NOTES and not 0 <= self._row_pitch(rows - 1 - y) <= 127:
+						return
 					idx = self._get_step_index(x)
 					# A pad showing a note acts on its release (it can be held as a zoom anchor)
 					if self._mode == STEPSEQ_MODE_NOTES and self._press_note_pad(x, y, idx):
@@ -3796,17 +3839,20 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		view's octave (_display_octave) is kept for when focus mode ends.
 		"""
 		self._focus_pitch = pitch
+		# Launchpads editing this clip together follow (the pitch may then
+		# move to keep theirs in range, see StepSeqTeam)
+		self._step_sequencer.team_changed()
 		self._parse_notes()
 		self._force_update = True
 		self.update()
 		ss = self._step_sequencer
 		ss._update_buttons()
 		ss._update_OSD()
-		if pitch is None:
+		if self._focus_pitch is None:
 			self._control_surface.show_message("Focus mode off")
 		else:
 			self._control_surface.show_message(
-				"Focus mode: %s (tap Scale to leave)" % self._pitch_name(pitch))
+				"Focus mode: %s (tap Scale to leave)" % self._pitch_name(self._focus_pitch))
 
 	def _pitch_name(self, pitch):
 		"""Note name of a MIDI pitch, e.g. 36 -> C1."""
@@ -5084,6 +5130,18 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		total_steps = int(clip_end / ss._resolution)
 		total_blocks = max(1, (total_steps + 7) // 8)
 		block_index = max(0, min(block_index, total_blocks - 1))
+		self._show_block(block_index)
+		if not getattr(self, "_loading_clip", False):
+			self.sync_clip_with_json()
+
+	def _show_block(self, block_index):
+		"""
+		_select_block without the clamp to the clip and without saving: also
+		used to show the block another Launchpad of the team asks for, which
+		may be past the end of a short clip.
+		"""
+		ss = self._step_sequencer
+		ls = ss._loop_selector
 		new_offset = block_index // 8
 
 		# 1. Offset everywhere (cycle button reads ss._loop_page_offset)
@@ -5104,8 +5162,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		ss._update_cycle_button()
 		self._force_update = True
 		self.update()
-		if not getattr(self, "_loading_clip", False):
-			self.sync_clip_with_json()
 
 # VELOCITIES
 	def _on_velocity_cc_value(self, value):
@@ -6015,6 +6071,105 @@ class StepSequencerComponent2(StepSequencerComponent):
 		self._res_pending_tap_time = None  # release time of a tap waiting for a 2nd one
 		self._res_double_tap = False  # the press in progress is a double tap's 2nd tap
 		self._res_anchor_time = None  # held note (beats) to zoom around, or None
+		# Launchpads editing the same clip together (see StepSeqTeam)
+		team_position = control_surface.team_position()
+		if team_position is not None:
+			TEAM.add(self, team_position)
+
+	def disconnect(self):
+		self._call_team(TEAM.remove)
+		super(StepSequencerComponent2, self).disconnect()
+
+	def set_enabled(self, enabled):
+		super(StepSequencerComponent2, self).set_enabled(enabled)
+		self._call_team(TEAM.update)
+
+	def _clip_changed(self):
+		super(StepSequencerComponent2, self)._clip_changed()
+		self._call_team(TEAM.update)
+
+	def team_changed(self):
+		"""This Launchpad changed what it shows or a clip setting: its team follows."""
+		self._call_team(TEAM.changed)
+
+	def _call_team(self, team_method):
+		# A team error is logged instead of breaking the mode / clip switch
+		try:
+			team_method(self)
+		except Exception:
+			import traceback
+			self._control_surface.log_message("[TEAM_ERROR] " + traceback.format_exc())
+
+	# --- TEAM: what StepSeqTeam reads and sets ---
+	def team_clip(self):
+		"""The clip this step sequencer is in use on, None when it is off."""
+		if not self.is_enabled():
+			return None
+		return self._note_editor._clip
+
+	def team_state(self):
+		"""What this Launchpad shows and the clip settings it uses."""
+		editor = self._note_editor
+		return {
+			'resolution_index': self._resolution_index,
+			'is_absolute': bool(self._scale_selector.is_absolute),
+			'is_drumrack': bool(self._scale_selector.is_drumrack),
+			'block': self._loop_selector._block,
+			'octave': editor._display_octave,
+			'focus': editor._focus_pitch if editor._is_focus_view else None,
+		}
+
+	def team_tag_state(self):
+		"""team_state with the clip tag's values: they may have changed while this was off."""
+		state = self.team_state()
+		editor = self._note_editor
+		params = None
+		if editor._meta_manager and editor._clip is not None:
+			params = editor._meta_manager.extract_embedded_parameters(editor._clip.name)
+		if params:
+			state['resolution_index'] = max(0, min(len(RESOLUTION_MAP) - 1, params['resolution_index']))
+			state['is_absolute'] = bool(params['is_absolute'])
+			state['is_drumrack'] = bool(params['is_drumrack'])
+			state['block'] = params['loop_block']
+			state['octave'] = params['display_octave']
+		return state
+
+	def team_show(self, state):
+		"""Show state (see team_state) without saving it."""
+		editor = self._note_editor
+		selector = self._scale_selector
+		changed = False
+		if bool(selector.is_drumrack) != state['is_drumrack']:
+			selector.set_drumrack_from_clip(state['is_drumrack'])
+			self._sync_editor_layout()
+			changed = True
+		if bool(selector.is_absolute) != state['is_absolute']:
+			selector._is_absolute = state['is_absolute']
+			self._sync_editor_layout()
+			changed = True
+		if self._resolution_index != state['resolution_index']:
+			self._resolution_index = state['resolution_index']
+			self.set_resolution(RESOLUTION_MAP[self._resolution_index])
+			changed = True
+		if self._loop_selector._block != state['block'] or editor._page != state['block']:
+			editor._show_block(state['block'])
+			changed = True
+		if editor._display_octave != state['octave'] or editor._focus_pitch != state['focus']:
+			editor._display_octave = state['octave']
+			editor._focus_pitch = state['focus']
+			editor._parse_notes()
+			changed = True
+		if changed:
+			editor._force_update = True
+			self.update()
+
+	def team_block_count(self, resolution_index):
+		"""Loop blocks (8 steps) in the clip at that resolution."""
+		steps = int(self._note_editor._clip_total_end() / RESOLUTION_MAP[resolution_index])
+		return max(1, (steps + 7) // 8)
+
+	def team_save(self):
+		self._note_editor.sync_clip_with_json()
 
 	def _loop_selector_should_be_enabled(self):
 		if hasattr(self, '_scale_selector') and self._scale_selector:

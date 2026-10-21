@@ -15,6 +15,36 @@ class Settings():
     # Should the step sequencer scroll automatically to the currently playing page
     STEPSEQ__AUTO_SCROLL = False
 
+    # Orientation of the 8x8 grid of each Launchpad, so Launchpads placed differently
+    # can run this same script. Keys are Control Surface slots in Live's
+    # Preferences > Link, Tempo & MIDI, counted from 1 at the top row. Values are how far
+    # that Launchpad is turned anticlockwise, in degrees: 0 (as designed), 90, 180 or 270
+    # (-90 means clockwise). The round buttons follow: the strip that ends up horizontal
+    # acts as top buttons (left to right), the vertical one as side buttons (top to bottom).
+    # Slots not listed use GRID_ROTATION_DEFAULT. Live's Log.txt shows the slot,
+    # rotation and team position each Launchpad got when it loads.
+    GRID_ROTATION_BY_SLOT = {
+        1: 90,
+        2: 0,
+        3: 180,
+        4: 270,
+    }
+    GRID_ROTATION_DEFAULT = 90
+
+    # Launchpads placed next to each other that edit the same clip together in the
+    # melodic step sequencer, as one bigger grid (see StepSeqTeam.py). Keys are
+    # Control Surface slots as above, values the (column, row) of that Launchpad:
+    # (0, 0) is the top left one, the master, whose view the clip's tag and the JSON
+    # file record. The Launchpad to the right shows the next loop block in the same
+    # octave, the one below the same loop block an octave lower.
+    # Slots not listed run their step sequencer on their own.
+    TEAM_POSITION_BY_SLOT = {
+        1: (0, 0),
+        2: (1, 0),
+        3: (0, 1),
+        4: (1, 1),
+    }
+
     # configure what user modes buttons do.
     # the 3 first value configure the 3 sub modes of button user mode 1,
     # and following ones are for user mode 2 button

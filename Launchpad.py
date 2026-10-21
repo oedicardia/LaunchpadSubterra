@@ -57,6 +57,34 @@ STANDALONE_MODE = 0
 STD_MSG_HEADER = (SYSEX_START,) + NOVATION_MANUFACTURER_ID + (2, )
 
 
+def _rotated_pad(row, column, rotation):
+	""" Physical pad (row, column) under the grid's (row, column) on a Launchpad
+	turned anticlockwise by rotation degrees """
+	if rotation == 90:
+		return column, 7 - row
+	if rotation == 180:
+		return 7 - row, 7 - column
+	if rotation == 270:
+		return 7 - column, row
+	return row, column
+
+
+def _rotated_round_buttons(top_row, side_column, rotation):
+	""" (top_buttons, side_buttons) on a Launchpad turned anticlockwise by rotation
+	degrees: whichever strip of round buttons ends up horizontal acts as top buttons,
+	left to right, and the vertical one as side buttons, top to bottom """
+	if rotation == 90:
+		# side column on top, top row on the left
+		return side_column, top_row[::-1]
+	if rotation == 180:
+		# top row at the bottom, side column on the left
+		return top_row[::-1], side_column[::-1]
+	if rotation == 270:
+		# side column at the bottom, top row on the right
+		return side_column[::-1], top_row
+	return top_row, side_column
+
+
 class Launchpad(ControlSurface):
 
 	_active_instances = []
@@ -82,6 +110,7 @@ class Launchpad(ControlSurface):
 			self._wrote_user_byte = False
 			self._challenge = Live.Application.get_random_int(0, 400000000) & 2139062143
 			self._init_done = False
+			self._team_position = None
 		# caller will send challenge and we will continue as challenge is received.
 		
 			
@@ -119,11 +148,11 @@ class Launchpad(ControlSurface):
 			self._user_byte_write_button.add_value_listener(self._user_byte_value)
 			matrix = ButtonMatrixElement()
 			matrix.name = 'Button_Matrix'
+			rotation = self._load_slot_settings()
 			for row in range(8):
 				button_row = []
 				for column in range(8):
-					rot_row = column
-					rot_col = 7 - row
+					rot_row, rot_col = _rotated_pad(row, column, rotation)
 					if self._mk2_rgb or self._mk3_rgb or self._lpx:
 						# for mk2 buttons are assigned "top to bottom"
 						midi_note = (81 - (10 * rot_row)) + rot_col
@@ -134,18 +163,20 @@ class Launchpad(ControlSurface):
 					button_row.append(button)
 				matrix.add_row(tuple(button_row))
 
+			# round buttons as printed on the hardware: top row left to right, side column top to bottom
 			if self._mk3_rgb or self._lpx:
-				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 98 - index, skin=self._skin)
-				                for index in range(8)]
-				top_buttons = [
+				top_row = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 91 + index, skin=self._skin)
+				           for index in range(8)]
+				side_column = [
 					ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, self._side_notes[index], skin=self._skin)
 					for index in range(8)]
 			else:
-				side_buttons = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 104 + index, skin=self._skin)
-				                for index in range(8)]
-				top_buttons = [
+				top_row = [ConfigurableButtonElement(is_momentary, MIDI_CC_TYPE, 0, 104 + index, skin=self._skin)
+				           for index in range(8)]
+				side_column = [
 					ConfigurableButtonElement(is_momentary, MIDI_NOTE_TYPE, 0, self._side_notes[index], skin=self._skin)
 					for index in range(8)]
+			top_buttons, side_buttons = _rotated_round_buttons(top_row, side_column, rotation)
 
 			top_buttons[0].name = 'Bank_Select_Up_Button'
 			top_buttons[1].name = 'Bank_Select_Down_Button'
@@ -409,6 +440,31 @@ class Launchpad(ControlSurface):
 		if not self._suppress_session_highlight:
 			ControlSurface._set_session_highlight(self, track_offset, scene_offset, width, height, include_return_tracks)
 			
+	def _control_surface_slot(self):
+		# 1-based row of this script in Preferences > Link, Tempo & MIDI, None if not found
+		try:
+			surfaces = Live.Application.get_application().control_surfaces
+		except Exception as e:
+			log("Could not read the control surface slots: " + str(e))
+			return None
+		for index, surface in enumerate(surfaces):
+			if surface is self:
+				return index + 1
+		return None
+
+	def _load_slot_settings(self):
+		# grid rotation (returned) and team position of this Launchpad, from its slot
+		slot = self._control_surface_slot()
+		rotation = Settings.GRID_ROTATION_BY_SLOT.get(slot, Settings.GRID_ROTATION_DEFAULT) % 360
+		self._team_position = Settings.TEAM_POSITION_BY_SLOT.get(slot)
+		self.log_message("Control surface slot " + str(slot) + ": grid rotated " + str(rotation)
+			+ " degrees anticlockwise, team position " + str(self._team_position))
+		return rotation
+
+	def team_position(self):
+		""" (column, row) of this Launchpad in its step sequencer team, None if on its own """
+		return self._team_position
+
 	def _init_note_repeat(self):
 		self._note_repeat = NoteRepeatComponent(name='Note_Repeat')
 		self._note_repeat.set_enabled(False)
