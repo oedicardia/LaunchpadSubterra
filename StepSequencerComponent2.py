@@ -6115,6 +6115,8 @@ class StepSequencerComponent2(StepSequencerComponent):
 
 	def set_enabled(self, enabled):
 		super(StepSequencerComponent2, self).set_enabled(enabled)
+		if enabled:
+			self._follow_live_scale()
 		self._call_team(TEAM.update)
 
 	def _clip_changed(self):
@@ -6578,6 +6580,44 @@ class StepSequencerComponent2(StepSequencerComponent):
 		# the parent must already know that Drum Rack owns row 7.
 		self._sync_editor_layout()
 		#super(StepSequencerComponent2, self)._scale_updated()
+
+	# --- LIVE'S SCALE (Song.root_note / scale_name listeners) ---
+	def handle_root_note_changed(self):
+		self._follow_live_scale()
+		self.update()
+
+	def handle_scale_name_changed(self):
+		self._follow_live_scale()
+		self.update()
+
+	def _follow_live_scale(self):
+		"""
+		Rows in Live's scale (root note and scale name, which follow the
+		clip shown in Live). Called when Live's scale changes - from Live,
+		or from the scale editor of this or another Launchpad - and when
+		the step sequencer is switched on, its scale listeners being off
+		meanwhile. So all the Launchpads show the clip's scale in Live.
+
+		The base listeners only updated the scale selector: the rows are
+		built from the note selector (see _scale_updated), which only got
+		the new scale when leaving this Launchpad's own scale editor.
+		"""
+		selector = self._scale_selector
+		try:
+			key = self.song().root_note
+			modus = selector._modus_names.index(str(self.song().scale_name))
+		except (ValueError, AttributeError):
+			return
+		selector.set_key(key, False, True)
+		selector.set_modus(modus, False, True)
+		root = selector._octave * 12 + selector._key
+		note_selector = self._note_selector
+		if (note_selector._key == selector._key and note_selector._root_note == root
+				and note_selector._scale == [n - selector._key for n in selector.notes]):
+			return  # already shown
+		# As when leaving the scale editor (_scale_selector_button_value)
+		note_selector.set_scale(selector.notes, selector._key)
+		note_selector.set_selected_note(root)
 
 	# --- LOOP EDITED IN LIVE (loop_start / loop_end listeners) ---
 	def _on_loop_changed(self):
