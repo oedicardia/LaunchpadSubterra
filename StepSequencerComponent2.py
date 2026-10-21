@@ -2911,6 +2911,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 							start_time = idx * self.resolution_beats
 							end_time = start_time + self.resolution_beats
 							step_notes_list = self._get_notes_at_step(idx)
+							# Row each note of the step is drawn on, once per column
+							step_note_rows = [(n, self._visible_row_for_pitch(n[0])) for n in step_notes_list]
 							for y in range(rows):
 								row_idx = (rows-1) - y
 								current_pitch = self._row_pitch(row_idx)
@@ -2924,17 +2926,15 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 										target_color = "StepSequencer2.Pitch.Off"
 								else:
 									notes_mapped_to_this_row = []
-									for n in step_notes_list:
-										note_midi = n[0]
+									for n, note_row in step_note_rows:
 										note_time = n[1]
 
 										# 1. Time Check
 										if not (start_time <= note_time < end_time):
 											continue
 
-										# 2. Row Mapping Check (melodic: closest row,
-										# only if the note is in that row's octave)
-										if self._visible_row_for_pitch(note_midi) != row_idx:
+										# 2. Row Mapping Check (see _visible_row_for_pitch)
+										if note_row != row_idx:
 											continue
 										notes_mapped_to_this_row.append(n)
 									has_note_here = len(notes_mapped_to_this_row) > 0
@@ -3907,17 +3907,25 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _visible_row_for_pitch(self, midi_note):
 		"""
 		Row on which the note grid draws this pitch, or -1 when notes of this
-		pitch are not visible. Melodic notes are drawn on the closest row, but
-		only when they are in the same octave as that row's pitch, or are that
-		row's sharp (B# on the B row in C major, also shown as C an octave up).
+		pitch are not visible. Melodic: the views an octave below and above
+		repeat the rows 12 semitones away, and a note belongs to the closest
+		row of them all (the lower one on a tie). So whatever the scale, root
+		or layout, a note shows in one view only (in two when both have its
+		row), and a pad's pitch and its sharp show on that pad. The top row's
+		sharp is also drawn on the top row when it is the first note of the
+		view above (B# on the B row in C major, shown as C an octave up).
 		"""
 		row_idx = self._get_row_for_pitch(midi_note)
 		if row_idx < 0 or self._is_drum_view or self._is_focus_view:
 			return row_idx
-		row_pitch = self._row_pitch(row_idx)
-		if int(midi_note / 12) != int(row_pitch / 12) and midi_note != row_pitch + 1:
-			return -1
-		return row_idx
+		view = [self._row_pitch(r) for r in range(self._note_rows)]
+		rows_around = [p + shift for p in view for shift in (-12, 0, 12)]
+		closest = min(rows_around, key=lambda p: (abs(midi_note - p), p))
+		if closest == view[row_idx]:
+			return row_idx
+		if midi_note == view[-1] + 1:
+			return len(view) - 1
+		return -1
 
 	def _get_visible_notes_at_step(self, idx):
 		"""Notes of a step that the note grid shows in the current view."""
