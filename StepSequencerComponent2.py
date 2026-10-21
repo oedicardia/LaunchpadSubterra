@@ -643,6 +643,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._mode_copy_paste_button = None
 		self.set_mode_copy_paste_button(self._side_buttons[2])
 		self._copied_grid_data = None
+		# View the copied notes were taken from (see _paste_source_view)
+		self._copied_grid_view = None
 		self._paste_armed = False
 		self._last_press_time = 0.0
 		self._suppress_toggle_release = False
@@ -654,6 +656,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		# Notes removed by the last erase (same format as _copied_grid_data),
 		# restored by double-tapping on an empty grid
 		self._erased_grid_data = None
+		self._erased_grid_view = None
 		# True when the erase of the current tap sequence actually removed notes
 		self._erase_just_done = False
 		self._skip_copy_release = False
@@ -2509,11 +2512,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def _is_pitch_in_current_view(self, pitch):
 		"""
 		Copy / paste / erase: a pitch of the current view, i.e. of the
-		displayed octave / pitch block, or in focus mode of the rows shown.
+		displayed pitch block, or melodic a pitch the note grid draws
+		(see _visible_row_for_pitch).
 		"""
-		if self._is_focus_view:
-			return self._visible_row_for_pitch(pitch) >= 0
-		return self._nav_band_of_pitch(pitch) == self._current_view_band()
+		if self._is_drum_view:
+			return self._nav_band_of_pitch(pitch) == self._current_view_band()
+		return self._visible_row_for_pitch(pitch) >= 0
 
 	def _push_to_hardware(self):
 		"""Force ALL buffered LED values to hardware immediately, ignoring cache."""
@@ -5522,7 +5526,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if current_mode == STEPSEQ_MODE_NOTES:
 					# Empty grid: double-tap restores the last erased notes (undo)
 					if not self._notes_in_current_view() and self._erased_grid_data:
-						restored = self._paste_notes_from_buffer(self._erased_grid_data)
+						restored = self._paste_notes_from_buffer(self._erased_grid_data, self._erased_grid_view)
 						if restored:
 							self._erased_grid_data = None
 							self._control_surface.show_message("Undo erase (%d notes)" % restored)
@@ -5545,6 +5549,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				if current_mode == STEPSEQ_MODE_NOTES and self._erase_just_done and self._erased_grid_data:
 					self._erase_just_done = False
 					self._copied_grid_data = self._erased_grid_data
+					self._copied_grid_view = self._erased_grid_view
 					self._erased_grid_data = None
 					self._paste_armed = True
 					self._control_surface.show_message("Cut (%d notes)" % len(self._copied_grid_data))
@@ -5594,11 +5599,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._mode_copy_paste_button.set_light("DefaultButton.Disabled")
 
 	def _copy_notes_to_buffer(self):
-		"""Copies ALL notes in current page AND current octave / pitch block from note_cache."""
+		"""Copies ALL notes in current page AND current view (see _is_pitch_in_current_view) from note_cache."""
 		self._copied_grid_data = self._notes_in_current_view()
+		self._copied_grid_view = self._paste_source_view()
+
+	def _paste_source_view(self):
+		"""
+		What a copy / erase buffer keeps of the view its notes come from: the
+		display octave of a scale view, None in focus mode or drumrack layout
+		(see _paste_notes_from_buffer).
+		"""
+		if self._is_drum_view or self._is_focus_view:
+			return None
+		return self._display_octave
 
 	def _notes_in_current_view(self):
-		"""Returns the notes in current page AND current octave / pitch block,
+		"""Returns the notes in current page AND current view (see _is_pitch_in_current_view),
 		as (pitch, time relative to page start, length, velocity, muted)."""
 		self._parse_notes()
 		page_start_step = self._page * 8
@@ -5619,37 +5635,48 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			if not (page_start_step * resolution <= note_time < page_end_step * resolution):
 				continue
 
-			# Check 2: Does note belong to current displayed octave / block (focus: rows)?
+			# Check 2: Does note belong to current view (block, or drawn on the rows)?
 			if not self._is_pitch_in_current_view(note_pitch):
 				continue
 			relative_time = note_time - (page_start_step * resolution)
 			buffer.append((note_pitch, relative_time, note_length, note_velocity, note_muted))
 		return buffer
 
-	def _paste_notes_from_buffer(self, buffer=None):
+	def _paste_notes_from_buffer(self, buffer=None, source_view=None):
 		"""
 		Pastes notes from buffer (default: the copy buffer) onto the CURRENT page and CURRENT
-		displayed octave / pitch block. It preserves the relative pattern (step offset) but
-		shifts pitch and time to match current view. Returns the number of notes pasted.
+		view. It preserves the relative pattern (step offset) but shifts pitch and time to
+		match current view. source_view: the view the notes were taken from (see
+		_paste_source_view; default: the copy buffer's). Returns the number of notes pasted.
 		"""
 		if buffer is None:
 			buffer = self._copied_grid_data
+			source_view = self._copied_grid_view
 		if not buffer:
 			return 0
 		page_start_step = self._page * 8
 		current_page_offset_time = page_start_step * self.resolution_beats
 
 		# 1. Determine the Target Pitch Range
-		# Band (MIDI octave / pitch block) of the CURRENT display, and its size in semitones.
+		# Drumrack: band (pitch block) of the CURRENT display, and its size in semitones.
 		target_band = self._current_view_band()
 		band_unit = self._view_band_unit()
-		# Focus mode: the whole pattern moves by the octaves that bring its
-		# middle closest to the focus pitch
-		focus_shift = None
-		if self._is_focus_view:
+		# Melodic: the whole pattern moves by whole octaves, so it keeps its
+		# shape. Copied in a scale view and pasted in one: by the views
+		# between them, so the notes are drawn on the same rows. Otherwise
+		# by the octaves that bring its middle closest to the focus pitch
+		# (focus mode) or to the middle of the rows.
+		pattern_shift = None
+		if self._is_focus_view or (not self._is_drum_view and source_view is None):
+			if self._is_focus_view:
+				center = self._focus_pitch
+			else:
+				center = (self._row_pitch(0) + self._row_pitch(self._note_rows - 1)) / 2.0
 			pitches = [n[0] for n in buffer]
 			middle = (min(pitches) + max(pitches)) / 2.0
-			focus_shift = 12 * int(round((self._focus_pitch - middle) / 12.0))
+			pattern_shift = 12 * int(round((center - middle) / 12.0))
+		elif not self._is_drum_view:
+			pattern_shift = 12 * (self._display_octave - source_view)
 		new_notes = []
 		added_count = 0
 		for n in buffer:
@@ -5659,15 +5686,12 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			orig_velocity = n[3]
 			orig_muted = n[4]
 
-			# Calculate original band of the note
-			orig_band = self._nav_band_of_pitch(orig_pitch)
-
 			# --- PITCH SHIFTING LOGIC ---
-			if focus_shift is not None:
-				new_pitch = orig_pitch + focus_shift
+			if pattern_shift is not None:
+				new_pitch = orig_pitch + pattern_shift
 			else:
-				# Shift by whole bands (12 semitones melodic, 8 semitones drumrack)
-				band_shift = target_band - orig_band
+				# Shift each note by whole pitch blocks into the block in view
+				band_shift = target_band - self._nav_band_of_pitch(orig_pitch)
 				new_pitch = orig_pitch + (band_shift * band_unit)
 
 			# Ensure pitch stays within valid MIDI range (0-127)
@@ -5712,9 +5736,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return added_count
 
 	def _delete_notes_in_current_page(self):
-		"""Deletes ALL notes in current page AND current octave / pitch block (in-scale + out-of-scale).
-		The erased notes are kept so a double-tap on the empty grid can restore them.
-		Returns the number of notes erased."""
+		"""Deletes ALL notes in current page AND current view (in-scale + out-of-scale, see
+		_is_pitch_in_current_view). The erased notes are kept so a double-tap on the empty
+		grid can restore them. Returns the number of notes erased."""
 		erased = self._notes_in_current_view()
 		page_start_step = self._page * 8
 		page_end_step = (self._page + 1) * 8
@@ -5733,13 +5757,13 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				cleaned_notes.append(n)
 				continue
 
-			# Check 2: Does note belong to current displayed octave / block (focus: rows)?
+			# Check 2: Does note belong to current view (block, or drawn on the rows)?
 			if self._is_pitch_in_current_view(note_pitch):
-				# It matches current page AND current band -> DELETE IT
+				# It matches current page AND current view -> DELETE IT
 				is_deleted = True
 				deleted_count += 1
 			else:
-				# Different band -> KEEP IT
+				# Not in view -> KEEP IT
 				cleaned_notes.append(n)
 		if deleted_count > 0:
 			self._clip.select_all_notes()
@@ -5748,6 +5772,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			self._parse_notes()
 			self.update()
 			self._erased_grid_data = erased
+			self._erased_grid_view = self._paste_source_view()
 			self._control_surface.show_message("%d erased" % deleted_count)
 		else:
 			self._control_surface.show_message("Nothing to erase")
